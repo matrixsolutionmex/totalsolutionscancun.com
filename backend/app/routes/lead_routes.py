@@ -1,0 +1,667 @@
+from datetime import datetime
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi.responses import Response
+from sqlalchemy import func, or_
+from sqlalchemy.orm import Session
+
+from app.auth.jwt_handler import (
+    get_current_user as get_actor,
+    get_db,
+    require_admin_user as require_admin_actor,
+)
+from app.models.lead import Lead
+from app.models.lead_document import LeadDocument
+from app.models.lead_event import LeadEvent
+from app.models.user import User
+from app.schemas.lead_schema import (
+    LeadAssignUpdate,
+    LeadCreate,
+    LeadEnrichBatchRequest,
+    LeadEnrichBatchResponse,
+    LeadEventCreate,
+    LeadEventResponse,
+    LeadPipelineUpdate,
+    LeadResponse,
+    LeadUpdate,
+)
+from app.services.enrichment_service import EnrichmentError, enrich_lead_record, enrich_leads_in_background
+from app.services.dossier_pdf_service import build_service_dossier_pdf
+from app.services.lead_entry_service import (
+    duplicate_lead,
+    ensure_property_id,
+    lead_mapping_from_manual,
+    property_extra_json,
+    validate_responsible,
+)
+from app.services.service_order_service import ensure_service_order, sync_service_order_from_lead
+
+router = APIRouter(prefix="/leads", tags=["leads"])
+
+PIPELINE_STAGES = [
+    "NOVO LEAD",
+    "ATENDIMENTO",
+    "TENTATIVA DE CONTATO",
+    "VISITA",
+    "MONTAGEM DE PASTA",
+    "VENDA GANHA",
+    "PERDIDO",
+]
+
+
+def broker_ids_for_manager(db: Session, manager_id: int):
+    return [
+        broker_id
+        for (broker_id,) in (
+            db.query(User.id)
+            .filter(User.role == "BROKER", User.manager_id == manager_id, User.is_active.is_(True))
+            .all()
+        )
+    ]
+
+
+def apply_actor_scope(query, db: Session, actor: User | None):
+    if not actor or actor.role == "ROOT":
+        return query
+
+    if actor.role == "BROKER":
+        return query.filter(Lead.assigned_to_user_id == actor.id)
+
+    if actor.role == "GERENTE":
+        team_ids = broker_ids_for_manager(db, actor.id)
+        return query.filter(
+            or_(
+                Lead.assigned_to_user_id == actor.id,
+                Lead.assigned_to_user_id.in_(team_ids),
+                Lead.assigned_to_user_id.is_(None),
+            )
+        )
+
+    return query.filter(False)
+
+
+def ensure_lead_visible_to_actor(db: Session, lead: Lead, actor: User | None):
+    if not actor or actor.role == "ROOT":
+        return
+
+    if actor.role == "BROKER" and lead.assigned_to_user_id == actor.id:
+        return
+
+    if actor.role == "GERENTE" and (
+        lead.assigned_to_user_id is None
+        or lead.assigned_to_user_id == actor.id
+        or lead.assigned_to_user_id in broker_ids_for_manager(db, actor.id)
+    ):
+        return
+
+    raise HTTPException(status_code=403, detail="Lead fora da sua estrutura")
+
+
+def actor_label(actor: User | None):
+    if not actor:
+        return "Sistema"
+
+    return actor.full_name or actor.username
+
+
+def add_lead_event(db: Session, lead: Lead, actor: User | None, event_type: str, message: str):
+    db.add(
+        LeadEvent(
+            lead_id=lead.id,
+            actor_id=actor.id if actor else None,
+            actor_name=actor_label(actor),
+            event_type=event_type,
+            message=message,
+        )
+    )
+
+
+@router.get("/", response_model=list[LeadResponse])
+def list_leads(
+    db: Session = Depends(get_db),
+    actor: User | None = Depends(get_actor),
+    search: str | None = None,
+    pipeline: str | None = None,
+    assigned_to_user_id: int | None = None,
+    unassigned: bool = False,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    query = apply_actor_scope(db.query(Lead), db, actor)
+
+    if search:
+        term = f"%{search}%"
+        query = query.filter(
+            or_(
+                Lead.nome.ilike(term),
+                Lead.email.ilike(term),
+                Lead.contato.ilike(term),
+                Lead.site.ilike(term),
+                Lead.nicho.ilike(term),
+                Lead.pais.ilike(term),
+                Lead.estado.ilike(term),
+                Lead.cidade.ilike(term),
+            )
+        )
+
+    if pipeline:
+        query = query.filter(Lead.pipeline == pipeline)
+
+    if assigned_to_user_id is not None:
+        query = query.filter(Lead.assigned_to_user_id == assigned_to_user_id)
+
+    if unassigned:
+        query = query.filter(Lead.assigned_to_user_id.is_(None))
+
+    return (
+        query.order_by(Lead.score.desc().nullslast(), Lead.id)
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+
+@router.get("/kanban")
+def kanban_leads(
+    db: Session = Depends(get_db),
+    actor: User | None = Depends(get_actor),
+    assigned_to_user_id: int | None = None,
+    unassigned: bool = False,
+    limit_per_stage: int = Query(default=25, ge=1, le=100),
+):
+    board = {}
+
+    for stage in PIPELINE_STAGES:
+        query = apply_actor_scope(db.query(Lead).filter(Lead.pipeline == stage), db, actor)
+
+        if assigned_to_user_id is not None:
+            query = query.filter(Lead.assigned_to_user_id == assigned_to_user_id)
+
+        if unassigned:
+            query = query.filter(Lead.assigned_to_user_id.is_(None))
+
+        leads = (
+            query.order_by(Lead.score.desc().nullslast(), Lead.id)
+            .limit(limit_per_stage)
+            .all()
+        )
+        board[stage] = [LeadResponse.model_validate(lead).model_dump() for lead in leads]
+
+    return {
+        "stages": PIPELINE_STAGES,
+        "board": board,
+    }
+
+
+@router.post("/", response_model=LeadResponse, status_code=201)
+def create_lead(
+    payload: LeadCreate,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_actor),
+):
+    mapping = lead_mapping_from_manual(payload, actor=actor)
+    validate_responsible(db, actor, mapping.get("assigned_to_user_id"))
+
+    duplicate = duplicate_lead(
+        db,
+        email=mapping.get("email"),
+        contato=mapping.get("contato"),
+        whatsapp=mapping.get("whatsapp"),
+    )
+    if duplicate:
+        raise HTTPException(status_code=409, detail="Cliente duplicado")
+
+    lead = Lead(**mapping)
+    db.add(lead)
+    db.flush()
+    ensure_property_id(lead)
+    service_order = ensure_service_order(db, lead, actor=actor)
+    add_lead_event(
+        db,
+        lead,
+        actor,
+        "ENTRADA",
+        f"OS {service_order.order_number} criada para cliente com origem {lead.origen or 'OTRO'}",
+    )
+    db.commit()
+    db.refresh(lead)
+    return lead
+
+
+@router.get("/inventory")
+def lead_inventory(
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_actor),
+):
+    free_query = db.query(Lead).filter(Lead.assigned_to_user_id.is_(None))
+    total_free = free_query.count()
+
+    nichos = (
+        db.query(Lead.nicho, func.count(Lead.id))
+        .filter(Lead.assigned_to_user_id.is_(None), Lead.nicho.isnot(None), Lead.nicho != "")
+        .group_by(Lead.nicho)
+        .order_by(func.count(Lead.id).desc(), Lead.nicho)
+        .all()
+    )
+    paises = (
+        db.query(Lead.pais, func.count(Lead.id))
+        .filter(Lead.assigned_to_user_id.is_(None), Lead.pais.isnot(None), Lead.pais != "")
+        .group_by(Lead.pais)
+        .order_by(func.count(Lead.id).desc(), Lead.pais)
+        .all()
+    )
+    estados = (
+        db.query(Lead.estado, func.count(Lead.id))
+        .filter(Lead.assigned_to_user_id.is_(None), Lead.estado.isnot(None), Lead.estado != "")
+        .group_by(Lead.estado)
+        .order_by(func.count(Lead.id).desc(), Lead.estado)
+        .all()
+    )
+    cidades = (
+        db.query(Lead.cidade, func.count(Lead.id))
+        .filter(Lead.assigned_to_user_id.is_(None), Lead.cidade.isnot(None), Lead.cidade != "")
+        .group_by(Lead.cidade)
+        .order_by(func.count(Lead.id).desc(), Lead.cidade)
+        .all()
+    )
+    combinacoes = (
+        db.query(Lead.nicho, Lead.pais, Lead.estado, Lead.cidade, func.count(Lead.id))
+        .filter(Lead.assigned_to_user_id.is_(None))
+        .group_by(Lead.nicho, Lead.pais, Lead.estado, Lead.cidade)
+        .all()
+    )
+
+    return {
+        "total_livre": total_free,
+        "nichos": [{"nome": nicho, "total": total} for nicho, total in nichos],
+        "paises": [{"nome": pais, "total": total} for pais, total in paises],
+        "estados": [{"nome": estado, "total": total} for estado, total in estados],
+        "cidades": [{"nome": cidade, "total": total} for cidade, total in cidades],
+        "combinacoes": [
+            {
+                "nicho": nicho,
+                "pais": pais,
+                "estado": estado,
+                "cidade": cidade,
+                "total": total,
+            }
+            for nicho, pais, estado, cidade, total in combinacoes
+        ],
+    }
+
+
+@router.post("/enrich-batch", response_model=LeadEnrichBatchResponse, status_code=202)
+def enrich_lead_batch(
+    payload: LeadEnrichBatchRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_actor),
+):
+    query = apply_actor_scope(db.query(Lead.id), db, actor)
+
+    if payload.ids is not None:
+        query = query.filter(Lead.id.in_(payload.ids))
+        limit = len(payload.ids)
+    else:
+        if payload.filter and payload.filter.nicho:
+            query = query.filter(Lead.nicho.ilike(payload.filter.nicho.strip()))
+        if payload.filter and payload.filter.pais:
+            query = query.filter(Lead.pais.ilike(payload.filter.pais.strip()))
+        limit = payload.limit
+
+    lead_ids = [lead_id for (lead_id,) in query.order_by(Lead.id).limit(limit).all()]
+    if not lead_ids:
+        raise HTTPException(status_code=404, detail="Nenhum lead acessivel encontrado para enriquecimento")
+
+    background_tasks.add_task(
+        enrich_leads_in_background,
+        lead_ids,
+        actor.id,
+        actor_label(actor),
+    )
+    return LeadEnrichBatchResponse(status="scheduled", scheduled=len(lead_ids))
+
+
+@router.post("/{lead_id}/enrich", response_model=LeadResponse)
+def enrich_lead(
+    lead_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_actor),
+):
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead nao encontrado")
+
+    ensure_lead_visible_to_actor(db, lead, actor)
+    service_order = ensure_service_order(db, lead, actor=actor)
+
+    try:
+        enrich_lead_record(
+            db,
+            lead,
+            actor_id=actor.id,
+            actor_name=actor_label(actor),
+        )
+    except EnrichmentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return lead
+
+
+@router.get("/{lead_id}/events", response_model=list[LeadEventResponse])
+def list_lead_events(
+    lead_id: int,
+    db: Session = Depends(get_db),
+    actor: User | None = Depends(get_actor),
+):
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead nao encontrado")
+
+    ensure_lead_visible_to_actor(db, lead, actor)
+
+    return (
+        db.query(LeadEvent)
+        .filter(LeadEvent.lead_id == lead.id)
+        .order_by(LeadEvent.created_at.desc(), LeadEvent.id.desc())
+        .limit(100)
+        .all()
+    )
+
+
+@router.get("/{lead_id}/dossier.pdf")
+def service_dossier_pdf(
+    lead_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: User | None = Depends(get_actor),
+):
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead nao encontrado")
+
+    ensure_lead_visible_to_actor(db, lead, actor)
+    service_order = ensure_service_order(db, lead, actor=actor)
+
+    responsible = (
+        db.query(User).filter(User.id == lead.assigned_to_user_id).first()
+        if lead.assigned_to_user_id
+        else None
+    )
+    supervisor = None
+    if responsible and responsible.manager_id:
+        supervisor = db.query(User).filter(User.id == responsible.manager_id).first()
+    elif responsible and responsible.role == "GERENTE":
+        supervisor = responsible
+    elif actor and actor.role == "GERENTE":
+        supervisor = actor
+    administrator = actor if actor and actor.role == "ROOT" else None
+
+    events = (
+        db.query(LeadEvent)
+        .filter(LeadEvent.lead_id == lead.id)
+        .order_by(LeadEvent.created_at.asc(), LeadEvent.id.asc())
+        .all()
+    )
+    documents = (
+        db.query(LeadDocument)
+        .filter(LeadDocument.lead_id == lead.id)
+        .order_by(LeadDocument.document_type, LeadDocument.created_at.asc(), LeadDocument.id.asc())
+        .all()
+    )
+    uploader_ids = [doc.uploaded_by_user_id for doc in documents if doc.uploaded_by_user_id]
+    uploaders = {
+        user.id: actor_label(user)
+        for user in db.query(User).filter(User.id.in_(uploader_ids)).all()
+    } if uploader_ids else {}
+
+    pdf = build_service_dossier_pdf(
+        lead=lead,
+        events=events,
+        documents=documents,
+        responsible=responsible,
+        supervisor=supervisor,
+        administrator=administrator,
+        uploaders=uploaders,
+        service_order=service_order,
+        public_base_url=str(request.base_url).rstrip("/"),
+    )
+    filename = f"dossier-servicio-{service_order.order_number or lead.property_id or lead.id}.pdf"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/{lead_id}/events", response_model=LeadEventResponse)
+def create_lead_note(
+    lead_id: int,
+    payload: LeadEventCreate,
+    db: Session = Depends(get_db),
+    actor: User | None = Depends(get_actor),
+):
+    note = payload.message.strip()
+    if not note:
+        raise HTTPException(status_code=400, detail="Nota vazia")
+
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead nao encontrado")
+
+    ensure_lead_visible_to_actor(db, lead, actor)
+
+    event = LeadEvent(
+        lead_id=lead.id,
+        actor_id=actor.id if actor else None,
+        actor_name=actor_label(actor),
+        event_type="NOTA",
+        message=note,
+    )
+    db.add(event)
+    lead.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(event)
+    return event
+
+
+@router.patch("/{lead_id}/pipeline", response_model=LeadResponse)
+def update_lead_pipeline(
+    lead_id: int,
+    payload: LeadPipelineUpdate,
+    db: Session = Depends(get_db),
+    actor: User | None = Depends(get_actor),
+):
+    stage = payload.pipeline.upper()
+
+    if stage not in PIPELINE_STAGES:
+        raise HTTPException(status_code=400, detail="Etapa de pipeline invalida")
+
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead nao encontrado")
+
+    ensure_lead_visible_to_actor(db, lead, actor)
+    if lead.pipeline != stage:
+        previous_stage = lead.pipeline or "SEM ETAPA"
+        lead.pipeline_updated_at = datetime.utcnow()
+        add_lead_event(
+            db,
+            lead,
+            actor,
+            "PIPELINE",
+            f"Moveu de {previous_stage} para {stage}",
+        )
+    lead.pipeline = stage
+    lead.updated_at = datetime.utcnow()
+    service_order = ensure_service_order(db, lead, actor=actor)
+    sync_service_order_from_lead(db, service_order, lead, actor=actor)
+    db.commit()
+    db.refresh(lead)
+    return lead
+
+
+@router.patch("/{lead_id}/assign", response_model=LeadResponse)
+def assign_lead(
+    lead_id: int,
+    payload: LeadAssignUpdate,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_actor),
+):
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead nao encontrado")
+
+    ensure_lead_visible_to_actor(db, lead, actor)
+    validate_responsible(db, actor, payload.assigned_to_user_id)
+
+    previous_broker_id = lead.assigned_to_user_id
+    lead.assigned_to_user_id = payload.assigned_to_user_id
+    lead.updated_at = datetime.utcnow()
+    service_order = ensure_service_order(db, lead, actor=actor)
+    sync_service_order_from_lead(db, service_order, lead, actor=actor)
+    add_lead_event(
+        db,
+        lead,
+        actor,
+        "ATRIBUICAO",
+        f"Responsavel alterado de {previous_broker_id or 'sin asignar'} para {payload.assigned_to_user_id or 'sin asignar'}",
+    )
+    db.commit()
+    db.refresh(lead)
+    return lead
+
+
+@router.patch("/{lead_id}/return-to-bank", response_model=LeadResponse)
+def return_lead_to_bank(
+    lead_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_actor),
+):
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead nao encontrado")
+
+    ensure_lead_visible_to_actor(db, lead, actor)
+    lead.assigned_to_user_id = None
+    lead.pipeline = "NOVO LEAD"
+    lead.pipeline_updated_at = datetime.utcnow()
+    lead.updated_at = datetime.utcnow()
+    service_order = ensure_service_order(db, lead, actor=actor)
+    sync_service_order_from_lead(db, service_order, lead, actor=actor)
+    add_lead_event(db, lead, actor, "BANCO", "Lead voltou para o banco")
+    db.commit()
+    db.refresh(lead)
+    return lead
+
+
+@router.delete("/{lead_id}")
+def delete_lead(
+    lead_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_actor),
+):
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead nao encontrado")
+
+    ensure_lead_visible_to_actor(db, lead, actor)
+    add_lead_event(db, lead, actor, "EXCLUSAO", "Lead excluido definitivamente")
+    db.delete(lead)
+    db.commit()
+    return {"deleted": True, "lead_id": lead_id}
+
+
+@router.patch("/{lead_id}", response_model=LeadResponse)
+def update_lead(
+    lead_id: int,
+    payload: LeadUpdate,
+    db: Session = Depends(get_db),
+    actor: User | None = Depends(get_actor),
+):
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead nao encontrado")
+
+    ensure_lead_visible_to_actor(db, lead, actor)
+    updates = payload.model_dump(exclude_unset=True)
+    if "property_extra" in updates:
+        updates["property_extra_json"] = property_extra_json(payload)
+        updates.pop("property_extra", None)
+
+    if "pipeline" in updates and updates["pipeline"]:
+        stage = updates["pipeline"].upper()
+        if stage not in PIPELINE_STAGES:
+            raise HTTPException(status_code=400, detail="Etapa de pipeline invalida")
+        if lead.pipeline != stage:
+            previous_stage = lead.pipeline or "SEM ETAPA"
+            lead.pipeline_updated_at = datetime.utcnow()
+            add_lead_event(
+                db,
+                lead,
+                actor,
+                "PIPELINE",
+                f"Moveu de {previous_stage} para {stage}",
+            )
+        updates["pipeline"] = stage
+
+    if "assigned_to_user_id" in updates:
+        validate_responsible(db, actor, updates["assigned_to_user_id"])
+
+    tracked_fields = {
+        "nome",
+        "contato",
+        "email",
+        "site",
+        "instagram",
+        "linkedin",
+        "facebook",
+        "redes_sociais",
+        "nicho",
+        "pais",
+        "score",
+        "valor_negocio",
+        "endereco",
+        "observacoes",
+        "property_id",
+        "tipo_imovel",
+        "tipo_servico",
+        "empresa",
+        "pessoa_contato",
+        "latitude",
+        "longitude",
+        "foto_fachada_url",
+        "property_extra_json",
+        "whatsapp",
+        "colonia",
+        "codigo_postal",
+        "google_maps_url",
+        "descripcion_problema",
+        "urgencia",
+        "origen",
+        "origen_detalle",
+        "proximo_contacto",
+    }
+    changed_fields = [
+        field
+        for field, value in updates.items()
+        if field in tracked_fields and str(getattr(lead, field, "") or "") != str(value or "")
+    ]
+
+    for field, value in updates.items():
+        setattr(lead, field, value)
+
+    lead.updated_at = datetime.utcnow()
+    service_order = ensure_service_order(db, lead, actor=actor)
+    sync_service_order_from_lead(db, service_order, lead, actor=actor)
+    if changed_fields:
+        add_lead_event(
+            db,
+            lead,
+            actor,
+            "EDICAO",
+            f"Editou dados do lead: {', '.join(changed_fields)}",
+        )
+    db.commit()
+    db.refresh(lead)
+    return lead

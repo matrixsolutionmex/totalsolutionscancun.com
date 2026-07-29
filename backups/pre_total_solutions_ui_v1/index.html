@@ -1,0 +1,4761 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Total Solutions CRM</title>
+  <style>
+    :root {
+      --bg: #eef1f7;
+      --panel: #ffffff;
+      --line: #d7deeb;
+      --text: #162846;
+      --muted: #64748b;
+      --blue: #2087f2;
+      --green: #16a66a;
+      --amber: #c98100;
+      --violet: #6d5dfc;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    body.logged-out .app-shell {
+      display: none;
+    }
+
+    body.logged-in .login-page {
+      display: none;
+    }
+
+    .login-page {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: minmax(320px, 1.05fr) minmax(320px, 0.95fr);
+      align-items: stretch;
+      padding: 0;
+      background: #f4f7fb;
+    }
+
+    .login-cover {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 28px;
+      padding: 54px;
+      background:
+        linear-gradient(90deg, rgba(255, 255, 255, 0.12) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(255, 255, 255, 0.12) 1px, transparent 1px),
+        radial-gradient(circle at 50% 50%, transparent 0 86px, rgba(255,255,255,0.18) 87px 89px, transparent 90px),
+        linear-gradient(135deg, rgba(18, 105, 58, 0.94), rgba(14, 55, 95, 0.95)),
+        radial-gradient(circle at 22% 18%, rgba(255, 255, 255, 0.22), transparent 28%),
+        linear-gradient(135deg, #0d7a44, #162846);
+      background-size: 76px 76px, 76px 76px, auto, auto, auto, auto;
+      color: #fff;
+    }
+
+    .login-cover .brand {
+      color: #fff;
+      font-size: 30px;
+    }
+
+    .login-cover h1 {
+      max-width: 680px;
+      font-size: 48px;
+      line-height: 1.06;
+      margin: 0 0 18px;
+    }
+
+    .login-cover p {
+      max-width: 620px;
+      color: rgba(255, 255, 255, 0.82);
+      font-size: 18px;
+      line-height: 1.55;
+      margin: 0;
+    }
+
+    .match-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.12);
+      padding: 9px 13px;
+      color: rgba(255, 255, 255, 0.9);
+      font-size: 13px;
+      font-weight: 800;
+      margin-bottom: 18px;
+    }
+
+    .login-highlights {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      max-width: 720px;
+    }
+
+    .login-highlight {
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      padding: 16px;
+      backdrop-filter: blur(12px);
+    }
+
+    .login-highlight strong {
+      display: block;
+      font-size: 14px;
+      margin-bottom: 6px;
+    }
+
+    .login-highlight span {
+      color: rgba(255, 255, 255, 0.76);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .login-panel {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 32px;
+    }
+
+    .login-card {
+      width: min(460px, 100%);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 18px 60px rgba(15, 23, 42, 0.13);
+      padding: 30px;
+    }
+
+    .login-card h1 {
+      font-size: 28px;
+      margin-bottom: 8px;
+    }
+
+    .login-card .subtitle {
+      color: var(--muted);
+      line-height: 1.4;
+      margin-bottom: 22px;
+    }
+
+    .login-form {
+      display: grid;
+      gap: 12px;
+    }
+
+    .login-form input,
+    .login-form select {
+      min-height: 48px;
+      border: 1px solid #bdc9dc;
+      border-radius: 4px;
+      padding: 0 14px;
+      font-size: 16px;
+    }
+
+    .login-security-note {
+      margin-top: 16px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .auth-switch {
+      margin-top: 14px;
+      width: 100%;
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--line);
+    }
+
+    .auth-status {
+      min-height: 20px;
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .auth-status.success {
+      color: #059669;
+    }
+
+    .auth-status.error {
+      color: #dc2626;
+    }
+
+    .pending-user-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .pending-user-controls {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(120px, 1fr));
+      gap: 8px;
+      width: 100%;
+    }
+
+    @media (max-width: 760px) {
+      .pending-user-controls {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    .topbar {
+      height: 68px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      padding: 0 24px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand {
+      font-size: 22px;
+      font-weight: 800;
+      color: #b42318;
+      min-width: 170px;
+    }
+
+    .nav {
+      display: flex;
+      gap: 18px;
+      color: #334155;
+      font-weight: 700;
+      align-items: stretch;
+    }
+
+    .nav button {
+      min-height: 38px;
+      padding: 0 6px;
+      color: #334155;
+      background: transparent;
+      border: 0;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .nav button.active {
+      color: var(--blue);
+      border-bottom: 3px solid var(--blue);
+      border-radius: 0;
+    }
+
+    .nav-group {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .mega-menu {
+      position: absolute;
+      top: 54px;
+      left: -28px;
+      z-index: 30;
+      width: min(720px, calc(100vw - 48px));
+      display: none;
+      grid-template-columns: repeat(3, minmax(150px, 1fr));
+      gap: 30px;
+      padding: 26px 30px 28px;
+      background: #fff;
+      border: 1px solid var(--line);
+      box-shadow: 0 22px 60px rgba(15, 23, 42, 0.14);
+    }
+
+    .nav-group:hover .mega-menu,
+    .nav-group:focus-within .mega-menu {
+      display: grid;
+    }
+
+    .mega-column {
+      display: grid;
+      gap: 16px;
+      align-content: start;
+    }
+
+    .mega-title {
+      color: var(--blue);
+      font-size: 16px;
+      font-weight: 800;
+    }
+
+    .mega-link {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 34px;
+      padding: 0;
+      color: #475569;
+      background: transparent;
+      border: 0;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .mega-link::before {
+      content: "";
+      width: 0;
+      height: 0;
+      border-top: 5px solid transparent;
+      border-bottom: 5px solid transparent;
+      border-left: 5px solid var(--blue);
+    }
+
+    .mega-link:hover {
+      color: var(--blue);
+    }
+
+    .spacer {
+      flex: 1;
+    }
+
+    .support-button {
+      min-height: 42px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 999px;
+      background: #114f52;
+      color: #fff;
+      border: 0;
+      padding: 0 18px;
+      font-weight: 800;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .support-button:hover {
+      background: #0f3f42;
+    }
+
+    .user-pill {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      font-weight: 800;
+    }
+
+    .user-pill span {
+      color: var(--green);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .logout-button {
+      min-height: 38px;
+      padding: 0 14px;
+    }
+
+    .quantity-input {
+      min-height: 48px;
+      width: 120px;
+      border: 1px solid #bdc9dc;
+      border-radius: 4px;
+      padding: 0 12px;
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .theme-select {
+      min-height: 42px;
+      min-width: 180px;
+      border: 1px solid #bdc9dc;
+      border-radius: 4px;
+      padding: 0 12px;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+      background: var(--panel);
+    }
+
+    .admin-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(150px, 1fr));
+      gap: 10px;
+    }
+
+    .admin-grid input,
+    .admin-grid select {
+      min-height: 42px;
+      border: 1px solid #bdc9dc;
+      border-radius: 4px;
+      padding: 0 12px;
+      font-size: 14px;
+    }
+
+    .checkbox-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #475569;
+      font-weight: 800;
+    }
+
+    .inventory-meter {
+      grid-column: 1 / -1;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: #475569;
+      font-weight: 800;
+      border-top: 1px solid #eef2f7;
+      padding-top: 10px;
+    }
+
+    .inventory-meter strong {
+      color: var(--green);
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: 1fr minmax(280px, 420px) auto auto auto;
+      gap: 16px;
+      align-items: center;
+      padding: 20px 24px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 30px;
+      line-height: 1.1;
+    }
+
+    .subtitle {
+      margin-top: 6px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .search {
+      display: flex;
+      border: 1px solid #bdc9dc;
+      border-radius: 4px;
+      overflow: hidden;
+      background: #f7f9fc;
+      min-height: 48px;
+    }
+
+    .search input {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      padding: 0 16px;
+      font-size: 16px;
+      outline: 0;
+    }
+
+    button {
+      border: 0;
+      background: var(--blue);
+      color: #fff;
+      font-weight: 800;
+      border-radius: 4px;
+      min-height: 48px;
+      padding: 0 18px;
+      cursor: pointer;
+    }
+
+    .ghost {
+      color: #475569;
+      background: #fff;
+      border: 1px solid #bdc9dc;
+    }
+
+    .board {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(280px, 1fr));
+      min-width: 1960px;
+      height: calc(100vh - 137px);
+      overflow-x: auto;
+    }
+
+    .admin-panel {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      padding: 16px 24px;
+      background: #f8fafc;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .view {
+      display: none;
+    }
+
+    .view.active {
+      display: block;
+    }
+
+    .view-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      padding: 16px 24px;
+      background: #f8fafc;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .metric-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(120px, 1fr));
+      gap: 12px;
+    }
+
+    .metric {
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 14px;
+      background: #fff;
+    }
+
+    .metric strong {
+      display: block;
+      margin-top: 6px;
+      font-size: 24px;
+      color: var(--text);
+    }
+
+    body.broker-mode .admin-only,
+    body.broker-mode .manager-only,
+    body.broker-mode .root-only,
+    body.broker-mode .creator-only {
+      display: none;
+    }
+
+    body.manager-mode .root-only {
+      display: none;
+    }
+
+    body.view-leads .toolbar,
+    body.view-atendimento .toolbar,
+    body.view-relatorios .toolbar,
+    body.view-suporte .toolbar,
+    body.view-usuarios .toolbar,
+    body.view-leads .admin-panel,
+    body.view-atendimento .admin-panel,
+    body.view-relatorios .admin-panel,
+    body.view-suporte .admin-panel,
+    body.view-usuarios .admin-panel {
+      display: none;
+    }
+
+    .panel-box {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 14px;
+    }
+
+    .panel-title {
+      font-weight: 800;
+      margin-bottom: 10px;
+    }
+
+    .inline-form {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 10px;
+    }
+
+    .inline-form input,
+    .inline-form select {
+      min-height: 42px;
+      border: 1px solid #bdc9dc;
+      border-radius: 4px;
+      padding: 0 12px;
+      font-size: 14px;
+    }
+
+    .broker-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .profile-summary {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      color: #334155;
+      font-weight: 700;
+    }
+
+    .session-profile,
+    .profile-identity,
+    .profile-actions {
+      display: flex;
+      align-items: center;
+    }
+
+    .session-profile { gap: 10px; }
+    .profile-identity { gap: 12px; min-width: 0; }
+    .profile-actions { gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+
+    .profile-avatar {
+      width: 58px;
+      height: 58px;
+      border-radius: 50%;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--green);
+      overflow: hidden;
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      position: relative;
+    }
+
+    .profile-avatar-small { width: 42px; height: 42px; }
+    .profile-avatar-button { padding: 0; cursor: pointer; }
+    .profile-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .avatar-initials { font-weight: 900; }
+
+    .profile-photo-edit {
+      position: absolute;
+      right: -1px;
+      bottom: -1px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: 2px solid var(--panel);
+      background: var(--green);
+      color: #fff;
+      display: grid;
+      place-items: center;
+      font-size: 14px;
+    }
+
+    .broker-row {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      align-items: center;
+      gap: 10px;
+      color: #334155;
+      font-weight: 700;
+      border-top: 1px solid #eef2f7;
+      padding-top: 8px;
+    }
+
+    .ticket-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      border-top: 1px solid #eef2f7;
+      padding: 12px 0;
+      color: #334155;
+    }
+
+    .ticket-row strong {
+      color: var(--text);
+    }
+
+    .ticket-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 6px 0;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .ticket-message {
+      margin-top: 8px;
+      color: #1e293b;
+      line-height: 1.4;
+    }
+
+    .ticket-status {
+      min-width: 160px;
+      min-height: 40px;
+      border: 1px solid #bdc9dc;
+      border-radius: 4px;
+      padding: 0 10px;
+      color: var(--text);
+      font-weight: 800;
+    }
+
+    .small-badge {
+      color: var(--green);
+      background: #e9f8f0;
+      border-radius: 999px;
+      padding: 4px 9px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .presence-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      width: fit-content;
+      margin-top: 6px;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .presence-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: #94a3b8;
+    }
+
+    .presence-badge.online {
+      color: var(--green);
+    }
+
+    .presence-badge.online .presence-dot {
+      background: var(--green);
+      box-shadow: 0 0 0 4px rgba(22, 166, 106, 0.12);
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(15, 23, 42, 0.45);
+      z-index: 20;
+      padding: 24px;
+    }
+
+    .modal-backdrop.open {
+      display: flex;
+    }
+
+    .modal {
+      width: min(760px, 100%);
+      max-height: 92vh;
+      overflow: auto;
+      background: #fff;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      box-shadow: 0 24px 70px rgba(15, 23, 42, 0.25);
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .modal-title {
+      font-size: 22px;
+      font-weight: 800;
+    }
+
+    .modal-body {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      padding: 22px;
+    }
+
+    .modal-field {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      font-weight: 800;
+      color: #475569;
+    }
+
+    .modal-field.full {
+      grid-column: 1 / -1;
+    }
+
+    .modal-field input,
+    .modal-field select,
+    .modal-field textarea {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid #bdc9dc;
+      border-radius: 4px;
+      padding: 9px 11px;
+      color: var(--text);
+      font: inherit;
+      font-weight: 600;
+    }
+
+    .modal-field textarea {
+      min-height: 78px;
+      resize: vertical;
+    }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      padding: 0 22px 22px;
+    }
+
+    .admin-lead-tools {
+      grid-column: 1 / -1;
+      border-top: 1px solid var(--line);
+      padding-top: 16px;
+      margin-top: 4px;
+      display: grid;
+      grid-template-columns: 1fr auto auto auto;
+      gap: 10px;
+      align-items: end;
+    }
+
+    .lead-history {
+      grid-column: 1 / -1;
+      border-top: 1px solid var(--line);
+      padding-top: 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .lead-history-title {
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--text);
+    }
+
+    .lead-note-box {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: end;
+    }
+
+    .lead-note-box textarea {
+      min-height: 70px;
+      border: 1px solid #bdc9dc;
+      border-radius: 4px;
+      padding: 10px 12px;
+      font: inherit;
+      font-weight: 600;
+      resize: vertical;
+    }
+
+    .timeline-list {
+      display: grid;
+      gap: 8px;
+      max-height: 240px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .timeline-item {
+      border: 1px solid #dbe4f0;
+      border-left: 4px solid var(--blue);
+      border-radius: 6px;
+      padding: 10px 12px;
+      background: #f8fafc;
+    }
+
+    .timeline-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      color: #64748b;
+      font-size: 13px;
+      font-weight: 800;
+      margin-bottom: 4px;
+    }
+
+    .timeline-message {
+      color: var(--text);
+      font-weight: 700;
+      line-height: 1.35;
+    }
+
+    .danger {
+      background: #dc2626;
+    }
+
+    .warning {
+      background: #f59e0b;
+      color: #111827;
+    }
+
+    .column {
+      border-right: 1px solid #cfd7e6;
+      background: #eef1f7;
+      display: flex;
+      flex-direction: column;
+      min-width: 280px;
+    }
+
+    .column-header {
+      height: 86px;
+      padding: 18px 16px;
+      background: #fff;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .column-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 17px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .count {
+      margin-left: auto;
+      color: var(--blue);
+      border: 1px solid var(--blue);
+      border-radius: 4px;
+      min-width: 28px;
+      text-align: center;
+      font-size: 14px;
+      padding: 2px 6px;
+    }
+
+    .value {
+      margin-top: 8px;
+      color: #95a1b8;
+      font-weight: 700;
+    }
+
+    .cards {
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow-y: auto;
+    }
+
+    .card {
+      background: #fff;
+      border: 1px solid #dfe5ef;
+      border-left: 5px solid #24c991;
+      border-radius: 7px;
+      box-shadow: 0 2px 6px rgba(17, 24, 39, 0.08);
+      padding: 14px 14px 10px;
+      cursor: grab;
+    }
+
+    .card:active {
+      cursor: grabbing;
+    }
+
+    .card.stage-novo-lead {
+      border-left-color: #2087f2;
+    }
+
+    .card.stage-atendimento {
+      border-left-color: #24c991;
+    }
+
+    .card.stage-tentativa-de-contato {
+      border-left-color: #f59e0b;
+    }
+
+    .card.stage-visita {
+      border-left-color: #6d5dfc;
+    }
+
+    .card.stage-montagem-de-pasta {
+      border-left-color: #0f766e;
+    }
+
+    .card.stage-venda-ganha {
+      border-left-color: #16a34a;
+    }
+
+    .card.stage-perdido {
+      border-left-color: #dc2626;
+      background: #fff7f7;
+    }
+
+    .column.drop-target .cards {
+      background: #e4eefc;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: flex-start;
+    }
+
+    .card-title {
+      font-weight: 800;
+      line-height: 1.25;
+      min-height: 20px;
+    }
+
+    .badge {
+      border: 1px solid #c6d2e4;
+      border-radius: 4px;
+      padding: 4px 6px;
+      font-size: 13px;
+      font-weight: 800;
+      background: #f8fafc;
+    }
+
+    .card-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .edit-pill {
+      width: 28px;
+      height: 28px;
+      display: inline-grid;
+      place-items: center;
+      color: #2563eb;
+      background: #eef5ff;
+      border: 1px solid #bcd3f5;
+      border-radius: 999px;
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .card-meta {
+      margin-top: 8px;
+      color: #53657f;
+      font-weight: 800;
+      text-decoration: underline;
+    }
+
+    .status {
+      margin-top: 8px;
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .status span {
+      color: var(--blue);
+    }
+
+    .divider {
+      border-top: 1px dashed #d8dfeb;
+      margin: 10px -14px;
+    }
+
+    .line {
+      color: #213653;
+      margin-top: 5px;
+      font-size: 14px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .line strong {
+      color: var(--green);
+      margin-right: 6px;
+    }
+
+    .lead-country {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 8px;
+      color: #475569;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .lead-country .flag {
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    .deal-value {
+      color: #0f766e;
+      font-size: 14px;
+      font-weight: 800;
+      margin-top: 7px;
+    }
+
+    .contact-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .contact-actions a {
+      min-height: 30px;
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid #c8d5e8;
+      border-radius: 999px;
+      padding: 0 9px;
+      color: #1d4ed8;
+      background: #f8fbff;
+      font-size: 12px;
+      font-weight: 800;
+      text-decoration: none;
+    }
+
+    .card-clock {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+      padding-top: 9px;
+      border-top: 1px dashed #d8dfeb;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .card-clock strong {
+      color: #0f766e;
+      font-size: 15px;
+    }
+
+    .broker-toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 30;
+      max-width: 360px;
+      border: 1px solid #a7f3d0;
+      border-radius: 8px;
+      background: #ecfdf5;
+      color: #065f46;
+      box-shadow: 0 16px 40px rgba(15, 23, 42, 0.18);
+      padding: 14px 16px;
+      font-weight: 800;
+    }
+
+    .line a {
+      color: inherit;
+      text-decoration: none;
+      overflow-wrap: anywhere;
+    }
+
+    .line a:hover {
+      color: #1d4ed8;
+      text-decoration: underline;
+    }
+
+    .support-widget {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      z-index: 45;
+      width: min(420px, calc(100vw - 32px));
+      display: none;
+      overflow: hidden;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      background: #fff;
+      box-shadow: 0 28px 70px rgba(15, 23, 42, 0.26);
+    }
+
+    .support-widget.open {
+      display: block;
+    }
+
+    .support-header {
+      min-height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 0 18px;
+      background: #114f52;
+      color: #fff;
+    }
+
+    .support-header strong {
+      font-size: 18px;
+    }
+
+    .support-header button {
+      width: 34px;
+      height: 34px;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      color: #fff;
+      font-size: 24px;
+      cursor: pointer;
+    }
+
+    .support-body {
+      display: grid;
+      gap: 16px;
+      padding: 22px;
+    }
+
+    .support-message {
+      background: #f1f5f9;
+      border-radius: 18px 18px 18px 4px;
+      padding: 14px 16px;
+      color: #1e293b;
+      line-height: 1.45;
+    }
+
+    .support-form {
+      display: grid;
+      gap: 10px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .support-form label {
+      display: grid;
+      gap: 6px;
+      color: #334155;
+      font-weight: 800;
+      font-size: 13px;
+    }
+
+    .support-form select,
+    .support-form textarea {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid #bdc9dc;
+      border-radius: 4px;
+      padding: 10px 12px;
+      color: #162846;
+      font: inherit;
+    }
+
+    .support-form textarea {
+      min-height: 94px;
+      resize: vertical;
+    }
+
+    .support-actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .support-actions button {
+      min-height: 42px;
+      border-radius: 999px;
+      padding: 0 22px;
+      background: #059669;
+    }
+
+    .support-status {
+      min-height: 18px;
+      color: #047857;
+      font-weight: 800;
+      font-size: 13px;
+    }
+
+    .empty {
+      align-self: center;
+      color: #b0b9ca;
+      border: 1px dashed #aeb8ca;
+      border-radius: 32px;
+      margin-top: 160px;
+      padding: 18px 26px;
+      font-weight: 800;
+    }
+
+    @media (max-width: 900px) {
+      .login-page {
+        grid-template-columns: 1fr;
+      }
+
+      .login-cover {
+        min-height: auto;
+        padding: 34px 24px;
+      }
+
+      .login-cover h1 {
+        font-size: 36px;
+      }
+
+      .login-highlights {
+        grid-template-columns: 1fr;
+      }
+
+      .login-panel {
+        min-height: auto;
+      }
+
+      .topbar {
+        gap: 12px;
+      }
+
+      .nav {
+        display: none;
+      }
+
+      .toolbar {
+        grid-template-columns: 1fr;
+      }
+
+    .admin-panel {
+      grid-template-columns: 1fr;
+      }
+
+      .view-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .metric-row {
+        grid-template-columns: 1fr;
+      }
+
+      .inline-form {
+        grid-template-columns: 1fr;
+      }
+
+      .modal-body {
+        grid-template-columns: 1fr;
+      }
+
+      .board {
+        height: auto;
+      }
+    }
+  </style>
+  <link rel="stylesheet" href="/assets/totalsolutions-theme.css">
+  <link rel="stylesheet" href="totalsolutions-theme.css">
+</head>
+<body class="logged-out">
+  <section class="login-page">
+    <div class="login-cover">
+      <div class="brand">Total Solutions</div>
+      <div>
+        <div class="match-badge" id="loginBadge">Copa 2026 · Dados B2B em campo</div>
+        <h1 id="loginHeroTitle">Sua seleção comercial entra em campo antes da concorrência.</h1>
+        <p id="loginHeroText">Com o Total Solutions, seu time distribui leads por país, idioma e segmento, acompanha cada broker no funil e transforma dados B2B em jogadas de venda.</p>
+      </div>
+      <div class="login-highlights">
+        <div class="login-highlight">
+          <strong id="loginHighlightOneTitle">Banco central</strong>
+          <span id="loginHighlightOneText">Leads importados, filtrados por segmento e país.</span>
+        </div>
+        <div class="login-highlight">
+          <strong id="loginHighlightTwoTitle">Gestão por perfil</strong>
+          <span id="loginHighlightTwoText">Root, gerentes e brokers com visões separadas.</span>
+        </div>
+        <div class="login-highlight">
+          <strong id="loginHighlightThreeTitle">Funil vivo</strong>
+          <span id="loginHighlightThreeText">Status, histórico e edição rápida do contato.</span>
+        </div>
+      </div>
+    </div>
+    <div class="login-panel">
+      <form class="login-card" id="loginForm" autocomplete="off">
+        <div class="brand">Total Solutions</div>
+        <h1 id="loginTitle">Entrar no painel</h1>
+        <div class="subtitle" id="loginSubtitle">Acesso reservado para usuários autorizados.</div>
+        <div class="login-form">
+          <select id="loginLanguage" title="Idioma">
+            <option value="pt">Português · Brasil</option>
+            <option value="en">English · UK/EUA</option>
+            <option value="es">Español · México</option>
+          </select>
+          <select id="loginTheme" title="Aparência"></select>
+          <input id="loginUser" placeholder="Usuário" autocomplete="off" autocapitalize="none" spellcheck="false">
+          <input id="loginPassword" placeholder="Senha" type="password" autocomplete="off">
+          <button id="loginButton" type="submit">Entrar</button>
+        </div>
+        <div class="login-security-note" id="loginNote">Use as credenciais recebidas pelo administrador da operação.</div>
+        <button class="auth-switch" id="showRegisterButton" type="button">Criar conta</button>
+        <div class="auth-status" id="loginStatus" aria-live="polite"></div>
+      </form>
+      <form class="login-card hidden" id="registerForm" autocomplete="off">
+        <div class="brand">Total Solutions</div>
+        <h1 id="registerTitle">Criar conta</h1>
+        <div class="subtitle" id="registerSubtitle">Cadastre-se para solicitar acesso à operação.</div>
+        <div class="login-form">
+          <input id="registerFullName" placeholder="Nome completo" autocomplete="name">
+          <input id="registerEmail" type="email" placeholder="E-mail" autocomplete="email">
+          <input id="registerCompany" placeholder="Empresa" autocomplete="organization">
+          <input id="registerPhone" placeholder="Telefone" autocomplete="tel">
+          <select id="registerPlan">
+            <option value="STARTER">Starter</option>
+            <option value="PRO">Pro</option>
+            <option value="EQUIPES">Equipes</option>
+          </select>
+          <input id="registerPassword" type="password" placeholder="Senha" autocomplete="new-password">
+          <input id="registerPasswordConfirm" type="password" placeholder="Confirmar senha" autocomplete="new-password">
+          <button id="registerButton" type="submit">Solicitar acesso</button>
+        </div>
+        <button class="auth-switch" id="backToLoginButton" type="button">Voltar ao login</button>
+        <div class="auth-status" id="registerStatus" aria-live="polite"></div>
+      </form>
+    </div>
+  </section>
+
+  <div class="app-shell">
+  <header class="topbar">
+    <div class="brand">Total Solutions</div>
+    <nav class="nav">
+      <div class="nav-group">
+        <button class="nav-main active" data-view-target="vendas">Vendas</button>
+        <div class="mega-menu" aria-label="Menu de vendas">
+          <div class="mega-column">
+            <div class="mega-title" data-menu-title="funnel">Funil</div>
+            <button class="mega-link" data-view-target="vendas" data-menu-key="salesFunnel">Funil de Vendas</button>
+          </div>
+          <div class="mega-column">
+            <div class="mega-title" data-menu-title="clients">Clientes</div>
+            <button class="mega-link" data-view-target="leads" data-menu-key="listClients">Listar Clientes</button>
+            <button class="mega-link" data-view-target="leads" data-menu-key="createClient">Cadastrar Cliente</button>
+          </div>
+          <div class="mega-column">
+            <div class="mega-title" data-menu-title="reservations">Reservas</div>
+            <button class="mega-link" data-view-target="atendimento" data-menu-key="listReservations">Listar Reservas</button>
+            <button class="mega-link" data-view-target="atendimento" data-menu-key="createReservation">Criar Reserva</button>
+          </div>
+        </div>
+      </div>
+      <button class="nav-main" data-view-target="leads">Leads</button>
+      <button class="nav-main" data-view-target="atendimento">Atendimento</button>
+      <button class="nav-main" data-view-target="relatorios">Relatórios</button>
+      <button class="nav-main manager-only" data-view-target="suporte">Suporte</button>
+      <button class="nav-main" data-view-target="contratos">Contratos</button>
+      <button class="nav-main root-only" data-view-target="usuarios">Usuários</button>
+    </nav>
+    <div class="spacer"></div>
+    <button class="support-button" id="supportButton" type="button">Suporte</button>
+    <select id="appTheme" class="theme-select" title="Aparência"></select>
+        <div class="session-profile">
+          <div class="profile-avatar profile-avatar-small" aria-hidden="true">
+            <span id="sessionAvatarContent" class="avatar-initials">R</span>
+          </div>
+          <div class="user-pill" id="sessionUser">root <span>Administrador</span></div>
+        </div>
+        <button class="ghost logout-button" id="logoutButton">Sair</button>
+  </header>
+
+  <section class="toolbar">
+    <div>
+      <h1>Funil de Vendas</h1>
+      <div class="subtitle" id="totalText">Carregando leads...</div>
+    </div>
+    <label class="search">
+      <input id="searchInput" type="search" placeholder="Buscar cliente">
+    </label>
+    <button class="ghost" id="reloadButton">Filtrar Dados</button>
+    <select id="brokerFilter" class="ghost manager-only" style="min-height:48px;border-radius:4px;padding:0 12px;">
+      <option value="">Todos os brokers</option>
+    </select>
+    <input id="leadSendQuantity" class="quantity-input manager-only" type="number" min="1" step="1" value="100" title="Quantidade de leads">
+    <button id="seedBrokerButton" class="manager-only">Enviar ao Broker</button>
+  </section>
+
+  <section class="admin-panel">
+    <div class="panel-box">
+      <div class="panel-title">Meu perfil</div>
+      <div class="profile-summary">
+        <div class="profile-identity">
+          <button class="profile-avatar profile-avatar-button" id="profilePhotoButton" type="button" title="Alterar foto">
+            <span id="profileAvatarContent" class="avatar-initials">R</span>
+            <span class="profile-photo-edit" aria-hidden="true">+</span>
+          </button>
+          <div>
+            <div id="profileName">root</div>
+            <div class="line" id="profileDetails">Administrador</div>
+          </div>
+        </div>
+        <div class="profile-actions">
+          <button class="ghost" id="removeProfilePhotoButton" type="button" hidden>Remover foto</button>
+          <button class="ghost" id="editMyProfileButton">Editar perfil</button>
+        </div>
+      </div>
+      <input hidden id="profilePhotoInput" type="file" accept="image/jpeg,image/png,image/webp">
+    </div>
+    <div class="panel-box manager-only">
+      <div class="panel-title">Distribuir por segmento e país</div>
+      <div class="admin-grid">
+        <select id="assignBroker">
+          <option value="">Selecione broker</option>
+        </select>
+        <select id="assignSegment">
+          <option value="">Todos os segmentos</option>
+        </select>
+        <select id="assignCountry">
+          <option value="">Todos os países</option>
+        </select>
+        <select id="assignState">
+          <option value="">Todos os estados</option>
+        </select>
+        <select id="assignCity">
+          <option value="">Todas as cidades</option>
+        </select>
+        <input id="assignQuantity" type="number" min="1" step="1" value="100" placeholder="Quantidade">
+        <button id="assignSmartButton">Enviar leads filtrados</button>
+        <button class="ghost" id="refreshInventoryButton">Atualizar estoque</button>
+        <div class="inventory-meter">
+          <span>Leads livres neste filtro: <strong id="assignAvailableCount">0</strong></span>
+          <span>Total livre no banco: <strong id="assignTotalFree">0</strong></span>
+        </div>
+      </div>
+    </div>
+    <div class="panel-box root-only">
+      <div class="panel-title">Voltar leads ao banco</div>
+      <div class="admin-grid">
+        <select id="returnBroker">
+          <option value="">Todos os brokers</option>
+        </select>
+        <input id="returnSegment" placeholder="Segmento / nicho">
+        <input id="returnCountry" placeholder="País">
+        <input id="returnState" placeholder="Estado">
+        <input id="returnCity" placeholder="Cidade">
+        <input id="returnQuantity" type="number" min="1" step="1" value="100" placeholder="Quantidade">
+        <label class="checkbox-line">
+          <input id="returnAllLeads" type="checkbox">
+          Todos
+        </label>
+        <button class="warning" id="returnBulkButton">Voltar ao banco</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="view active" id="view-vendas">
+    <main class="board" id="board"></main>
+  </section>
+
+  <section class="view" id="view-leads">
+    <div class="view-grid">
+      <div class="panel-box">
+        <div class="panel-title">Banco de leads</div>
+        <div class="metric-row">
+          <div class="metric">Leads livres<strong id="metricFreeLeads">0</strong></div>
+          <div class="metric">Segmentos<strong id="metricSegments">0</strong></div>
+          <div class="metric">Países<strong id="metricCountries">0</strong></div>
+          <div class="metric">Combinações<strong id="metricCombinations">0</strong></div>
+        </div>
+      </div>
+      <div class="panel-box">
+        <div class="panel-title">Estoque por segmento</div>
+        <div class="broker-list" id="segmentStockList"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="view" id="view-atendimento">
+    <div class="view-grid">
+      <div class="panel-box">
+        <div class="panel-title">Atendimento</div>
+        <div class="line">Use o funil para abrir o card, editar contato e mover etapas. Esta aba vai receber fila de tarefas, chamadas e follow-up.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="view" id="view-relatorios">
+    <div class="view-grid">
+      <div class="panel-box">
+        <div class="panel-title">Relatórios</div>
+        <div class="metric-row">
+          <div class="metric">Brokers ativos<strong id="metricBrokers">0</strong></div>
+          <div class="metric">Leads distribuídos<strong id="metricAssigned">0</strong></div>
+          <div class="metric">No banco<strong id="metricBank">0</strong></div>
+          <div class="metric">Venda ganha<strong id="metricWon">0</strong></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="view manager-only" id="view-suporte">
+    <div class="view-grid">
+      <div class="panel-box" style="grid-column: 1 / -1;">
+        <div class="panel-title">Chamados de suporte</div>
+        <div class="broker-list" id="supportTicketList"></div>
+      </div>
+    </div>
+  </section>
+  
+<section class="view" id="view-contratos">
+  <div class="admin-panel">
+    <div class="panel-header">
+      <div>
+        <p class="eyebrow">Documentos</p>
+        <h2>Contratos</h2>
+        <p>Crie e acompanhe contratos vinculados aos leads.</p>
+      </div>
+      <button class="primary-btn" type="button" onclick="loadContracts()">Atualizar</button>
+    </div>
+
+    <div class="view-grid">
+      <div class="panel-box">
+        <div class="panel-title">Novo contrato</div>
+        <form class="lead-form" id="contractForm" onsubmit="createContract(event)">
+          <input id="contractLeadId" type="number" placeholder="ID do Lead" required />
+          <select id="contractType" required>
+            <option value="COMPRA_E_VENDA">Compra e venda</option>
+            <option value="ALUGUEL">Aluguel</option>
+            <option value="EXCLUSIVIDADE">Exclusividade</option>
+            <option value="PRESTACAO_SERVICOS">Prestação de serviços</option>
+          </select>
+          <input id="contractClientName" placeholder="Nome do cliente" />
+          <input id="contractClientEmail" placeholder="Email do cliente" />
+          <input id="contractClientPhone" placeholder="Telefone do cliente" />
+          <input id="contractPropertyAddress" placeholder="Endereço / imóvel" />
+          <input id="contractBusinessValue" placeholder="Valor do negócio" />
+          <input id="contractCommissionValue" placeholder="Comissão" />
+          <textarea id="contractNotes" placeholder="Observações do contrato"></textarea>
+          <button class="primary-btn" type="submit">Criar contrato</button>
+        </form>
+      </div>
+
+      <div class="panel-box">
+        <div class="panel-title">Contratos criados</div>
+        <div class="broker-list" id="contractsList">
+          <div class="empty-state">Nenhum contrato carregado ainda.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+  <section class="view root-only" id="view-usuarios">
+    <div class="view-grid">
+      <div class="panel-box creator-only">
+        <div class="panel-title">Cadastrar usuário autorizado</div>
+        <div class="inline-form">
+          <input id="newBrokerUser" placeholder="usuario">
+          <input id="newBrokerPassword" type="password" placeholder="senha inicial" autocomplete="new-password">
+          <select id="newBrokerCountry">
+            <option value="BR">Brasil</option>
+            <option value="MX">México</option>
+            <option value="UK">UK · Londres</option>
+            <option value="US">EUA</option>
+          </select>
+          <input id="newBrokerState" placeholder="estado / provincia">
+          <input id="newBrokerCity" placeholder="cidade">
+          <select id="newBrokerLanguage">
+            <option value="pt">Português</option>
+            <option value="en">English</option>
+            <option value="es">Español</option>
+          </select>
+          <select id="newBrokerRole" class="root-only">
+            <option value="BROKER">Broker</option>
+            <option value="GERENTE">Gerente</option>
+          </select>
+          <select id="newBrokerManager" class="root-only">
+            <option value="">Sem gerente</option>
+          </select>
+          <button id="createBrokerButton">Cadastrar</button>
+        </div>
+      </div>
+      <div class="panel-box root-only">
+        <div class="panel-title" id="pendingUsersTitle">Cadastros aguardando aprovação</div>
+        <div class="broker-list" id="pendingUserList"></div>
+      </div>
+      <div class="panel-box root-only">
+        <div class="panel-title">Gerentes e brokers</div>
+        <div class="broker-list" id="brokerList"></div>
+      </div>
+    </div>
+  </section>
+  </div>
+
+  <div class="modal-backdrop" id="leadModal">
+    <form class="modal" id="leadForm">
+      <div class="modal-header">
+        <div class="modal-title">Editar lead</div>
+        <button class="ghost" type="button" id="closeLeadModal">Fechar</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="leadId">
+        <label class="modal-field">
+          Nome
+          <input id="leadNome">
+        </label>
+        <label class="modal-field">
+          Contato
+          <input id="leadContato">
+        </label>
+        <label class="modal-field">
+          Email
+          <input id="leadEmail">
+        </label>
+        <label class="modal-field">
+          Site
+          <input id="leadSite">
+        </label>
+        <label class="modal-field">
+          Instagram
+          <input id="leadInstagram" placeholder="@empresa">
+        </label>
+        <label class="modal-field">
+          LinkedIn
+          <input id="leadLinkedin" placeholder="https://linkedin.com/...">
+        </label>
+        <label class="modal-field">
+          Facebook
+          <input id="leadFacebook" placeholder="https://facebook.com/...">
+        </label>
+        <label class="modal-field">
+          Outras redes
+          <input id="leadRedesSociais" placeholder="TikTok, YouTube, X...">
+        </label>
+        <label class="modal-field">
+          Nicho
+          <input id="leadNicho">
+        </label>
+        <label class="modal-field">
+          País
+          <input id="leadPais">
+        </label>
+        <label class="modal-field">
+          Estado
+          <input id="leadEstado">
+        </label>
+        <label class="modal-field">
+          Cidade
+          <input id="leadCidade">
+        </label>
+        <label class="modal-field">
+          Score
+          <input id="leadScore" type="number" min="0" max="100">
+        </label>
+        <label class="modal-field">
+          Valor do negócio
+          <input id="leadValorNegocio" type="number" min="0" step="0.01" placeholder="0,00">
+        </label>
+        <label class="modal-field">
+          Etapa
+          <select id="leadPipeline"></select>
+        </label>
+        <label class="modal-field full">
+          Endereço
+          <textarea id="leadEndereco"></textarea>
+        </label>
+        <label class="modal-field full">
+          Observações
+          <textarea id="leadObservacoes" placeholder="Notas comerciais, preferências, histórico de contato..."></textarea>
+        </label>
+        <div class="lead-history">
+          <div class="lead-history-title">Notas internas e timeline</div>
+          <div class="lead-note-box">
+            <textarea id="leadNoteInput" placeholder="Adicionar nota interna: cliente quente, retornar amanhã, pediu financiamento..."></textarea>
+            <button type="button" id="saveLeadNoteButton">Adicionar nota</button>
+          </div>
+          <div class="timeline-list" id="leadTimelineList">
+            <div class="timeline-item">
+              <div class="timeline-message">Abra um lead para carregar a timeline.</div>
+            </div>
+          </div>
+        </div>
+        <div class="lead-history">
+          <div class="lead-history-title">Documentos anexados</div>
+          <div class="lead-note-box">
+            <select id="leadDocumentType">
+              <option value="DOCUMENTO_COM_FOTO">Documento com foto</option>
+              <option value="RG_CNH">RG / CNH</option>
+              <option value="COMPROVANTE_RESIDENCIA">Comprovante de residência</option>
+              <option value="COMPROVANTE_RENDA">Comprovante de renda</option>
+              <option value="CONTRATO_PDF">Contrato PDF</option>
+              <option value="PLANILHA_XLSX">Planilha XLSX</option>
+              <option value="OUTROS">Outros</option>
+            </select>
+            <input id="leadDocumentFile" type="file" accept=".pdf,.jpg,.jpeg,.png,.xlsx" />
+            <button type="button" id="uploadLeadDocumentButton">Anexar</button>
+          </div>
+          <div class="timeline-list" id="leadDocumentList">
+            <div class="timeline-item">
+              <div class="timeline-message">Nenhum documento anexado.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="admin-lead-tools manager-only">
+          <label class="modal-field">
+            Mover para broker
+            <select id="leadBrokerTarget"></select>
+          </label>
+          <button type="button" id="moveLeadBrokerButton">Mover</button>
+          <button class="warning" type="button" id="returnLeadBankButton">Voltar ao banco</button>
+          <button class="danger" type="button" id="deleteLeadButton">Excluir</button>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="ghost" type="button" id="cancelLeadEdit">Cancelar</button>
+        <button type="submit">Salvar alterações</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="modal-backdrop" id="userModal">
+    <form class="modal" id="userForm">
+      <div class="modal-header">
+        <div class="modal-title">Editar usuário</div>
+        <button class="ghost" type="button" id="closeUserModal">Fechar</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="editUserId">
+        <label class="modal-field">
+          Usuário
+          <input id="editUsername">
+        </label>
+        <label class="modal-field">
+          Nome completo
+          <input id="editFullName">
+        </label>
+        <label class="modal-field root-only">
+          Perfil
+          <select id="editUserRole">
+            <option value="BROKER">Broker</option>
+            <option value="GERENTE">Gerente</option>
+            <option value="ROOT">Root</option>
+          </select>
+        </label>
+        <label class="modal-field root-only">
+          Gerente responsavel
+          <select id="editUserManager">
+            <option value="">Sem gerente</option>
+          </select>
+        </label>
+        <label class="modal-field">
+          País de operação
+          <select id="editUserCountry">
+            <option value="BR">Brasil</option>
+            <option value="MX">México</option>
+            <option value="UK">UK · Londres</option>
+            <option value="US">EUA</option>
+          </select>
+        </label>
+        <label class="modal-field">
+          Estado / província
+          <input id="editUserState" placeholder="Estado / província">
+        </label>
+        <label class="modal-field">
+          Cidade principal
+          <input id="editUserCity" placeholder="Cidade principal">
+        </label>
+        <label class="modal-field">
+          Idioma da tela
+          <select id="editUserLanguage">
+            <option value="pt">Português</option>
+            <option value="en">English</option>
+            <option value="es">Español</option>
+          </select>
+        </label>
+        <label class="modal-field">
+          Nova senha
+          <input id="editUserPassword" type="password" placeholder="manter atual">
+        </label>
+        <label class="modal-field">
+          CRECI
+          <input id="editCreci" placeholder="CRECI">
+        </label>
+        <label class="modal-field">
+          Data nasc.
+          <input id="editDataNascimento" type="date">
+        </label>
+        <label class="modal-field">
+          Telefone
+          <input id="editTelefone">
+        </label>
+        <label class="modal-field">
+          Email pessoal
+          <input id="editEmailPessoal">
+        </label>
+        <label class="modal-field">
+          Documento
+          <input id="editDocumento" placeholder="CPF/RG">
+        </label>
+        <label class="modal-field full">
+          Observações
+          <textarea id="editUserObservacoes"></textarea>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="danger root-only" type="button" id="deleteUserButton">Excluir usuário</button>
+        <button class="ghost" type="button" id="cancelUserEdit">Cancelar</button>
+        <button type="submit">Salvar usuário</button>
+      </div>
+    </form>
+  </div>
+
+  <aside class="support-widget" id="supportWidget" aria-label="Suporte Total Solutions">
+    <div class="support-header">
+      <strong id="supportTitle">Suporte Total Solutions</strong>
+      <button id="closeSupportButton" type="button" aria-label="Fechar suporte">×</button>
+    </div>
+    <div class="support-body">
+      <div class="support-message" id="supportIntro">Descreva o que aconteceu e em qual módulo. O pedido fica registrado para o administrador acompanhar.</div>
+      <form class="support-form" id="supportForm">
+        <label>
+          <span id="supportModuleLabel">Módulo</span>
+          <select id="supportModule">
+            <option value="login">Acesso/Login</option>
+            <option value="leads">Leads</option>
+            <option value="kanban">Funil/Kanban</option>
+            <option value="usuarios">Usuários</option>
+            <option value="distribuicao">Distribuição</option>
+            <option value="relatorios">Relatórios</option>
+          </select>
+        </label>
+        <label>
+          <span id="supportPriorityLabel">Prioridade</span>
+          <select id="supportPriority">
+            <option value="normal">Normal</option>
+            <option value="alta">Alta</option>
+            <option value="critica">Crítica</option>
+          </select>
+        </label>
+        <label>
+          <span id="supportMessageLabel">Mensagem</span>
+          <textarea id="supportMessage" placeholder="Ex.: não consigo mover o lead para próxima etapa"></textarea>
+        </label>
+        <div class="support-status" id="supportStatus"></div>
+        <div class="support-actions">
+          <span id="supportCount">0 chamados locais</span>
+          <button type="submit" id="sendSupportButton">Enviar</button>
+        </div>
+      </form>
+    </div>
+  </aside>
+
+  <script>
+    const API_BASE = window.location.protocol === "file:"
+      ? "http://127.0.0.1:8000"
+      : window.location.origin;
+    let accessToken = localStorage.getItem("totalsolutions_access_token") || "";
+
+    function authHeaders(headers = {}) {
+      const authenticatedHeaders = new Headers(headers);
+      if (accessToken) {
+        authenticatedHeaders.set("Authorization", `Bearer ${accessToken}`);
+      }
+      return authenticatedHeaders;
+    }
+
+    function apiFetch(url, options = {}) {
+      return fetch(url, {
+        ...options,
+        headers: authHeaders(options.headers)
+      });
+    }
+
+    async function responseMessage(response, fallback) {
+      try {
+        const data = await response.json();
+        return data.detail || data.message || fallback;
+      } catch (_error) {
+        return fallback;
+      }
+    }
+
+    function setAuthStatus(elementId, message = "", type = "") {
+      const element = document.getElementById(elementId);
+      element.textContent = message;
+      element.classList.remove("success", "error");
+      if (type) {
+        element.classList.add(type);
+      }
+    }
+
+    function showLoginForm() {
+      document.getElementById("registerForm").classList.add("hidden");
+      document.getElementById("loginForm").classList.remove("hidden");
+      setAuthStatus("registerStatus");
+    }
+
+    function showRegisterForm() {
+      document.getElementById("loginForm").classList.add("hidden");
+      document.getElementById("registerForm").classList.remove("hidden");
+      setAuthStatus("loginStatus");
+    }
+    const stages = [
+      "NOVO LEAD",
+      "ATENDIMENTO",
+      "TENTATIVA DE CONTATO",
+      "VISITA",
+      "MONTAGEM DE PASTA",
+      "VENDA GANHA",
+      "PERDIDO"
+    ];
+
+    const stageLabels = {
+      "NOVO LEAD": "Aguardando Atendimento",
+      "ATENDIMENTO": "Atendimento",
+      "TENTATIVA DE CONTATO": "1ª Tentativa",
+      "VISITA": "Visita",
+      "MONTAGEM DE PASTA": "Montagem de Pasta",
+      "VENDA GANHA": "Venda Ganha",
+      "PERDIDO": "Perdido"
+    };
+
+    const translations = {
+      pt: {
+        locale: "pt-BR",
+        currency: "BRL",
+        loginBadge: "Copa 2026 · Dados B2B em campo",
+        loginHeroTitle: "Sua seleção comercial entra em campo antes da concorrência.",
+        loginHeroText: "Com o Total Solutions, seu time distribui leads por país, idioma e segmento, acompanha cada broker no funil e transforma dados B2B em jogadas de venda.",
+        loginHighlightOneTitle: "Banco central",
+        loginHighlightOneText: "Leads importados, filtrados por segmento e país.",
+        loginHighlightTwoTitle: "Gestão por perfil",
+        loginHighlightTwoText: "Root, gerentes e brokers com visões separadas.",
+        loginHighlightThreeTitle: "Funil vivo",
+        loginHighlightThreeText: "Status, histórico e edição rápida do contato.",
+        loginTitle: "Entrar no painel",
+        loginSubtitle: "Acesso reservado para usuários autorizados.",
+        loginUserPlaceholder: "Usuário",
+        loginPasswordPlaceholder: "Senha",
+        loginButton: "Entrar",
+        loginNote: "Use as credenciais recebidas pelo administrador da operação.",
+        createAccount: "Criar conta",
+        registerTitle: "Criar conta",
+        registerSubtitle: "Cadastre-se para solicitar acesso à operação.",
+        fullNamePlaceholder: "Nome completo",
+        emailPlaceholder: "E-mail",
+        companyPlaceholder: "Empresa",
+        phonePlaceholder: "Telefone",
+        passwordConfirmPlaceholder: "Confirmar senha",
+        registerButton: "Solicitar acesso",
+        backToLogin: "Voltar ao login",
+        passwordsMismatch: "As senhas não coincidem.",
+        registrationSuccess: "Cadastro recebido. Confirme seu e-mail e aguarde a aprovação do administrador.",
+        registrationError: "Não foi possível concluir o cadastro.",
+        pendingUsersTitle: "Cadastros aguardando aprovação",
+        noPendingUsers: "Nenhum cadastro aguardando aprovação.",
+        approve: "Aprovar",
+        suspend: "Suspender",
+        maxBrokers: "Limite de brokers",
+        maxLeads: "Limite de leads",
+        appearanceTitle: "Aparência",
+        themeClassic: "Clássico claro",
+        themePremium: "Premium dark",
+        nav: ["Vendas", "Leads", "Atendimento", "Relatórios", "Suporte", "Contratos", "Usuários"],
+        supportButton: "Suporte",
+        supportTitle: "Suporte Total Solutions",
+        supportIntro: "Descreva o que aconteceu e em qual módulo. O pedido fica registrado para o administrador acompanhar.",
+        supportModuleLabel: "Módulo",
+        supportPriorityLabel: "Prioridade",
+        supportMessageLabel: "Mensagem",
+        supportMessagePlaceholder: "Ex.: não consigo mover o lead para próxima etapa",
+        sendSupport: "Enviar",
+        supportCount: (total) => `${total} chamado${total === 1 ? "" : "s"}`,
+        supportEmpty: "Escreva uma mensagem para enviar ao suporte.",
+        supportSent: (protocol) => `Chamado ${protocol} registrado.`,
+        supportTicketsTitle: "Chamados de suporte",
+        noSupportTickets: "Nenhum chamado registrado.",
+        supportStatusOpen: "Aberto",
+        supportStatusProgress: "Em atendimento",
+        supportStatusDone: "Resolvido",
+        menu: {
+          funnel: "Funil",
+          clients: "Clientes",
+          reservations: "Reservas",
+          salesFunnel: "Funil de Vendas",
+          listClients: "Listar Clientes",
+          createClient: "Cadastrar Cliente",
+          listReservations: "Listar Reservas",
+          createReservation: "Criar Reserva"
+        },
+        logout: "Sair",
+        funnelTitle: "Funil de Vendas",
+        loadingLeads: "Carregando leads...",
+        totalText: (total) => `Encontramos ${total} registros carregados no funil.`,
+        searchPlaceholder: "Buscar cliente",
+        filterButton: "Filtrar Dados",
+        sendBroker: "Enviar ao Broker",
+        profileTitle: "Meu perfil",
+        editProfile: "Editar perfil",
+        changePhoto: "Alterar foto",
+        removePhoto: "Remover foto",
+        photoTooLarge: "A foto deve ter no máximo 5 MB.",
+        photoUploadFailed: "Não foi possível enviar a foto.",
+        photoRemoveFailed: "Não foi possível remover a foto.",
+        photoRemoveConfirm: "Remover a foto do perfil?",
+        distributeTitle: "Distribuir por segmento, país, estado e cidade",
+        selectBroker: "Selecione broker",
+        allBrokers: "Todos os brokers",
+        allSegments: "Todos os segmentos",
+        allCountries: "Todos os países",
+        allStates: "Todos os estados",
+        allCities: "Todas as cidades",
+        sendFiltered: "Enviar leads filtrados",
+        refreshStock: "Atualizar estoque",
+        freeFilter: "Leads livres neste filtro:",
+        totalBank: "Total livre no banco:",
+        returnTitle: "Voltar leads ao banco",
+        segmentPlaceholder: "Segmento / nicho",
+        countryPlaceholder: "País",
+        statePlaceholder: "Estado",
+        cityPlaceholder: "Cidade",
+        all: "Todos",
+        returnBank: "Voltar ao banco",
+        createUserTitle: "Cadastrar usuário autorizado",
+        usersTitle: "Gerentes e brokers",
+        register: "Cadastrar",
+        userPlaceholder: "usuario",
+        passwordPlaceholder: "senha inicial",
+        bankTitle: "Banco de leads",
+        freeLeads: "Leads livres",
+        segments: "Segmentos",
+        countries: "Países",
+        combinations: "Combinações",
+        stockBySegment: "Estoque por segmento",
+        attendanceHelp: "Use o funil para abrir o card, editar contato e mover etapas. Esta aba vai receber fila de tarefas, chamadas e follow-up.",
+        activeBrokers: "Brokers ativos",
+        assignedLeads: "Leads distribuídos",
+        inBank: "No banco",
+        wonDeals: "Venda ganha",
+        emptyStage: "Nenhum Cliente nessa Etapa!",
+        status: "Status",
+        score: "Score",
+        deal: "Negócio",
+        contactMissing: "Contato nao informado",
+        emailMissing: "Email nao informado",
+        siteMissing: "Site nao informado",
+        countryMissing: "País não informado",
+        languageMissing: "Idioma a confirmar",
+        whatsapp: "WhatsApp",
+        call: "Ligar",
+        contact: "Contato",
+        leads: "leads",
+        noLeadsForFilter: "Nao ha leads livres para este filtro",
+        selectBrokerAlert: "Selecione um broker antes de enviar leads",
+        invalidQty: "Informe uma quantidade valida a partir de 1",
+        loginInvalid: "Login invalido",
+        online: "Online",
+        offline: "Offline",
+        lastSeen: "Visto por ultimo",
+        neverSeen: "Ainda nao entrou",
+        stagnantFor: "Parado ha",
+        stageSince: "Nesta etapa",
+        newLeadToast: (diff) => `Você recebeu ${diff} novo${diff > 1 ? "s" : ""} lead${diff > 1 ? "s" : ""}.`,
+        stages: stageLabels
+      },
+      en: {
+        locale: "en-US",
+        currency: "USD",
+        loginBadge: "2026 Cup · B2B data on the field",
+        loginHeroTitle: "Put your sales squad on the pitch before the competition.",
+        loginHeroText: "Total Solutions distributes leads by country, language, and segment, tracks every broker in the pipeline, and turns B2B data into sales plays.",
+        loginHighlightOneTitle: "Central database",
+        loginHighlightOneText: "Imported leads filtered by segment and country.",
+        loginHighlightTwoTitle: "Role control",
+        loginHighlightTwoText: "Root, managers, and brokers with separate views.",
+        loginHighlightThreeTitle: "Live pipeline",
+        loginHighlightThreeText: "Status, history, and fast contact editing.",
+        loginTitle: "Sign in",
+        loginSubtitle: "Reserved access for authorized users.",
+        loginUserPlaceholder: "User",
+        loginPasswordPlaceholder: "Password",
+        loginButton: "Sign in",
+        loginNote: "Use the credentials provided by your operation administrator.",
+        createAccount: "Create account",
+        registerTitle: "Create account",
+        registerSubtitle: "Register to request access to the operation.",
+        fullNamePlaceholder: "Full name",
+        emailPlaceholder: "Email",
+        companyPlaceholder: "Company",
+        phonePlaceholder: "Phone",
+        passwordConfirmPlaceholder: "Confirm password",
+        registerButton: "Request access",
+        backToLogin: "Back to sign in",
+        passwordsMismatch: "Passwords do not match.",
+        registrationSuccess: "Registration received. Verify your email and wait for administrator approval.",
+        registrationError: "Registration could not be completed.",
+        pendingUsersTitle: "Registrations awaiting approval",
+        noPendingUsers: "No registrations awaiting approval.",
+        approve: "Approve",
+        suspend: "Suspend",
+        maxBrokers: "Broker limit",
+        maxLeads: "Lead limit",
+        appearanceTitle: "Appearance",
+        themeClassic: "Classic light",
+        themePremium: "Premium dark",
+        nav: ["Sales", "Leads", "Service", "Reports", "Support", "Contracts", "Users"],
+        supportButton: "Support",
+        supportTitle: "Total Solutions Support",
+        supportIntro: "Describe what happened and which module is affected. The request is stored for the administrator to follow up.",
+        supportModuleLabel: "Module",
+        supportPriorityLabel: "Priority",
+        supportMessageLabel: "Message",
+        supportMessagePlaceholder: "Example: I cannot move the lead to the next stage",
+        sendSupport: "Send",
+        supportCount: (total) => `${total} ticket${total === 1 ? "" : "s"}`,
+        supportEmpty: "Write a message before sending support.",
+        supportSent: (protocol) => `Ticket ${protocol} registered.`,
+        supportTicketsTitle: "Support tickets",
+        noSupportTickets: "No tickets registered.",
+        supportStatusOpen: "Open",
+        supportStatusProgress: "In progress",
+        supportStatusDone: "Resolved",
+        menu: {
+          funnel: "Pipeline",
+          clients: "Clients",
+          reservations: "Reservations",
+          salesFunnel: "Sales Pipeline",
+          listClients: "List Clients",
+          createClient: "Create Client",
+          listReservations: "List Reservations",
+          createReservation: "Create Reservation"
+        },
+        logout: "Sign out",
+        funnelTitle: "Sales Pipeline",
+        loadingLeads: "Loading leads...",
+        totalText: (total) => `${total} records loaded in the pipeline.`,
+        searchPlaceholder: "Search client",
+        filterButton: "Filter Data",
+        sendBroker: "Send to Broker",
+        profileTitle: "My profile",
+        editProfile: "Edit profile",
+        changePhoto: "Change photo",
+        removePhoto: "Remove photo",
+        photoTooLarge: "The photo must be at most 5 MB.",
+        photoUploadFailed: "Could not upload the photo.",
+        photoRemoveFailed: "Could not remove the photo.",
+        photoRemoveConfirm: "Remove profile photo?",
+        distributeTitle: "Distribute by segment, country, state, and city",
+        selectBroker: "Select broker",
+        allBrokers: "All brokers",
+        allSegments: "All segments",
+        allCountries: "All countries",
+        allStates: "All states",
+        allCities: "All cities",
+        sendFiltered: "Send filtered leads",
+        refreshStock: "Refresh stock",
+        freeFilter: "Free leads in this filter:",
+        totalBank: "Total free in database:",
+        returnTitle: "Return leads to database",
+        segmentPlaceholder: "Segment / niche",
+        countryPlaceholder: "Country",
+        statePlaceholder: "State",
+        cityPlaceholder: "City",
+        all: "All",
+        returnBank: "Return to database",
+        createUserTitle: "Create authorized user",
+        usersTitle: "Managers and brokers",
+        register: "Create",
+        userPlaceholder: "user",
+        passwordPlaceholder: "initial password",
+        bankTitle: "Lead database",
+        freeLeads: "Free leads",
+        segments: "Segments",
+        countries: "Countries",
+        combinations: "Combinations",
+        stockBySegment: "Stock by segment",
+        attendanceHelp: "Use the pipeline to open a card, edit the contact, and move stages. This tab will receive tasks, calls, and follow-ups.",
+        activeBrokers: "Active brokers",
+        assignedLeads: "Assigned leads",
+        inBank: "In database",
+        wonDeals: "Won deals",
+        emptyStage: "No client in this stage.",
+        status: "Status",
+        score: "Score",
+        deal: "Deal",
+        contactMissing: "Contact not informed",
+        emailMissing: "Email not informed",
+        siteMissing: "Site not informed",
+        countryMissing: "Country not informed",
+        languageMissing: "Language to confirm",
+        whatsapp: "WhatsApp",
+        call: "Call",
+        contact: "Contact",
+        leads: "leads",
+        noLeadsForFilter: "There are no free leads for this filter",
+        selectBrokerAlert: "Select a broker before sending leads",
+        invalidQty: "Enter a valid quantity starting at 1",
+        loginInvalid: "Invalid login",
+        online: "Online",
+        offline: "Offline",
+        lastSeen: "Last seen",
+        neverSeen: "Has not signed in yet",
+        stagnantFor: "Stalled for",
+        stageSince: "In this stage",
+        newLeadToast: (diff) => `You received ${diff} new lead${diff > 1 ? "s" : ""}.`,
+        stages: {
+          "NOVO LEAD": "Waiting Service",
+          "ATENDIMENTO": "Service",
+          "TENTATIVA DE CONTATO": "1st Attempt",
+          "VISITA": "Visit",
+          "MONTAGEM DE PASTA": "File Assembly",
+          "VENDA GANHA": "Won Deal",
+          "PERDIDO": "Lost"
+        }
+      },
+      es: {
+        locale: "es-MX",
+        currency: "MXN",
+        loginBadge: "Copa 2026 · Datos B2B en la cancha",
+        loginHeroTitle: "Tu selección comercial entra al campo antes que la competencia.",
+        loginHeroText: "Total Solutions distribuye leads por país, idioma y segmento, acompaña cada broker en el embudo y convierte datos B2B en jugadas de venta.",
+        loginHighlightOneTitle: "Banco central",
+        loginHighlightOneText: "Leads importados y filtrados por segmento y país.",
+        loginHighlightTwoTitle: "Gestión por perfil",
+        loginHighlightTwoText: "Root, gerentes y brokers con vistas separadas.",
+        loginHighlightThreeTitle: "Embudo vivo",
+        loginHighlightThreeText: "Estado, historial y edición rápida del contacto.",
+        loginTitle: "Entrar al panel",
+        loginSubtitle: "Acceso reservado para usuarios autorizados.",
+        loginUserPlaceholder: "Usuario",
+        loginPasswordPlaceholder: "Contraseña",
+        loginButton: "Entrar",
+        loginNote: "Usa las credenciales recibidas por el administrador de la operación.",
+        createAccount: "Crear cuenta",
+        registerTitle: "Crear cuenta",
+        registerSubtitle: "Regístrate para solicitar acceso a la operación.",
+        fullNamePlaceholder: "Nombre completo",
+        emailPlaceholder: "Correo electrónico",
+        companyPlaceholder: "Empresa",
+        phonePlaceholder: "Teléfono",
+        passwordConfirmPlaceholder: "Confirmar contraseña",
+        registerButton: "Solicitar acceso",
+        backToLogin: "Volver al acceso",
+        passwordsMismatch: "Las contraseñas no coinciden.",
+        registrationSuccess: "Registro recibido. Confirma tu correo y espera la aprobación del administrador.",
+        registrationError: "No fue posible completar el registro.",
+        pendingUsersTitle: "Registros pendientes de aprobación",
+        noPendingUsers: "No hay registros pendientes de aprobación.",
+        approve: "Aprobar",
+        suspend: "Suspender",
+        maxBrokers: "Límite de brokers",
+        maxLeads: "Límite de leads",
+        appearanceTitle: "Apariencia",
+        themeClassic: "Clásico claro",
+        themePremium: "Premium dark",
+        nav: ["Ventas", "Leads", "Atención", "Reportes", "Soporte", "Contratos", "Usuarios"],
+        supportButton: "Soporte",
+        supportTitle: "Soporte Total Solutions",
+        supportIntro: "Describe lo que ocurrió y en qué módulo. La solicitud queda registrada para seguimiento del administrador.",
+        supportModuleLabel: "Módulo",
+        supportPriorityLabel: "Prioridad",
+        supportMessageLabel: "Mensaje",
+        supportMessagePlaceholder: "Ej.: no puedo mover el lead a la siguiente etapa",
+        sendSupport: "Enviar",
+        supportCount: (total) => `${total} ticket${total === 1 ? "" : "s"}`,
+        supportEmpty: "Escribe un mensaje para enviar al soporte.",
+        supportSent: (protocol) => `Ticket ${protocol} registrado.`,
+        supportTicketsTitle: "Tickets de soporte",
+        noSupportTickets: "No hay tickets registrados.",
+        supportStatusOpen: "Abierto",
+        supportStatusProgress: "En atención",
+        supportStatusDone: "Resuelto",
+        menu: {
+          funnel: "Embudo",
+          clients: "Clientes",
+          reservations: "Reservas",
+          salesFunnel: "Embudo de Ventas",
+          listClients: "Listar Clientes",
+          createClient: "Registrar Cliente",
+          listReservations: "Listar Reservas",
+          createReservation: "Crear Reserva"
+        },
+        logout: "Salir",
+        funnelTitle: "Embudo de Ventas",
+        loadingLeads: "Cargando leads...",
+        totalText: (total) => `Encontramos ${total} registros cargados en el embudo.`,
+        searchPlaceholder: "Buscar cliente",
+        filterButton: "Filtrar Datos",
+        sendBroker: "Enviar al Broker",
+        profileTitle: "Mi perfil",
+        editProfile: "Editar perfil",
+        changePhoto: "Cambiar foto",
+        removePhoto: "Eliminar foto",
+        photoTooLarge: "La foto debe tener como máximo 5 MB.",
+        photoUploadFailed: "No fue posible subir la foto.",
+        photoRemoveFailed: "No fue posible eliminar la foto.",
+        photoRemoveConfirm: "¿Eliminar la foto del perfil?",
+        distributeTitle: "Distribuir por segmento, país, estado y ciudad",
+        selectBroker: "Seleccione broker",
+        allBrokers: "Todos los brokers",
+        allSegments: "Todos los segmentos",
+        allCountries: "Todos los países",
+        allStates: "Todos los estados",
+        allCities: "Todas las ciudades",
+        sendFiltered: "Enviar leads filtrados",
+        refreshStock: "Actualizar stock",
+        freeFilter: "Leads libres en este filtro:",
+        totalBank: "Total libre en el banco:",
+        returnTitle: "Volver leads al banco",
+        segmentPlaceholder: "Segmento / nicho",
+        countryPlaceholder: "País",
+        statePlaceholder: "Estado",
+        cityPlaceholder: "Ciudad",
+        all: "Todos",
+        returnBank: "Volver al banco",
+        createUserTitle: "Registrar usuario autorizado",
+        usersTitle: "Gerentes y brokers",
+        register: "Registrar",
+        userPlaceholder: "usuario",
+        passwordPlaceholder: "contraseña inicial",
+        bankTitle: "Banco de leads",
+        freeLeads: "Leads libres",
+        segments: "Segmentos",
+        countries: "Países",
+        combinations: "Combinaciones",
+        stockBySegment: "Stock por segmento",
+        attendanceHelp: "Usa el embudo para abrir la tarjeta, editar el contacto y mover etapas. Esta pestaña recibirá tareas, llamadas y seguimiento.",
+        activeBrokers: "Brokers activos",
+        assignedLeads: "Leads distribuidos",
+        inBank: "En el banco",
+        wonDeals: "Venta ganada",
+        emptyStage: "No hay cliente en esta etapa.",
+        status: "Estado",
+        score: "Score",
+        deal: "Negocio",
+        contactMissing: "Contacto no informado",
+        emailMissing: "Email no informado",
+        siteMissing: "Sitio no informado",
+        countryMissing: "País no informado",
+        languageMissing: "Idioma por confirmar",
+        whatsapp: "WhatsApp",
+        call: "Llamar",
+        contact: "Contacto",
+        leads: "leads",
+        noLeadsForFilter: "No hay leads libres para este filtro",
+        selectBrokerAlert: "Seleccione un broker antes de enviar leads",
+        invalidQty: "Informe una cantidad válida desde 1",
+        loginInvalid: "Login inválido",
+        online: "Online",
+        offline: "Offline",
+        lastSeen: "Visto por ultima vez",
+        neverSeen: "Aún no entró",
+        stagnantFor: "Parado hace",
+        stageSince: "En esta etapa",
+        newLeadToast: (diff) => `Recibiste ${diff} lead${diff > 1 ? "s" : ""} nuevo${diff > 1 ? "s" : ""}.`,
+        stages: {
+          "NOVO LEAD": "Esperando Atención",
+          "ATENDIMENTO": "Atención",
+          "TENTATIVA DE CONTATO": "1er Intento",
+          "VISITA": "Visita",
+          "MONTAGEM DE PASTA": "Armado de Carpeta",
+          "VENDA GANHA": "Venta Ganada",
+          "PERDIDO": "Perdido"
+        }
+      }
+    };
+
+    const userCountries = {
+      BR: { label: "Brasil", language: "pt" },
+      MX: { label: "México", language: "es" },
+      UK: { label: "UK · Londres", language: "en" },
+      US: { label: "EUA", language: "en" }
+    };
+
+    const countryProfiles = {
+      MX: { flag: "🇲🇽", label: "México", language: "Espanhol" },
+      MEXICO: { flag: "🇲🇽", label: "México", language: "Espanhol" },
+      UK: { flag: "🇬🇧", label: "UK · Londres", language: "Inglês" },
+      LONDON: { flag: "🇬🇧", label: "UK · Londres", language: "Inglês" },
+      EUA: { flag: "🇺🇸", label: "EUA", language: "Inglês" },
+      USA: { flag: "🇺🇸", label: "EUA", language: "Inglês" },
+      US: { flag: "🇺🇸", label: "EUA", language: "Inglês" },
+      BR: { flag: "🇧🇷", label: "Brasil", language: "Português" },
+      BRASIL: { flag: "🇧🇷", label: "Brasil", language: "Português" },
+      BRAZIL: { flag: "🇧🇷", label: "Brasil", language: "Português" }
+    };
+
+    const boardEl = document.getElementById("board");
+    const totalText = document.getElementById("totalText");
+    const searchInput = document.getElementById("searchInput");
+    const brokerFilter = document.getElementById("brokerFilter");
+    const brokerList = document.getElementById("brokerList");
+    const sessionUser = document.getElementById("sessionUser");
+    const sessionAvatarContent = document.getElementById("sessionAvatarContent");
+    const profileAvatarContent = document.getElementById("profileAvatarContent");
+    const profilePhotoInput = document.getElementById("profilePhotoInput");
+    const profilePhotoButton = document.getElementById("profilePhotoButton");
+    const removeProfilePhotoButton = document.getElementById("removeProfilePhotoButton");
+    const leadModal = document.getElementById("leadModal");
+    const leadPipeline = document.getElementById("leadPipeline");
+    const userModal = document.getElementById("userModal");
+    let cachedBrokers = [];
+    let cachedInventory = null;
+    let cachedSupportTickets = [];
+    let editingOwnProfile = false;
+    let currentUser = { id: 1, username: "root", role: "ROOT" };
+    let cachedBoard = null;
+    let brokerRefreshTimer = null;
+    let presenceTimer = null;
+    let userRefreshTimer = null;
+    let boardClockTimer = null;
+    let currentLanguage = localStorage.getItem("totalsolutions_language") || "pt";
+    let currentTheme = "classic";
+
+    function normalizeTheme(theme) {
+      return theme === "premium" ? "premium" : "classic";
+    }
+
+    function themeStorageKey(user = null) {
+      const username = typeof user === "string" ? user : user?.username;
+      return username
+        ? `totalsolutions_theme_${String(username).trim().toLowerCase()}`
+        : "totalsolutions_theme_guest";
+    }
+
+    function hasStoredTheme(user = null) {
+      return Boolean(localStorage.getItem(themeStorageKey(user)));
+    }
+
+    function getStoredTheme(user = null) {
+      const fallbackTheme = localStorage.getItem(themeStorageKey(null));
+      return normalizeTheme(localStorage.getItem(themeStorageKey(user)) || fallbackTheme || "classic");
+    }
+
+    function saveThemePreference(theme, user = null) {
+      localStorage.setItem(themeStorageKey(user), normalizeTheme(theme));
+    }
+
+    function renderThemeSelects() {
+      const options = `
+        <option value="classic">${t("themeClassic")}</option>
+        <option value="premium">${t("themePremium")}</option>
+      `;
+
+      ["loginTheme", "appTheme"].forEach((id) => {
+        const select = document.getElementById(id);
+        if (!select) {
+          return;
+        }
+
+        select.innerHTML = options;
+        select.title = t("appearanceTitle");
+        select.value = currentTheme;
+      });
+    }
+
+    function applyTheme(theme, { persist = true, user = undefined } = {}) {
+      currentTheme = normalizeTheme(theme);
+      document.body.classList.toggle("theme-premium", currentTheme === "premium");
+      renderThemeSelects();
+
+      if (!persist) {
+        return;
+      }
+
+      const resolvedUser = user !== undefined
+        ? user
+        : document.body.classList.contains("logged-in") && currentUser?.username
+          ? currentUser
+          : null;
+
+      saveThemePreference(currentTheme, resolvedUser);
+      if (!resolvedUser) {
+        saveThemePreference(currentTheme, null);
+      }
+    }
+
+    function setBodyState({ loggedIn = false, mode = null } = {}) {
+      document.body.classList.remove("logged-out", "logged-in", "broker-mode", "manager-mode", "root-mode");
+      document.body.classList.add(loggedIn ? "logged-in" : "logged-out");
+      if (mode) {
+        document.body.classList.add(mode);
+      }
+    }
+
+    function t(key) {
+      return (translations[currentLanguage] || translations.pt)[key] ?? translations.pt[key] ?? key;
+    }
+
+    function stageLabel(stage) {
+      const labels = t("stages");
+      return labels[stage] || stageLabels[stage] || stage;
+    }
+
+    function countryLanguageName(language) {
+      const names = {
+        pt: { pt: "Português", en: "Portuguese", es: "Portugués" },
+        en: { pt: "Inglês", en: "English", es: "Inglés" },
+        es: { pt: "Espanhol", en: "Spanish", es: "Español" }
+      };
+      return names[language]?.[currentLanguage] || language;
+    }
+
+    function presenceLabel(user) {
+      if (user.is_online) {
+        return t("online");
+      }
+
+      if (!user.last_seen_at) {
+        return t("neverSeen");
+      }
+
+      const date = new Date(user.last_seen_at);
+      return `${t("lastSeen")}: ${date.toLocaleString(translations[currentLanguage].locale)}`;
+    }
+
+    function renderPipelineOptions() {
+      leadPipeline.innerHTML = stages.map((stage) => {
+        return `<option value="${stage}">${stageLabel(stage)}</option>`;
+      }).join("");
+    }
+
+    renderPipelineOptions();
+
+    function money() {
+      return formatCurrency(0);
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (char) => {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char];
+      });
+    }
+
+    function formatCurrency(value) {
+      const config = translations[currentLanguage] || translations.pt;
+      return new Intl.NumberFormat(config.locale, {
+        style: "currency",
+        currency: config.currency
+      }).format(Number(value || 0));
+    }
+
+    function parseServerDate(value) {
+      if (!value) {
+        return null;
+      }
+
+      let text = String(value).trim();
+      if (!text) {
+        return null;
+      }
+
+      text = text.replace(" ", "T");
+      const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(text);
+      const date = new Date(hasTimezone ? text : `${text}Z`);
+
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    function timeAgo(value) {
+      const date = parseServerDate(value);
+      if (!date) {
+        return "-";
+      }
+
+      const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+      const minute = 60;
+      const hour = minute * 60;
+      const day = hour * 24;
+      const days = Math.floor(seconds / day);
+      const hours = Math.floor((seconds % day) / hour);
+      const minutes = Math.max(1, Math.floor((seconds % hour) / minute));
+      const labels = {
+        pt: { day: "dia", hour: "hora", minute: "min" },
+        en: { day: "day", hour: "hour", minute: "min" },
+        es: { day: "dia", hour: "hora", minute: "min" }
+      }[currentLanguage] || { day: "dia", hour: "hora", minute: "min" };
+      const parts = [];
+
+      if (days > 0) {
+        parts.push(`${days} ${labels.day}${days > 1 ? "s" : ""}`);
+      }
+
+      if (hours > 0) {
+        parts.push(`${hours} ${labels.hour}${hours > 1 ? "s" : ""}`);
+      }
+
+      if (minutes > 0 && days < 7) {
+        parts.push(`${minutes} ${labels.minute}`);
+      }
+
+      return parts.join(" ");
+    }
+
+    function countryInfo(pais) {
+      const key = String(pais || "").trim().toUpperCase();
+      const profile = countryProfiles[key];
+      if (profile) {
+        const languageKey = ["MX", "MEXICO"].includes(key)
+          ? "es"
+          : ["BR", "BRASIL", "BRAZIL"].includes(key)
+            ? "pt"
+            : "en";
+        return {
+          ...profile,
+          language: countryLanguageName(languageKey)
+        };
+      }
+      return {
+        flag: "🌐",
+        label: pais || t("countryMissing"),
+        language: t("languageMissing")
+      };
+    }
+
+    function normalizeGeo(value) {
+      return String(value || "").trim();
+    }
+
+    function hasSelectValue(select, value) {
+      return Array.from(select?.options || []).some((option) => option.value === value);
+    }
+
+    function filteredInventoryRows(filters = {}) {
+      const rows = cachedInventory?.combinacoes || [];
+      return rows.filter((item) => {
+        const rowSegment = normalizeGeo(item.nicho);
+        const rowCountry = normalizeGeo(item.pais);
+        const rowState = normalizeGeo(item.estado);
+        const rowCity = normalizeGeo(item.cidade);
+
+        return (!filters.nicho || rowSegment === normalizeGeo(filters.nicho))
+          && (!filters.pais || rowCountry === normalizeGeo(filters.pais))
+          && (!filters.estado || rowState === normalizeGeo(filters.estado))
+          && (!filters.cidade || rowCity === normalizeGeo(filters.cidade));
+      });
+    }
+
+    function buildGeoOptions(rows, key, emptyLabel) {
+      const totals = new Map();
+
+      rows.forEach((item) => {
+        const value = normalizeGeo(item[key]);
+        if (!value) {
+          return;
+        }
+
+        totals.set(value, (totals.get(value) || 0) + Number(item.total || 0));
+      });
+
+      return `<option value="">${emptyLabel}</option>` + Array.from(totals.entries())
+        .sort((a, b) => a[0].localeCompare(b[0], translations[currentLanguage].locale))
+        .map(([value, total]) => `<option value="${escapeHtml(value)}">${escapeHtml(value)} (${total})</option>`)
+        .join("");
+    }
+
+    function refreshAssignGeoOptions(preferred = {}) {
+      const stateSelect = document.getElementById("assignState");
+      const citySelect = document.getElementById("assignCity");
+      const nicho = document.getElementById("assignSegment").value;
+      const pais = document.getElementById("assignCountry").value;
+      const currentState = preferred.state !== undefined ? preferred.state : stateSelect.value;
+      const currentCity = preferred.city !== undefined ? preferred.city : citySelect.value;
+
+      const rowsForStates = filteredInventoryRows({ nicho, pais });
+      stateSelect.innerHTML = buildGeoOptions(rowsForStates, "estado", t("allStates"));
+      stateSelect.value = hasSelectValue(stateSelect, currentState) ? currentState : "";
+
+      const rowsForCities = filteredInventoryRows({
+        nicho,
+        pais,
+        estado: stateSelect.value
+      });
+      citySelect.innerHTML = buildGeoOptions(rowsForCities, "cidade", t("allCities"));
+      citySelect.value = hasSelectValue(citySelect, currentCity) ? currentCity : "";
+    }
+
+    function formatUserTerritory(user) {
+      const country = userCountries[user.pais_operacao || "BR"] || {
+        label: user.pais_operacao || t("countryMissing"),
+        language: user.idioma || "pt"
+      };
+
+      return [
+        country.label,
+        normalizeGeo(user.estado_operacao),
+        normalizeGeo(user.cidade_operacao),
+        countryLanguageName(user.idioma || country.language)
+      ].filter(Boolean).join(" · ");
+    }
+
+    function cleanPhoneNumber(value) {
+      return String(value || "").replace(/\D/g, "");
+    }
+
+    function whatsappNumber(rawPhone, pais) {
+      const digits = cleanPhoneNumber(rawPhone);
+      const key = String(pais || "").trim().toUpperCase();
+
+      if (!digits) {
+        return "";
+      }
+
+      if (digits.startsWith("00")) {
+        return digits.slice(2);
+      }
+
+      if (digits.length > 10 && !digits.startsWith("0")) {
+        return digits;
+      }
+
+      if (["BR", "BRASIL", "BRAZIL"].includes(key)) {
+        return `55${digits}`;
+      }
+
+      if (["MX", "MEXICO"].includes(key)) {
+        return `52${digits}`;
+      }
+
+      if (["UK", "LONDON"].includes(key)) {
+        return `44${digits}`;
+      }
+
+      if (["EUA", "USA", "US"].includes(key)) {
+        return `1${digits}`;
+      }
+
+      return digits;
+    }
+
+    function normalizeSiteUrl(site) {
+      const value = String(site || "").trim();
+      if (!value) {
+        return "";
+      }
+
+      if (/^https?:\/\//i.test(value)) {
+        return value;
+      }
+
+      return `https://${value}`;
+    }
+
+    function emailLineTemplate(email) {
+      const value = String(email || "").trim();
+      if (!value) {
+        return escapeHtml(t("emailMissing"));
+      }
+
+      return `<a href="mailto:${encodeURIComponent(value)}">${escapeHtml(value)}</a>`;
+    }
+
+    function siteLineTemplate(site) {
+      const value = String(site || "").trim();
+      const url = normalizeSiteUrl(value);
+      if (!url) {
+        return escapeHtml(t("siteMissing"));
+      }
+
+      return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(value)}</a>`;
+    }
+
+    function contactActionTemplate(lead) {
+      const phone = cleanPhoneNumber(lead.contato);
+      const whats = whatsappNumber(lead.contato, lead.pais);
+      const actions = [];
+
+      if (whats) {
+        actions.push(`<a href="https://wa.me/${whats}" target="_blank" rel="noopener">${t("whatsapp")}</a>`);
+      }
+
+      if (phone) {
+        actions.push(`<a href="tel:${phone}">${t("call")}</a>`);
+        actions.push(`<a href="data:text/vcard;charset=utf-8,BEGIN%3AVCARD%0AVERSION%3A3.0%0AFN%3A${encodeURIComponent(lead.nome || "Lead Total Solutions")}%0ATEL%3A${phone}%0AEMAIL%3A${encodeURIComponent(lead.email || "")}%0AEND%3AVCARD" download="${escapeHtml((lead.nome || "lead").replace(/[^a-z0-9]+/gi, "-"))}.vcf">${t("contact")}</a>`);
+      }
+
+      return actions.length ? `<div class="contact-actions">${actions.join("")}</div>` : "";
+    }
+
+    function showView(viewName) {
+      document.querySelectorAll(".view").forEach((view) => {
+        view.classList.toggle("active", view.id === `view-${viewName}`);
+      });
+      document.querySelectorAll(".nav .nav-main[data-view-target]").forEach((button) => {
+        button.classList.toggle("active", button.dataset.viewTarget === viewName);
+      });
+      document.body.classList.remove("view-vendas", "view-leads", "view-atendimento", "view-relatorios", "view-suporte", "view-usuarios", "view-contratos");
+      document.body.classList.add(`view-${viewName}`);
+      if (viewName === "suporte") {
+        loadSupportTickets().catch(() => {});
+      }
+    }
+
+    function setText(selector, value) {
+      const element = document.querySelector(selector);
+      if (element) {
+        element.textContent = value;
+      }
+    }
+
+    function setPlaceholder(selector, value) {
+      const element = document.querySelector(selector);
+      if (element) {
+        element.placeholder = value;
+      }
+    }
+
+    function applyLanguage(language) {
+      currentLanguage = translations[language] ? language : "pt";
+      localStorage.setItem("totalsolutions_language", currentLanguage);
+      document.documentElement.lang = currentLanguage === "pt" ? "pt-BR" : currentLanguage === "es" ? "es-MX" : "en";
+
+      const loginLanguage = document.getElementById("loginLanguage");
+      if (loginLanguage) {
+        loginLanguage.value = currentLanguage;
+      }
+
+      renderThemeSelects();
+
+      setText("#loginBadge", t("loginBadge"));
+      setText("#loginHeroTitle", t("loginHeroTitle"));
+      setText("#loginHeroText", t("loginHeroText"));
+      setText("#loginHighlightOneTitle", t("loginHighlightOneTitle"));
+      setText("#loginHighlightOneText", t("loginHighlightOneText"));
+      setText("#loginHighlightTwoTitle", t("loginHighlightTwoTitle"));
+      setText("#loginHighlightTwoText", t("loginHighlightTwoText"));
+      setText("#loginHighlightThreeTitle", t("loginHighlightThreeTitle"));
+      setText("#loginHighlightThreeText", t("loginHighlightThreeText"));
+      setText("#loginTitle", t("loginTitle"));
+      setText("#loginSubtitle", t("loginSubtitle"));
+      setText("#loginButton", t("loginButton"));
+      setText("#loginNote", t("loginNote"));
+      setPlaceholder("#loginUser", t("loginUserPlaceholder"));
+      setPlaceholder("#loginPassword", t("loginPasswordPlaceholder"));
+      setText("#showRegisterButton", t("createAccount"));
+      setText("#registerTitle", t("registerTitle"));
+      setText("#registerSubtitle", t("registerSubtitle"));
+      setText("#registerButton", t("registerButton"));
+      setText("#backToLoginButton", t("backToLogin"));
+      setPlaceholder("#registerFullName", t("fullNamePlaceholder"));
+      setPlaceholder("#registerEmail", t("emailPlaceholder"));
+      setPlaceholder("#registerCompany", t("companyPlaceholder"));
+      setPlaceholder("#registerPhone", t("phonePlaceholder"));
+      setPlaceholder("#registerPassword", t("loginPasswordPlaceholder"));
+      setPlaceholder("#registerPasswordConfirm", t("passwordConfirmPlaceholder"));
+      setText("#pendingUsersTitle", t("pendingUsersTitle"));
+
+      document.querySelectorAll(".nav .nav-main[data-view-target]").forEach((button, index) => {
+        button.textContent = t("nav")[index] || button.textContent;
+      });
+      document.querySelectorAll("[data-menu-title]").forEach((element) => {
+        element.textContent = t("menu")[element.dataset.menuTitle] || element.textContent;
+      });
+      document.querySelectorAll("[data-menu-key]").forEach((element) => {
+        element.textContent = t("menu")[element.dataset.menuKey] || element.textContent;
+      });
+      setText("#logoutButton", t("logout"));
+      setText("#supportButton", t("supportButton"));
+      setText("#supportTitle", t("supportTitle"));
+      setText("#supportIntro", t("supportIntro"));
+      setText("#supportModuleLabel", t("supportModuleLabel"));
+      setText("#supportPriorityLabel", t("supportPriorityLabel"));
+      setText("#supportMessageLabel", t("supportMessageLabel"));
+      setText("#sendSupportButton", t("sendSupport"));
+      setPlaceholder("#supportMessage", t("supportMessagePlaceholder"));
+      refreshSupportCount();
+      setText(".toolbar h1", t("funnelTitle"));
+      setPlaceholder("#searchInput", t("searchPlaceholder"));
+      setText("#reloadButton", t("filterButton"));
+      setText("#seedBrokerButton", t("sendBroker"));
+      setText("#editMyProfileButton", t("editProfile"));
+      setText("#removeProfilePhotoButton", t("removePhoto"));
+      profilePhotoButton.title = t("changePhoto");
+      profilePhotoButton.setAttribute("aria-label", t("changePhoto"));
+      setText("#assignSmartButton", t("sendFiltered"));
+      setText("#refreshInventoryButton", t("refreshStock"));
+      setText("#returnBulkButton", t("returnBank"));
+      setText("#createBrokerButton", t("register"));
+      setPlaceholder("#newBrokerUser", t("userPlaceholder"));
+      setPlaceholder("#newBrokerPassword", t("passwordPlaceholder"));
+      setPlaceholder("#newBrokerState", t("statePlaceholder"));
+      setPlaceholder("#newBrokerCity", t("cityPlaceholder"));
+      setPlaceholder("#returnSegment", t("segmentPlaceholder"));
+      setPlaceholder("#returnCountry", t("countryPlaceholder"));
+      setPlaceholder("#returnState", t("statePlaceholder"));
+      setPlaceholder("#returnCity", t("cityPlaceholder"));
+      setPlaceholder("#editUserState", t("statePlaceholder"));
+      setPlaceholder("#editUserCity", t("cityPlaceholder"));
+
+      const panels = document.querySelectorAll(".panel-title");
+      [
+        t("profileTitle"),
+        t("distributeTitle"),
+        t("returnTitle"),
+        t("bankTitle"),
+        t("stockBySegment"),
+        t("nav")[2],
+        t("nav")[3],
+        t("supportTicketsTitle"),
+        t("createUserTitle"),
+        t("usersTitle")
+      ].forEach((label, index) => {
+        if (panels[index]) {
+          panels[index].textContent = label;
+        }
+      });
+
+      [t("freeLeads"), t("segments"), t("countries"), t("combinations")].forEach((label, index) => {
+        const metric = document.querySelectorAll("#view-leads .metric")[index];
+        if (metric?.firstChild) {
+          metric.firstChild.nodeValue = label;
+        }
+      });
+      [t("activeBrokers"), t("assignedLeads"), t("inBank"), t("wonDeals")].forEach((label, index) => {
+        const metric = document.querySelectorAll("#view-relatorios .metric")[index];
+        if (metric?.firstChild) {
+          metric.firstChild.nodeValue = label;
+        }
+      });
+
+      document.querySelector("#view-atendimento .line").textContent = t("attendanceHelp");
+      renderPipelineOptions();
+      if (cachedBoard) {
+        renderBoard(cachedBoard);
+      }
+      if (cachedInventory) {
+        loadInventory().catch(() => {});
+      }
+      renderSupportTickets();
+      refreshSupportCount();
+    }
+
+    function cardTemplate(lead) {
+      const title = lead.nome || "Lead sem nome";
+      const niche = [lead.nicho, lead.pais].filter(Boolean).join(" · ") || "SEM CLASSIFICACAO";
+      const contact = lead.contato || t("contactMissing");
+      const country = countryInfo(lead.pais);
+      const territory = [
+        country.label,
+        normalizeGeo(lead.estado),
+        normalizeGeo(lead.cidade),
+        country.language
+      ].filter(Boolean).join(" · ");
+      const value = Number(lead.valor_negocio || 0);
+      const stageClass = `stage-${(lead.pipeline || "NOVO LEAD").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
+      const staleTime = timeAgo(lead.pipeline_updated_at || lead.updated_at || lead.created_at);
+
+      return `
+        <article class="card ${stageClass}" draggable="true" data-lead-id="${lead.id}">
+          <div class="card-header">
+            <div class="card-title">${escapeHtml(title)}</div>
+            <div class="card-actions">
+              <span class="edit-pill" title="Abrir e editar lead">✎</span>
+              <div class="badge">${lead.id}</div>
+            </div>
+          </div>
+          <div class="card-meta">${escapeHtml(niche)}</div>
+          <div class="lead-country"><span class="flag">${country.flag}</span>${escapeHtml(territory)}</div>
+          <div class="status">${t("status")}: <span>${escapeHtml(stageLabel(lead.pipeline))}</span></div>
+          <div class="status">${t("score")}: <span>${lead.score ?? 0}</span></div>
+          <div class="deal-value">${t("deal")}: ${formatCurrency(value)}</div>
+          <div class="divider"></div>
+          <div class="line"><strong>☎</strong>${escapeHtml(contact)}</div>
+          <div class="line"><strong>✉</strong>${emailLineTemplate(lead.email)}</div>
+          <div class="line"><strong>↗</strong>${siteLineTemplate(lead.site)}</div>
+          ${contactActionTemplate(lead)}
+          ${["MONTAGEM DE PASTA", "VENDA GANHA"].includes(lead.pipeline) ? `
+          <div class="card-actions-row">
+            <button class="small-btn" type="button" onclick="prepareContractFromLead(${lead.id})">Contrato</button>
+          </div>
+          ` : ""}
+          <div class="card-clock" title="${escapeHtml(t("stageSince"))}: ${escapeHtml(lead.pipeline_updated_at || "")}">
+            <strong>◷</strong>${t("stagnantFor")} ${escapeHtml(staleTime)}
+          </div>
+        </article>
+      `;
+    }
+
+    function findLeadInCache(leadId) {
+      if (!cachedBoard) {
+        return null;
+      }
+
+      for (const stage of stages) {
+        const lead = (cachedBoard.board[stage] || []).find((item) => String(item.id) === String(leadId));
+        if (lead) {
+          return lead;
+        }
+      }
+
+      return null;
+    }
+
+    function renderLeadTimeline(events) {
+      const list = document.getElementById("leadTimelineList");
+      if (!events || events.length === 0) {
+        list.innerHTML = `
+          <div class="timeline-item">
+            <div class="timeline-message">Nenhum evento registrado para este lead ainda.</div>
+          </div>
+        `;
+        return;
+      }
+
+      list.innerHTML = events.map((event) => `
+        <div class="timeline-item">
+          <div class="timeline-meta">
+            <span>${escapeHtml(event.event_type || "EVENTO")}</span>
+            <span>${escapeHtml(event.actor_name || "Sistema")}</span>
+            <span>${escapeHtml(timeAgo(event.created_at))}</span>
+          </div>
+          <div class="timeline-message">${escapeHtml(event.message || "")}</div>
+        </div>
+      `).join("");
+    }
+
+    async function loadLeadTimeline(leadId) {
+      const list = document.getElementById("leadTimelineList");
+      list.innerHTML = `
+        <div class="timeline-item">
+          <div class="timeline-message">Carregando timeline...</div>
+        </div>
+      `;
+
+      const response = await apiFetch(`${API_BASE}/leads/${leadId}/events`);
+
+      if (!response.ok) {
+        list.innerHTML = `
+          <div class="timeline-item">
+            <div class="timeline-message">Nao foi possivel carregar a timeline.</div>
+          </div>
+        `;
+        return;
+      }
+
+      renderLeadTimeline(await response.json());
+    }
+
+
+    async function loadLeadDocuments(leadId) {
+      const list = document.getElementById("leadDocumentList");
+      if (!list) return;
+
+      list.innerHTML = `<div class="timeline-item"><div class="timeline-message">Carregando documentos...</div></div>`;
+
+      try {
+        const response = await apiFetch(`${API_BASE}/leads/${leadId}/documents`);
+        if (!response.ok) {
+          list.innerHTML = `<div class="timeline-item"><div class="timeline-message">Não foi possível carregar documentos.</div></div>`;
+          return;
+        }
+
+        const documents = await response.json();
+
+        if (!documents.length) {
+          list.innerHTML = `<div class="timeline-item"><div class="timeline-message">Nenhum documento anexado.</div></div>`;
+          return;
+        }
+
+        list.innerHTML = documents.map((doc) => {
+          const when = doc.created_at ? new Date(doc.created_at).toLocaleString() : "";
+          return `
+            <div class="timeline-item">
+              <div class="timeline-meta">${when} · ${doc.document_type}</div>
+              <div class="timeline-message">
+                <a href="${doc.file_path}" target="_blank" rel="noopener">${doc.file_name}</a>
+                <button class="small-btn danger" type="button" onclick="deleteLeadDocument(${leadId}, ${doc.id})">Excluir</button>
+              </div>
+            </div>
+          `;
+        }).join("");
+      } catch (error) {
+        list.innerHTML = `<div class="timeline-item"><div class="timeline-message">Erro ao carregar documentos.</div></div>`;
+      }
+    }
+
+
+    async function deleteLeadDocument(leadId, documentId) {
+      if (!confirm("Excluir este documento definitivamente?")) {
+        return;
+      }
+
+      const response = await apiFetch(`${API_BASE}/leads/${leadId}/documents/${documentId}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        alert("Não foi possível excluir o documento.");
+        return;
+      }
+
+      await loadLeadDocuments(leadId);
+      await loadLeadTimeline(leadId);
+    }
+
+    async function uploadLeadDocument() {
+      const leadId = document.getElementById("leadId").value;
+      const fileInput = document.getElementById("leadDocumentFile");
+      const documentType = document.getElementById("leadDocumentType").value;
+
+      if (!leadId) {
+        alert("Abra um lead antes de anexar documentos.");
+        return;
+      }
+
+      if (!fileInput.files.length) {
+        alert("Escolha um arquivo para anexar.");
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("document_type", documentType);
+      formData.append("file", fileInput.files[0]);
+
+      const response = await apiFetch(`${API_BASE}/leads/${leadId}/documents`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        alert("Não foi possível anexar o documento. Verifique o formato permitido.");
+        return;
+      }
+
+      fileInput.value = "";
+      await loadLeadDocuments(leadId);
+      await loadLeadTimeline(leadId);
+      alert("Documento anexado com sucesso.");
+    }
+
+    async function addLeadNote() {
+      const leadId = document.getElementById("leadId").value;
+      const input = document.getElementById("leadNoteInput");
+      const message = input.value.trim();
+
+      if (!leadId || !message) {
+        return;
+      }
+
+      const response = await apiFetch(`${API_BASE}/leads/${leadId}/events`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ message })
+      });
+
+      if (!response.ok) {
+        alert("Nao foi possivel salvar a nota");
+        return;
+      }
+
+      input.value = "";
+      await loadLeadTimeline(leadId);
+    }
+
+    function openLeadModal(lead) {
+      if (!lead) {
+        return;
+      }
+
+      document.getElementById("leadId").value = lead.id;
+      document.getElementById("leadNome").value = lead.nome || "";
+      document.getElementById("leadContato").value = lead.contato || "";
+      document.getElementById("leadEmail").value = lead.email || "";
+      document.getElementById("leadSite").value = lead.site || "";
+      document.getElementById("leadInstagram").value = lead.instagram || "";
+      document.getElementById("leadLinkedin").value = lead.linkedin || "";
+      document.getElementById("leadFacebook").value = lead.facebook || "";
+      document.getElementById("leadRedesSociais").value = lead.redes_sociais || "";
+      document.getElementById("leadNicho").value = lead.nicho || "";
+      document.getElementById("leadPais").value = lead.pais || "";
+      document.getElementById("leadEstado").value = lead.estado || "";
+      document.getElementById("leadCidade").value = lead.cidade || "";
+      document.getElementById("leadScore").value = lead.score ?? "";
+      document.getElementById("leadValorNegocio").value = lead.valor_negocio ?? "";
+      document.getElementById("leadPipeline").value = lead.pipeline || "NOVO LEAD";
+      document.getElementById("leadEndereco").value = lead.endereco || "";
+      document.getElementById("leadObservacoes").value = lead.observacoes || "";
+      document.getElementById("leadBrokerTarget").value = lead.assigned_to_user_id || "";
+      document.getElementById("leadNoteInput").value = "";
+      loadLeadTimeline(lead.id).catch(() => {
+        renderLeadTimeline([]);
+      });
+      loadLeadDocuments(lead.id).catch(() => {});
+      leadModal.classList.add("open");
+    }
+
+    function closeLeadModal() {
+      leadModal.classList.remove("open");
+    }
+
+    function openUserModal(user) {
+      if (!user) {
+        return;
+      }
+
+      document.getElementById("editUserId").value = user.id;
+      document.getElementById("editUsername").value = user.username || "";
+      document.getElementById("editFullName").value = user.full_name || "";
+      document.getElementById("editUserRole").value = user.role || "BROKER";
+      document.getElementById("editUserManager").value = user.manager_id || "";
+      document.getElementById("editUserCountry").value = user.pais_operacao || "BR";
+      document.getElementById("editUserState").value = user.estado_operacao || "";
+      document.getElementById("editUserCity").value = user.cidade_operacao || "";
+      document.getElementById("editUserLanguage").value = user.idioma || "pt";
+      document.getElementById("editUserPassword").value = "";
+      document.getElementById("editCreci").value = user.creci || "";
+      document.getElementById("editDataNascimento").value = user.data_nascimento || "";
+      document.getElementById("editTelefone").value = user.telefone || "";
+      document.getElementById("editEmailPessoal").value = user.email_pessoal || "";
+      document.getElementById("editDocumento").value = user.documento || "";
+      document.getElementById("editUserObservacoes").value = user.observacoes || "";
+      userModal.classList.add("open");
+    }
+
+    function closeUserModal() {
+      editingOwnProfile = false;
+      userModal.classList.remove("open");
+    }
+
+    function userInitials(user) {
+      const source = user?.full_name || user?.username || "LV";
+      return source
+        .trim()
+        .split(/\s+/)
+        .slice(0, 2)
+        .map((part) => part[0] || "")
+        .join("")
+        .toUpperCase();
+    }
+
+    function profilePhotoUrl(value) {
+      if (!value) return "";
+      if (/^(https?:|data:|blob:)/i.test(value)) return value;
+      return `${API_BASE}${value.startsWith("/") ? "" : "/"}${value}`;
+    }
+
+    function renderAvatar(container, user) {
+      if (!container) return;
+      const fallback = document.createElement("span");
+      fallback.className = "avatar-initials";
+      fallback.textContent = userInitials(user);
+      const url = profilePhotoUrl(user?.profile_photo_url);
+      if (!url) {
+        container.replaceChildren(fallback);
+        return;
+      }
+      const image = document.createElement("img");
+      image.alt = "";
+      image.src = url;
+      image.addEventListener("error", () => container.replaceChildren(fallback), { once: true });
+      container.replaceChildren(image);
+    }
+
+    function refreshSessionIdentity() {
+      const roleSpan = document.createElement("span");
+      roleSpan.textContent = currentUser.role || "";
+      sessionUser.replaceChildren(document.createTextNode(currentUser.username || ""), roleSpan);
+      renderAvatar(sessionAvatarContent, currentUser);
+    }
+
+    async function uploadProfilePhoto(event) {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file) return;
+      if (file.size > 5 * 1024 * 1024) {
+        alert(t("photoTooLarge"));
+        return;
+      }
+      const formData = new FormData();
+      formData.append("photo", file);
+      const response = await apiFetch(`${API_BASE}/users/${currentUser.id}/profile-photo`, {
+        method: "POST",
+        body: formData
+      });
+      if (!response.ok) {
+        alert(await responseMessage(response, t("photoUploadFailed")));
+        return;
+      }
+      currentUser = { ...currentUser, ...await response.json() };
+      localStorage.setItem("totalsolutions_user", JSON.stringify(currentUser));
+      refreshSessionIdentity();
+      refreshProfileBox();
+    }
+
+    async function removeProfilePhoto() {
+      if (!currentUser.profile_photo_url || !confirm(t("photoRemoveConfirm"))) return;
+      const response = await apiFetch(`${API_BASE}/users/${currentUser.id}/profile-photo`, {
+        method: "DELETE"
+      });
+      if (!response.ok) {
+        alert(await responseMessage(response, t("photoRemoveFailed")));
+        return;
+      }
+      currentUser = { ...currentUser, ...await response.json() };
+      localStorage.setItem("totalsolutions_user", JSON.stringify(currentUser));
+      refreshSessionIdentity();
+      refreshProfileBox();
+    }
+
+    function refreshProfileBox() {
+      document.getElementById("profileName").textContent = currentUser.full_name || currentUser.username;
+      document.getElementById("profileDetails").textContent = [
+        currentUser.role,
+        currentUser.creci ? `CRECI: ${currentUser.creci}` : "",
+        currentUser.telefone || ""
+      ].filter(Boolean).join(" | ");
+      renderAvatar(profileAvatarContent, currentUser);
+      removeProfilePhotoButton.hidden = !currentUser.profile_photo_url;
+    }
+
+    function openMyProfile() {
+      editingOwnProfile = true;
+      openUserModal(currentUser);
+    }
+
+    function showBrokerToast(message) {
+      const existingToast = document.querySelector(".broker-toast");
+      if (existingToast) {
+        existingToast.remove();
+      }
+
+      const toast = document.createElement("div");
+      toast.className = "broker-toast";
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 6500);
+    }
+
+    function notifyBrokerAboutNewLeads(total) {
+      if (currentUser.role !== "BROKER") {
+        return;
+      }
+
+      const key = `totalsolutions_broker_total_${currentUser.id}`;
+      const previousValue = localStorage.getItem(key);
+
+      if (previousValue !== null && total > Number(previousValue)) {
+        const diff = total - Number(previousValue);
+        showBrokerToast(t("newLeadToast")(diff));
+      }
+
+      localStorage.setItem(key, String(total));
+    }
+
+    function renderBoard(data) {
+      cachedBoard = data;
+      const searchTerm = searchInput.value.trim().toLowerCase();
+      let total = 0;
+
+      boardEl.innerHTML = stages.map((stage) => {
+        const allLeads = data.board[stage] || [];
+        const leads = searchTerm
+          ? allLeads.filter((lead) => {
+              const text = `${lead.nome || ""} ${lead.email || ""} ${lead.contato || ""} ${lead.nicho || ""} ${lead.pais || ""} ${lead.estado || ""} ${lead.cidade || ""}`.toLowerCase();
+              return text.includes(searchTerm);
+            })
+          : allLeads;
+
+        total += leads.length;
+        const stageValue = leads.reduce((sum, lead) => sum + Number(lead.valor_negocio || 0), 0);
+
+        return `
+          <section class="column" data-stage="${stage}">
+            <div class="column-header">
+              <div class="column-title">
+                ${stageLabel(stage)}
+                <span class="count">${leads.length}</span>
+              </div>
+              <div class="value">${formatCurrency(stageValue)}</div>
+            </div>
+            <div class="cards">
+              ${leads.length ? leads.map(cardTemplate).join("") : `<div class="empty">${t("emptyStage")}</div>`}
+            </div>
+          </section>
+        `;
+      }).join("");
+
+      totalText.textContent = t("totalText")(total);
+      notifyBrokerAboutNewLeads(total);
+      bindDragAndDrop();
+      bindCardOpen();
+    }
+
+    function startBoardClock() {
+      if (boardClockTimer) {
+        clearInterval(boardClockTimer);
+      }
+
+      boardClockTimer = setInterval(() => {
+        if (cachedBoard && document.body.classList.contains("logged-in")) {
+          renderBoard(cachedBoard);
+        }
+      }, 30000);
+    }
+
+    async function loadBoard() {
+      totalText.textContent = "Carregando leads...";
+      const selectedBroker = currentUser.role === "BROKER" ? String(currentUser.id) : brokerFilter.value;
+      const brokerParam = selectedBroker ? `&assigned_to_user_id=${selectedBroker}` : "";
+      const limitPerStage = selectedBroker ? 100 : 25;
+      const response = await apiFetch(`${API_BASE}/leads/kanban?limit_per_stage=${limitPerStage}${brokerParam}`);
+      const data = await response.json();
+      renderBoard(data);
+    }
+
+    function updateInventoryCount() {
+      if (!cachedInventory) {
+        return;
+      }
+
+      const nicho = document.getElementById("assignSegment").value;
+      const pais = document.getElementById("assignCountry").value;
+      const estado = document.getElementById("assignState").value;
+      const cidade = document.getElementById("assignCity").value;
+      let available = cachedInventory.total_livre || 0;
+
+      if (nicho || pais || estado || cidade) {
+        available = filteredInventoryRows({ nicho, pais, estado, cidade })
+          .reduce((sum, item) => sum + Number(item.total || 0), 0);
+      }
+
+      document.getElementById("assignAvailableCount").textContent = available;
+      document.getElementById("assignTotalFree").textContent = cachedInventory.total_livre || 0;
+      document.querySelector(".inventory-meter span:first-child").innerHTML = `${t("freeFilter")} <strong id="assignAvailableCount">${available}</strong>`;
+      document.querySelector(".inventory-meter span:last-child").innerHTML = `${t("totalBank")} <strong id="assignTotalFree">${cachedInventory.total_livre || 0}</strong>`;
+
+      const quantity = Number(document.getElementById("assignQuantity").value);
+      document.getElementById("assignSmartButton").disabled = available <= 0 || !Number.isInteger(quantity) || quantity < 1;
+    }
+
+    async function loadInventory() {
+      const response = await apiFetch(`${API_BASE}/leads/inventory`);
+      if (!response.ok) {
+        return;
+      }
+
+      const segmentSelect = document.getElementById("assignSegment");
+      const countrySelect = document.getElementById("assignCountry");
+      const stateSelect = document.getElementById("assignState");
+      const citySelect = document.getElementById("assignCity");
+      const previousSegment = segmentSelect.value;
+      const previousCountry = countrySelect.value;
+      const previousState = stateSelect.value;
+      const previousCity = citySelect.value;
+
+      cachedInventory = await response.json();
+      segmentSelect.innerHTML = `<option value="">${t("allSegments")}</option>` + cachedInventory.nichos.map((item) => {
+        return `<option value="${item.nome}">${item.nome} (${item.total})</option>`;
+      }).join("");
+      countrySelect.innerHTML = `<option value="">${t("allCountries")}</option>` + cachedInventory.paises.map((item) => {
+        const country = countryInfo(item.nome);
+        return `<option value="${item.nome}">${country.flag} ${country.label} · ${country.language} (${item.total})</option>`;
+      }).join("");
+
+      if (hasSelectValue(segmentSelect, previousSegment)) {
+        segmentSelect.value = previousSegment;
+      }
+      if (hasSelectValue(countrySelect, previousCountry)) {
+        countrySelect.value = previousCountry;
+      }
+      refreshAssignGeoOptions({ state: previousState, city: previousCity });
+
+      document.getElementById("metricFreeLeads").textContent = cachedInventory.total_livre || 0;
+      document.getElementById("metricBank").textContent = cachedInventory.total_livre || 0;
+      document.getElementById("metricSegments").textContent = cachedInventory.nichos.length;
+      document.getElementById("metricCountries").textContent = cachedInventory.paises.length;
+      document.getElementById("metricCombinations").textContent = cachedInventory.combinacoes.length;
+      document.getElementById("segmentStockList").innerHTML = cachedInventory.nichos.slice(0, 12).map((item) => {
+        return `
+          <div class="broker-row">
+            <span>${item.nome}</span>
+            <span class="small-badge">${item.total} ${t("leads")}</span>
+          </div>
+        `;
+      }).join("");
+      updateInventoryCount();
+    }
+
+    async function sendToBroker() {
+      const brokerId = document.getElementById("assignBroker").value || brokerFilter.value;
+      const quantityInput = document.getElementById("assignQuantity").value || document.getElementById("leadSendQuantity").value;
+      const quantity = Number(quantityInput);
+      const nicho = document.getElementById("assignSegment").value.trim();
+      const pais = document.getElementById("assignCountry").value.trim();
+      const estado = document.getElementById("assignState").value.trim();
+      const cidade = document.getElementById("assignCity").value.trim();
+
+      if (!brokerId) {
+        alert(t("selectBrokerAlert"));
+        return;
+      }
+
+      if (!Number.isInteger(quantity) || quantity < 1) {
+        alert(t("invalidQty"));
+        return;
+      }
+
+      const available = Number(document.getElementById("assignAvailableCount").textContent || 0);
+      if (available <= 0) {
+        alert(t("noLeadsForFilter"));
+        return;
+      }
+
+      const response = await apiFetch(`${API_BASE}/users/assign-leads`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          broker_id: Number(brokerId),
+          limit: quantity,
+          nicho: nicho || null,
+          pais: pais || null,
+          estado: estado || null,
+          cidade: cidade || null
+        })
+      });
+      const result = await response.json();
+      alert(`${result.leads_enviados} ${t("leads")} -> ${result.broker}`);
+      brokerFilter.value = brokerId;
+      await loadBrokers();
+      await loadInventory();
+      await loadBoard();
+    }
+
+    function applyUserMode() {
+      refreshSessionIdentity();
+      refreshProfileBox();
+
+      if (currentUser.role === "BROKER") {
+        brokerFilter.value = String(currentUser.id);
+        brokerFilter.disabled = true;
+        document.getElementById("seedBrokerButton").disabled = true;
+        document.getElementById("leadSendQuantity").disabled = true;
+        document.getElementById("createBrokerButton").disabled = true;
+        setBodyState({ loggedIn: true, mode: "broker-mode" });
+      } else if (currentUser.role === "GERENTE") {
+        setBodyState({ loggedIn: true, mode: "manager-mode" });
+        document.getElementById("newBrokerRole").value = "BROKER";
+        document.getElementById("createBrokerButton").disabled = false;
+        document.getElementById("seedBrokerButton").disabled = false;
+        document.getElementById("leadSendQuantity").disabled = false;
+        brokerFilter.disabled = false;
+      } else {
+        setBodyState({ loggedIn: true, mode: "root-mode" });
+        brokerFilter.disabled = false;
+        document.getElementById("seedBrokerButton").disabled = false;
+        document.getElementById("leadSendQuantity").disabled = false;
+        document.getElementById("createBrokerButton").disabled = false;
+      }
+    }
+
+    async function sendPresence() {
+      if (!currentUser?.id || !document.body.classList.contains("logged-in")) {
+        return;
+      }
+
+      const response = await apiFetch(`${API_BASE}/users/me/heartbeat`, {
+        method: "POST"
+      });
+
+      if (response.ok) {
+        const updatedUser = await response.json();
+        currentUser = { ...currentUser, ...updatedUser };
+        localStorage.setItem("totalsolutions_user", JSON.stringify(currentUser));
+      }
+    }
+
+    function startPresenceWatch() {
+      if (presenceTimer) {
+        clearInterval(presenceTimer);
+      }
+
+      sendPresence().catch(() => {});
+      presenceTimer = setInterval(() => {
+        sendPresence().catch(() => {});
+      }, 30000);
+    }
+
+    function startUserPresenceRefresh() {
+      if (userRefreshTimer) {
+        clearInterval(userRefreshTimer);
+        userRefreshTimer = null;
+      }
+
+      if (!["ROOT", "GERENTE"].includes(currentUser.role)) {
+        return;
+      }
+
+      userRefreshTimer = setInterval(() => {
+        if (document.body.classList.contains("logged-in")) {
+          loadBrokers().catch(() => {});
+        }
+      }, 30000);
+    }
+
+    async function markOffline() {
+      if (!currentUser?.id) {
+        return;
+      }
+
+      await apiFetch(`${API_BASE}/auth/logout`, {
+        method: "POST"
+      }).catch(() => {});
+    }
+
+    async function enterDashboard(user) {
+      currentUser = {
+        ...user,
+        idioma: user.idioma || currentLanguage
+      };
+      applyLanguage(currentUser.idioma);
+      const userTheme = hasStoredTheme(currentUser) ? getStoredTheme(currentUser) : getStoredTheme(null);
+      applyTheme(userTheme, { persist: false, user: currentUser });
+      saveThemePreference(userTheme, currentUser);
+      localStorage.setItem("totalsolutions_user", JSON.stringify(currentUser));
+      applyUserMode();
+      showView("vendas");
+      await loadBrokers();
+      await loadPendingUsers();
+      await loadInventory();
+      await loadBoard();
+      await loadSupportTickets();
+      startPresenceWatch();
+      startUserPresenceRefresh();
+      startBrokerLeadWatch();
+      startBoardClock();
+    }
+
+    function startBrokerLeadWatch() {
+      if (brokerRefreshTimer) {
+        clearInterval(brokerRefreshTimer);
+        brokerRefreshTimer = null;
+      }
+
+      if (currentUser.role !== "BROKER") {
+        return;
+      }
+
+      brokerRefreshTimer = setInterval(() => {
+        if (document.body.classList.contains("logged-in")) {
+          loadBoard().catch(() => {});
+        }
+      }, 45000);
+    }
+
+    async function login(event) {
+      event.preventDefault();
+      const email = document.getElementById("loginUser").value.trim();
+      const password = document.getElementById("loginPassword").value;
+      setAuthStatus("loginStatus");
+
+      const response = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password })
+      });
+
+      if (!response.ok) {
+        setAuthStatus("loginStatus", await responseMessage(response, t("loginInvalid")), "error");
+        return;
+      }
+
+      const data = await response.json();
+      accessToken = data.access_token;
+      localStorage.setItem("totalsolutions_access_token", accessToken);
+      await enterDashboard(data.user);
+    }
+
+    async function register(event) {
+      event.preventDefault();
+      const password = document.getElementById("registerPassword").value;
+      const passwordConfirmation = document.getElementById("registerPasswordConfirm").value;
+      setAuthStatus("registerStatus");
+
+      if (password !== passwordConfirmation) {
+        setAuthStatus("registerStatus", t("passwordsMismatch"), "error");
+        return;
+      }
+
+      const response = await fetch(`${API_BASE}/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          full_name: document.getElementById("registerFullName").value.trim(),
+          email: document.getElementById("registerEmail").value.trim(),
+          company: document.getElementById("registerCompany").value.trim() || null,
+          phone: document.getElementById("registerPhone").value.trim() || null,
+          plan: document.getElementById("registerPlan").value,
+          password
+        })
+      });
+
+      if (!response.ok) {
+        setAuthStatus("registerStatus", await responseMessage(response, t("registrationError")), "error");
+        return;
+      }
+
+      const data = await response.json();
+      const status = document.getElementById("registerStatus");
+      status.textContent = `${t("registrationSuccess")} `;
+      status.classList.remove("error");
+      status.classList.add("success");
+      if (data.verification_url) {
+        const verificationLink = document.createElement("a");
+        verificationLink.href = data.verification_url;
+        verificationLink.target = "_blank";
+        verificationLink.rel = "noopener";
+        verificationLink.textContent = currentLanguage === "en"
+          ? "Verify email"
+          : currentLanguage === "es" ? "Confirmar correo" : "Confirmar e-mail";
+        status.appendChild(verificationLink);
+      }
+      document.getElementById("registerForm").reset();
+    }
+
+    async function logout() {
+      await markOffline();
+      saveThemePreference(currentTheme, null);
+      localStorage.removeItem("totalsolutions_user");
+      localStorage.removeItem("totalsolutions_access_token");
+      accessToken = "";
+      if (brokerRefreshTimer) {
+        clearInterval(brokerRefreshTimer);
+        brokerRefreshTimer = null;
+      }
+      if (presenceTimer) {
+        clearInterval(presenceTimer);
+        presenceTimer = null;
+      }
+      if (userRefreshTimer) {
+        clearInterval(userRefreshTimer);
+        userRefreshTimer = null;
+      }
+      if (boardClockTimer) {
+        clearInterval(boardClockTimer);
+        boardClockTimer = null;
+      }
+      currentUser = { id: 1, username: "root", role: "ROOT" };
+      cachedBoard = null;
+      setBodyState({ loggedIn: false });
+      boardEl.innerHTML = "";
+      totalText.textContent = "Carregando leads...";
+      document.getElementById("loginUser").value = "";
+      document.getElementById("loginPassword").value = "";
+      showLoginForm();
+      applyLanguage(currentLanguage);
+      applyTheme(getStoredTheme(null), { persist: false, user: null });
+    }
+
+    function syncLanguageFromCountry(countrySelectId, languageSelectId) {
+      const country = document.getElementById(countrySelectId).value;
+      const profile = userCountries[country];
+      if (profile) {
+        document.getElementById(languageSelectId).value = profile.language;
+      }
+    }
+
+    function refreshSupportCount() {
+      const counter = document.getElementById("supportCount");
+      if (counter) {
+        counter.textContent = t("supportCount")(cachedSupportTickets.length);
+      }
+    }
+
+    function renderSupportTickets() {
+      const list = document.getElementById("supportTicketList");
+      if (!list) {
+        return;
+      }
+
+      if (!cachedSupportTickets.length) {
+        list.innerHTML = `<div class="line">${t("noSupportTickets")}</div>`;
+        return;
+      }
+
+      list.innerHTML = cachedSupportTickets.map((ticket) => {
+        const creator = ticket.created_by_full_name || ticket.created_by_username || "Total Solutions";
+        const createdAt = new Date(ticket.created_at).toLocaleString(translations[currentLanguage].locale);
+        return `
+          <div class="ticket-row">
+            <div>
+              <strong>${escapeHtml(ticket.protocol || `LV-${ticket.id}`)} · ${escapeHtml(ticket.module)}</strong>
+              <div class="ticket-meta">
+                <span>${escapeHtml(ticket.priority)}</span>
+                <span>${escapeHtml(creator)}</span>
+                <span>${escapeHtml(ticket.created_by_role || "")}</span>
+                <span>${escapeHtml(createdAt)}</span>
+              </div>
+              <div class="ticket-message">${escapeHtml(ticket.message)}</div>
+            </div>
+            <select class="ticket-status" data-ticket-id="${ticket.id}">
+              <option value="ABERTO" ${ticket.status === "ABERTO" ? "selected" : ""}>${t("supportStatusOpen")}</option>
+              <option value="EM_ATENDIMENTO" ${ticket.status === "EM_ATENDIMENTO" ? "selected" : ""}>${t("supportStatusProgress")}</option>
+              <option value="RESOLVIDO" ${ticket.status === "RESOLVIDO" ? "selected" : ""}>${t("supportStatusDone")}</option>
+            </select>
+          </div>
+        `;
+      }).join("");
+    }
+
+
+    let cachedContracts = [];
+
+    async function loadContracts() {
+      const list = document.getElementById("contractsList");
+      if (!list) return;
+
+      list.innerHTML = `<div class="empty-state">Carregando contratos...</div>`;
+
+      try {
+        const response = await apiFetch(`${API_BASE}/contracts/`);
+        if (!response.ok) {
+          list.innerHTML = `<div class="empty-state">Não foi possível carregar contratos.</div>`;
+          return;
+        }
+
+        cachedContracts = await response.json();
+
+        if (!cachedContracts.length) {
+          list.innerHTML = `<div class="empty-state">Nenhum contrato criado ainda.</div>`;
+          return;
+        }
+
+        list.innerHTML = cachedContracts.map((contract) => `
+          <div class="broker-card">
+            <div>
+              <strong>#${contract.id} · ${contract.contract_type}</strong>
+              <p>Status: ${contract.status}</p>
+              <p>Cliente: ${contract.client_name || "Não informado"}</p>
+              <p>Lead ID: ${contract.lead_id}</p>
+              <button class="small-btn" type="button" onclick="loadContractEvents(${contract.id})">Ver histórico</button>
+              <div class="lead-timeline" id="contractEvents-${contract.id}"></div>
+            </div>
+          </div>
+        `).join("");
+      } catch (error) {
+        list.innerHTML = `<div class="empty-state">Erro ao carregar contratos.</div>`;
+      }
+    }
+
+
+
+
+    function prepareContractFromLead(leadId) {
+      const lead = findLeadInCache(leadId);
+      if (!lead) {
+        alert("Lead não encontrado no cache atual. Recarregue o funil e tente novamente.");
+        return;
+      }
+
+      document.querySelector('[data-view-target="contratos"]')?.click();
+
+      setTimeout(() => {
+        document.getElementById("contractLeadId").value = lead.id || "";
+        document.getElementById("contractClientName").value = lead.nome || "";
+        document.getElementById("contractClientEmail").value = lead.email || "";
+        document.getElementById("contractClientPhone").value = lead.contato || "";
+        document.getElementById("contractPropertyAddress").value = lead.endereco || [lead.cidade, lead.estado, lead.pais].filter(Boolean).join(" · ");
+        document.getElementById("contractBusinessValue").value = lead.valor_negocio || "";
+        document.getElementById("contractNotes").value = `Contrato iniciado a partir do lead #${lead.id} - ${lead.nome || ""}`;
+      }, 150);
+    }
+
+    async function loadContractEvents(contractId) {
+      const box = document.getElementById(`contractEvents-${contractId}`);
+      if (!box) return;
+
+      box.innerHTML = `<p>Carregando histórico...</p>`;
+
+      try {
+        const response = await apiFetch(`${API_BASE}/contracts/${contractId}/events`);
+        if (!response.ok) {
+          box.innerHTML = `<p>Não foi possível carregar o histórico.</p>`;
+          return;
+        }
+
+        const events = await response.json();
+
+        if (!events.length) {
+          box.innerHTML = `<p>Nenhum evento registrado.</p>`;
+          return;
+        }
+
+        box.innerHTML = events.map((event) => {
+          const when = event.created_at ? new Date(event.created_at).toLocaleString() : "";
+          return `
+            <div class="timeline-item">
+              <strong>${when} · ${event.actor_name || "Sistema"} · ${event.event_type}</strong>
+              <p>${event.message || ""}</p>
+            </div>
+          `;
+        }).join("");
+      } catch (error) {
+        box.innerHTML = `<p>Erro ao carregar histórico.</p>`;
+      }
+    }
+
+    async function createContract(event) {
+      event.preventDefault();
+
+      const payload = {
+        lead_id: Number(document.getElementById("contractLeadId").value),
+        contract_type: document.getElementById("contractType").value,
+        client_name: document.getElementById("contractClientName").value.trim() || null,
+        client_email: document.getElementById("contractClientEmail").value.trim() || null,
+        client_phone: document.getElementById("contractClientPhone").value.trim() || null,
+        property_address: document.getElementById("contractPropertyAddress").value.trim() || null,
+        business_value: document.getElementById("contractBusinessValue").value.trim() || null,
+        commission_value: document.getElementById("contractCommissionValue").value.trim() || null,
+        notes: document.getElementById("contractNotes").value.trim() || null,
+      };
+
+      const response = await apiFetch(`${API_BASE}/contracts/`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        alert("Não foi possível criar o contrato. Verifique o ID do lead e suas permissões.");
+        return;
+      }
+
+      document.getElementById("contractForm").reset();
+      await loadContracts();
+      alert("Contrato criado com sucesso.");
+    }
+
+    async function loadSupportTickets() {
+      if (!currentUser || !["ROOT", "GERENTE"].includes(currentUser.role)) {
+        cachedSupportTickets = [];
+        refreshSupportCount();
+        return;
+      }
+
+      const response = await apiFetch(`${API_BASE}/support/tickets`);
+
+      if (!response.ok) {
+        return;
+      }
+
+      cachedSupportTickets = await response.json();
+      renderSupportTickets();
+      refreshSupportCount();
+    }
+
+    function openSupport() {
+      document.getElementById("supportWidget").classList.add("open");
+      refreshSupportCount();
+    }
+
+    function closeSupport() {
+      document.getElementById("supportWidget").classList.remove("open");
+    }
+
+    async function sendSupportTicket(event) {
+      event.preventDefault();
+      const message = document.getElementById("supportMessage").value.trim();
+      if (!message) {
+        document.getElementById("supportStatus").textContent = t("supportEmpty");
+        return;
+      }
+
+      const response = await apiFetch(`${API_BASE}/support/tickets`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          module: document.getElementById("supportModule").value,
+          priority: document.getElementById("supportPriority").value,
+          message
+        })
+      });
+
+      if (!response.ok) {
+        document.getElementById("supportStatus").textContent = "Nao foi possivel registrar o chamado.";
+        return;
+      }
+
+      const ticket = await response.json();
+      document.getElementById("supportMessage").value = "";
+      document.getElementById("supportStatus").textContent = t("supportSent")(ticket.protocol || `LV-${ticket.id}`);
+      if (["ROOT", "GERENTE"].includes(currentUser.role)) {
+        await loadSupportTickets();
+      } else {
+        cachedSupportTickets = [ticket, ...cachedSupportTickets];
+        refreshSupportCount();
+      }
+    }
+
+    async function updateSupportTicketStatus(ticketId, status) {
+      const response = await apiFetch(`${API_BASE}/support/tickets/${ticketId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ status })
+      });
+
+      if (response.ok) {
+        await loadSupportTickets();
+      }
+    }
+
+    async function createBroker() {
+      const username = document.getElementById("newBrokerUser").value.trim();
+      const password = document.getElementById("newBrokerPassword").value;
+      const role = document.getElementById("newBrokerRole").value;
+      const managerId = document.getElementById("newBrokerManager").value;
+      const paisOperacao = document.getElementById("newBrokerCountry").value;
+      const estadoOperacao = document.getElementById("newBrokerState").value.trim();
+      const cidadeOperacao = document.getElementById("newBrokerCity").value.trim();
+      const idioma = document.getElementById("newBrokerLanguage").value;
+
+      if (!username || !password) {
+        alert("Informe usuario e senha do broker");
+        return;
+      }
+
+      if (currentUser.role === "ROOT" && role === "BROKER" && cachedBrokers.some((user) => user.role === "GERENTE") && !managerId) {
+        alert("Selecione o gerente responsavel por este broker");
+        return;
+      }
+
+      const response = await apiFetch(`${API_BASE}/users/`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          username,
+          password,
+          role,
+          manager_id: role === "BROKER" && managerId ? Number(managerId) : null,
+          full_name: username,
+          pais_operacao: paisOperacao,
+          estado_operacao: estadoOperacao,
+          cidade_operacao: cidadeOperacao,
+          idioma
+        })
+      });
+
+      if (!response.ok) {
+        alert("Nao foi possivel cadastrar broker");
+        return;
+      }
+
+      document.getElementById("newBrokerUser").value = "";
+      document.getElementById("newBrokerState").value = "";
+      document.getElementById("newBrokerCity").value = "";
+      await loadBrokers();
+    }
+
+    async function loadBrokers() {
+      const response = await apiFetch(`${API_BASE}/users/brokers/summary`);
+
+      if (!response.ok) {
+        return;
+      }
+
+      const brokers = await response.json();
+      cachedBrokers = brokers;
+      const leadReceivers = brokers.filter((broker) => broker.role === "BROKER");
+      const managers = brokers.filter((broker) => broker.role === "GERENTE");
+      const totalAssigned = brokers.reduce((sum, broker) => sum + broker.total_leads, 0);
+      const totalWon = brokers.reduce((sum, broker) => sum + (broker.pipeline_counts?.["VENDA GANHA"] || 0), 0);
+      document.getElementById("metricBrokers").textContent = brokers.length;
+      document.getElementById("metricAssigned").textContent = totalAssigned;
+      document.getElementById("metricWon").textContent = totalWon;
+      if (cachedInventory) {
+        document.getElementById("metricBank").textContent = cachedInventory.total_livre || 0;
+      }
+      const currentValue = brokerFilter.value;
+      brokerFilter.innerHTML = `<option value="">${t("allBrokers")}</option>` + leadReceivers.map((broker) => {
+        return `<option value="${broker.id}">${broker.username}</option>`;
+      }).join("");
+      document.getElementById("assignBroker").innerHTML = `<option value="">${t("selectBroker")}</option>` + leadReceivers.map((broker) => {
+        return `<option value="${broker.id}">${broker.username}</option>`;
+      }).join("");
+      brokerFilter.value = currentUser.role === "BROKER" ? String(currentUser.id) : currentValue;
+      document.getElementById("returnBroker").innerHTML = `<option value="">${t("allBrokers")}</option>` + leadReceivers.map((broker) => {
+        return `<option value="${broker.id}">${broker.username}</option>`;
+      }).join("");
+      document.getElementById("leadBrokerTarget").innerHTML = '<option value="">Sem broker / banco</option>' + leadReceivers.map((broker) => {
+        return `<option value="${broker.id}">${broker.username}</option>`;
+      }).join("");
+      const managerOptions = `<option value="">Sem gerente</option>` + managers.map((manager) => {
+        return `<option value="${manager.id}">${manager.full_name || manager.username}</option>`;
+      }).join("");
+      document.getElementById("newBrokerManager").innerHTML = managerOptions;
+      document.getElementById("editUserManager").innerHTML = managerOptions;
+
+      brokerList.innerHTML = brokers.map((broker) => {
+        const counts = broker.pipeline_counts || {};
+        const detalhe = Object.entries(counts).map(([stage, count]) => `${stageLabel(stage)}: ${count}`).join(" | ") || "sem leads";
+        const country = userCountries[broker.pais_operacao || "BR"] || userCountries.BR;
+        const presenceClass = broker.is_online ? "online" : "offline";
+        const managerName = broker.manager_id
+          ? managers.find((manager) => manager.id === broker.manager_id)?.username
+          : "";
+        const viewButton = broker.role === "BROKER"
+          ? `<button class="ghost" data-broker-id="${broker.id}">Ver</button>`
+          : `<span></span>`;
+        return `
+          <div class="broker-row">
+            <span>
+              ${broker.username}<br>
+              <small>${broker.role}${managerName ? ` · Gerente: ${escapeHtml(managerName)}` : ""}</small><br>
+              <small>${escapeHtml(formatUserTerritory(broker))}</small>
+              <span class="presence-badge ${presenceClass}">
+                <span class="presence-dot"></span>${escapeHtml(presenceLabel(broker))}
+              </span>
+            </span>
+            <span class="small-badge">${broker.total_leads} ${t("leads")}</span>
+            ${viewButton}
+            <button class="ghost" data-edit-user-id="${broker.id}">Editar</button>
+            <span style="grid-column: 1 / -1; color:#64748b; font-size:13px;">${detalhe}</span>
+          </div>
+        `;
+      }).join("");
+
+      brokerList.querySelectorAll("button[data-broker-id]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          brokerFilter.value = button.dataset.brokerId;
+          showView("vendas");
+          await loadBoard();
+          const kanban = document.querySelector(".kanban");
+          if (kanban) {
+            window.scrollTo({ top: kanban.offsetTop - 20, behavior: "smooth" });
+          }
+        });
+      });
+
+      brokerList.querySelectorAll("button[data-edit-user-id]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const user = cachedBrokers.find((broker) => String(broker.id) === String(button.dataset.editUserId));
+          openUserModal(user);
+        });
+      });
+    }
+
+    function pendingManagerOptions() {
+      const managers = cachedBrokers.filter((user) => user.role === "GERENTE");
+      return `<option value="">Sem gerente</option>` + managers.map((manager) => {
+        return `<option value="${manager.id}">${escapeHtml(manager.full_name || manager.username)}</option>`;
+      }).join("");
+    }
+
+    function renderPendingUsers(users) {
+      const list = document.getElementById("pendingUserList");
+      if (currentUser.role !== "ROOT") {
+        list.innerHTML = "";
+        return;
+      }
+
+      if (!users.length) {
+        list.innerHTML = `<div class="pending-user-empty">${escapeHtml(t("noPendingUsers"))}</div>`;
+        return;
+      }
+
+      list.innerHTML = users.map((user) => {
+        const emailState = user.email_verified
+          ? (currentLanguage === "en" ? "Email verified" : currentLanguage === "es" ? "Correo confirmado" : "E-mail confirmado")
+          : (currentLanguage === "en" ? "Awaiting email" : currentLanguage === "es" ? "Aguardando correo" : "Aguardando e-mail");
+        return `
+          <div class="pending-user-row" data-pending-user-id="${user.id}">
+            <div>
+              <strong>${escapeHtml(user.full_name || user.username)}</strong><br>
+              <small>${escapeHtml(user.email || user.username)} · ${escapeHtml(user.company || "Sem empresa")}</small><br>
+              <small>${escapeHtml(emailState)} · ${escapeHtml(user.status)}</small>
+            </div>
+            <div class="pending-user-controls">
+              <select class="lv-input" data-pending-role>
+                <option value="BROKER">Broker</option>
+                <option value="GERENTE">Gerente</option>
+              </select>
+              <select class="lv-input" data-pending-manager>${pendingManagerOptions()}</select>
+              <select class="lv-input" data-pending-plan>
+                <option value="STARTER">Starter</option>
+                <option value="PRO">Pro</option>
+                <option value="EQUIPES">Equipes</option>
+              </select>
+              <input class="lv-input" data-pending-max-brokers type="number" min="0" value="${user.plan_max_brokers || 1}" placeholder="${escapeHtml(t("maxBrokers"))}">
+              <input class="lv-input" data-pending-max-leads type="number" min="0" value="${user.plan_max_leads || 100}" placeholder="${escapeHtml(t("maxLeads"))}">
+              <button class="lv-button-primary" data-approve-pending ${user.email_verified ? "" : "disabled"}>${escapeHtml(t("approve"))}</button>
+              <button class="lv-button-secondary" data-suspend-pending>${escapeHtml(t("suspend"))}</button>
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      list.querySelectorAll("[data-pending-role]").forEach((roleSelect) => {
+        const row = roleSelect.closest("[data-pending-user-id]");
+        const managerSelect = row.querySelector("[data-pending-manager]");
+        const syncManager = () => {
+          managerSelect.disabled = roleSelect.value !== "BROKER";
+          if (managerSelect.disabled) {
+            managerSelect.value = "";
+          }
+        };
+        roleSelect.addEventListener("change", syncManager);
+        syncManager();
+      });
+
+      list.querySelectorAll("[data-approve-pending]").forEach((button) => {
+        button.addEventListener("click", () => approvePendingUser(button.closest("[data-pending-user-id]")));
+      });
+      list.querySelectorAll("[data-suspend-pending]").forEach((button) => {
+        button.addEventListener("click", () => suspendPendingUser(button.closest("[data-pending-user-id]")));
+      });
+    }
+
+    async function loadPendingUsers() {
+      if (currentUser.role !== "ROOT") {
+        renderPendingUsers([]);
+        return;
+      }
+
+      const response = await apiFetch(`${API_BASE}/admin/users/pending`);
+      if (!response.ok) {
+        document.getElementById("pendingUserList").innerHTML = "";
+        return;
+      }
+      renderPendingUsers(await response.json());
+    }
+
+    async function approvePendingUser(row) {
+      const userId = row.dataset.pendingUserId;
+      const role = row.querySelector("[data-pending-role]").value;
+      const managerValue = row.querySelector("[data-pending-manager]").value;
+      const response = await apiFetch(`${API_BASE}/admin/users/${userId}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role,
+          manager_id: role === "BROKER" && managerValue ? Number(managerValue) : null,
+          plan: row.querySelector("[data-pending-plan]").value,
+          plan_max_brokers: Number(row.querySelector("[data-pending-max-brokers]").value || 0),
+          plan_max_leads: Number(row.querySelector("[data-pending-max-leads]").value || 0)
+        })
+      });
+
+      if (!response.ok) {
+        alert(await responseMessage(response, t("registrationError")));
+        return;
+      }
+      await loadBrokers();
+      await loadPendingUsers();
+    }
+
+    async function suspendPendingUser(row) {
+      const response = await apiFetch(`${API_BASE}/admin/users/${row.dataset.pendingUserId}/suspend`, {
+        method: "POST"
+      });
+      if (!response.ok) {
+        alert(await responseMessage(response, t("registrationError")));
+        return;
+      }
+      await loadPendingUsers();
+    }
+
+    function bindDragAndDrop() {
+      boardEl.querySelectorAll(".card").forEach((card) => {
+        card.addEventListener("dragstart", (event) => {
+          event.stopPropagation();
+          event.dataTransfer.setData("text/plain", card.dataset.leadId);
+        });
+      });
+
+      boardEl.querySelectorAll(".column").forEach((column) => {
+        column.addEventListener("dragover", (event) => {
+          event.preventDefault();
+          column.classList.add("drop-target");
+        });
+
+        column.addEventListener("dragleave", () => {
+          column.classList.remove("drop-target");
+        });
+
+        column.addEventListener("drop", async (event) => {
+          event.preventDefault();
+          column.classList.remove("drop-target");
+          const leadId = event.dataTransfer.getData("text/plain");
+          const pipeline = column.dataset.stage;
+
+          await apiFetch(`${API_BASE}/leads/${leadId}/pipeline`, {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ pipeline })
+          });
+
+          await loadBrokers();
+          await loadBoard();
+        });
+      });
+    }
+
+    function bindCardOpen() {
+      boardEl.querySelectorAll(".card").forEach((card) => {
+        card.addEventListener("click", (event) => {
+          if (event.target.closest("a")) {
+            return;
+          }
+
+          openLeadModal(findLeadInCache(card.dataset.leadId));
+        });
+      });
+    }
+
+    async function saveLead(event) {
+      event.preventDefault();
+      const leadId = document.getElementById("leadId").value;
+      const scoreValue = document.getElementById("leadScore").value;
+      const valueInput = document.getElementById("leadValorNegocio").value.replace(",", ".");
+
+      await apiFetch(`${API_BASE}/leads/${leadId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          nome: document.getElementById("leadNome").value,
+          contato: document.getElementById("leadContato").value,
+          email: document.getElementById("leadEmail").value,
+          site: document.getElementById("leadSite").value,
+          instagram: document.getElementById("leadInstagram").value,
+          linkedin: document.getElementById("leadLinkedin").value,
+          facebook: document.getElementById("leadFacebook").value,
+          redes_sociais: document.getElementById("leadRedesSociais").value,
+          nicho: document.getElementById("leadNicho").value,
+          pais: document.getElementById("leadPais").value,
+          estado: document.getElementById("leadEstado").value,
+          cidade: document.getElementById("leadCidade").value,
+          score: scoreValue === "" ? null : Number(scoreValue),
+          valor_negocio: valueInput === "" ? 0 : Number(valueInput),
+          pipeline: document.getElementById("leadPipeline").value,
+          endereco: document.getElementById("leadEndereco").value,
+          observacoes: document.getElementById("leadObservacoes").value
+        })
+      });
+
+      closeLeadModal();
+      await loadBrokers();
+      await loadInventory();
+      await loadBoard();
+    }
+
+    async function saveUser(event) {
+      event.preventDefault();
+      const userId = document.getElementById("editUserId").value;
+      const password = document.getElementById("editUserPassword").value;
+      const payload = {
+        username: document.getElementById("editUsername").value,
+        full_name: document.getElementById("editFullName").value,
+        creci: document.getElementById("editCreci").value,
+        data_nascimento: document.getElementById("editDataNascimento").value,
+        telefone: document.getElementById("editTelefone").value,
+        email_pessoal: document.getElementById("editEmailPessoal").value,
+        documento: document.getElementById("editDocumento").value,
+        observacoes: document.getElementById("editUserObservacoes").value,
+        pais_operacao: document.getElementById("editUserCountry").value,
+        estado_operacao: document.getElementById("editUserState").value,
+        cidade_operacao: document.getElementById("editUserCity").value,
+        idioma: document.getElementById("editUserLanguage").value
+      };
+
+      if (currentUser.role === "ROOT" && !editingOwnProfile) {
+        payload.role = document.getElementById("editUserRole").value;
+        payload.manager_id = payload.role === "BROKER" && document.getElementById("editUserManager").value
+          ? Number(document.getElementById("editUserManager").value)
+          : null;
+      }
+
+      if (password) {
+        payload.password = password;
+      }
+
+      const url = editingOwnProfile
+        ? `${API_BASE}/users/${userId}/profile`
+        : `${API_BASE}/users/${userId}`;
+
+      const response = await apiFetch(url, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        alert("Nao foi possivel salvar usuario");
+        return;
+      }
+
+      if (editingOwnProfile) {
+        const updatedUser = await response.json();
+        currentUser = updatedUser;
+        applyLanguage(currentUser.idioma || currentLanguage);
+        localStorage.setItem("totalsolutions_user", JSON.stringify(currentUser));
+        refreshSessionIdentity();
+        refreshProfileBox();
+        closeUserModal();
+        await loadBoard();
+        return;
+      }
+
+      closeUserModal();
+      await loadBrokers();
+      await loadInventory();
+      await loadBoard();
+    }
+
+    async function deleteUser() {
+      const userId = document.getElementById("editUserId").value;
+
+      if (!userId || String(userId) === String(currentUser.id)) {
+        alert("Root nao pode excluir a propria conta");
+        return;
+      }
+
+      if (!confirm("Excluir/desativar este usuario?")) {
+        return;
+      }
+
+      const response = await apiFetch(`${API_BASE}/users/${userId}`, {
+        method: "DELETE"
+      });
+
+      if (!response.ok) {
+        alert("Somente root pode excluir usuarios");
+        return;
+      }
+
+      closeUserModal();
+      await loadBrokers();
+      await loadBoard();
+    }
+
+    async function moveLeadToBroker() {
+      const leadId = document.getElementById("leadId").value;
+      const targetBrokerId = document.getElementById("leadBrokerTarget").value;
+
+      if (!targetBrokerId) {
+        alert("Selecione um broker");
+        return;
+      }
+
+      await apiFetch(`${API_BASE}/leads/${leadId}/assign`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ assigned_to_user_id: Number(targetBrokerId) })
+      });
+
+      await apiFetch(`${API_BASE}/leads/${leadId}/pipeline`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ pipeline: "NOVO LEAD" })
+      });
+
+      closeLeadModal();
+      await loadBrokers();
+      await loadBoard();
+    }
+
+    async function returnLeadToBank() {
+      const leadId = document.getElementById("leadId").value;
+      await apiFetch(`${API_BASE}/leads/${leadId}/return-to-bank`, {
+        method: "PATCH"
+      });
+
+      closeLeadModal();
+      await loadBrokers();
+      await loadBoard();
+    }
+
+    async function returnBulkLeadsToBank() {
+      const all = document.getElementById("returnAllLeads").checked;
+      const quantity = Number(document.getElementById("returnQuantity").value);
+      const brokerId = document.getElementById("returnBroker").value;
+      const nicho = document.getElementById("returnSegment").value.trim();
+      const pais = document.getElementById("returnCountry").value.trim();
+      const estado = document.getElementById("returnState").value.trim();
+      const cidade = document.getElementById("returnCity").value.trim();
+
+      if (!all && (!Number.isInteger(quantity) || quantity < 1)) {
+        alert("Informe uma quantidade valida ou marque Todos");
+        return;
+      }
+
+      const message = all
+        ? "Voltar TODOS os leads filtrados para o banco?"
+        : `Voltar ${quantity} leads filtrados para o banco?`;
+
+      if (!confirm(message)) {
+        return;
+      }
+
+      const response = await apiFetch(`${API_BASE}/users/return-leads-to-bank`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          broker_id: brokerId ? Number(brokerId) : null,
+          limit: all ? null : quantity,
+          all,
+          nicho: nicho || null,
+          pais: pais || null,
+          estado: estado || null,
+          cidade: cidade || null
+        })
+      });
+
+      if (!response.ok) {
+        alert("Somente root pode voltar leads ao banco em lote");
+        return;
+      }
+
+      const result = await response.json();
+      alert(`${result.leads_devolvidos} leads voltaram ao banco`);
+      await loadBrokers();
+      await loadBoard();
+    }
+
+    async function deleteLead() {
+      const leadId = document.getElementById("leadId").value;
+      if (!confirm("Excluir este lead definitivamente?")) {
+        return;
+      }
+
+      await apiFetch(`${API_BASE}/leads/${leadId}`, {
+        method: "DELETE"
+      });
+
+      closeLeadModal();
+      await loadBrokers();
+      await loadBoard();
+    }
+
+    document.getElementById("reloadButton").addEventListener("click", loadBoard);
+    document.getElementById("seedBrokerButton").addEventListener("click", sendToBroker);
+    document.getElementById("loginForm").addEventListener("submit", login);
+    document.getElementById("registerForm").addEventListener("submit", register);
+    document.getElementById("showRegisterButton").addEventListener("click", showRegisterForm);
+    document.getElementById("backToLoginButton").addEventListener("click", showLoginForm);
+    document.getElementById("logoutButton").addEventListener("click", logout);
+    document.getElementById("supportButton").addEventListener("click", openSupport);
+    document.getElementById("closeSupportButton").addEventListener("click", closeSupport);
+    document.getElementById("supportForm").addEventListener("submit", sendSupportTicket);
+    document.getElementById("supportTicketList").addEventListener("change", (event) => {
+      if (event.target.classList.contains("ticket-status")) {
+        updateSupportTicketStatus(event.target.dataset.ticketId, event.target.value);
+      }
+    });
+    document.getElementById("createBrokerButton").addEventListener("click", createBroker);
+    document.getElementById("editMyProfileButton").addEventListener("click", openMyProfile);
+    profilePhotoButton.addEventListener("click", () => profilePhotoInput.click());
+    profilePhotoInput.addEventListener("change", uploadProfilePhoto);
+    removeProfilePhotoButton.addEventListener("click", removeProfilePhoto);
+    document.getElementById("moveLeadBrokerButton").addEventListener("click", moveLeadToBroker);
+    document.getElementById("returnLeadBankButton").addEventListener("click", returnLeadToBank);
+    document.getElementById("returnBulkButton").addEventListener("click", returnBulkLeadsToBank);
+    document.getElementById("assignSmartButton").addEventListener("click", sendToBroker);
+    document.getElementById("saveLeadNoteButton").addEventListener("click", addLeadNote);
+    document.getElementById("uploadLeadDocumentButton").addEventListener("click", uploadLeadDocument);
+    document.getElementById("refreshInventoryButton").addEventListener("click", loadInventory);
+    document.getElementById("assignSegment").addEventListener("change", () => {
+      refreshAssignGeoOptions();
+      updateInventoryCount();
+    });
+    document.getElementById("assignCountry").addEventListener("change", () => {
+      refreshAssignGeoOptions();
+      updateInventoryCount();
+    });
+    document.getElementById("assignState").addEventListener("change", () => {
+      refreshAssignGeoOptions();
+      updateInventoryCount();
+    });
+    document.getElementById("assignCity").addEventListener("change", updateInventoryCount);
+    document.getElementById("leadSendQuantity").addEventListener("input", (event) => {
+      document.getElementById("assignQuantity").value = event.target.value;
+      updateInventoryCount();
+    });
+    document.getElementById("assignQuantity").addEventListener("input", (event) => {
+      document.getElementById("leadSendQuantity").value = event.target.value;
+      updateInventoryCount();
+    });
+    document.getElementById("loginLanguage").addEventListener("change", (event) => {
+      applyLanguage(event.target.value);
+    });
+    document.getElementById("loginTheme").addEventListener("change", (event) => {
+      applyTheme(event.target.value);
+    });
+    document.getElementById("appTheme").addEventListener("change", (event) => {
+      applyTheme(event.target.value);
+    });
+    document.getElementById("newBrokerCountry").addEventListener("change", () => {
+      syncLanguageFromCountry("newBrokerCountry", "newBrokerLanguage");
+    });
+    document.getElementById("editUserCountry").addEventListener("change", () => {
+      syncLanguageFromCountry("editUserCountry", "editUserLanguage");
+    });
+    document.getElementById("deleteLeadButton").addEventListener("click", deleteLead);
+    document.getElementById("deleteUserButton").addEventListener("click", deleteUser);
+    document.querySelectorAll(".nav button[data-view-target]").forEach((button) => {
+      button.addEventListener("click", () => {
+        showView(button.dataset.viewTarget);
+      });
+    });
+    document.getElementById("leadForm").addEventListener("submit", saveLead);
+    document.getElementById("userForm").addEventListener("submit", saveUser);
+    document.getElementById("closeLeadModal").addEventListener("click", closeLeadModal);
+    document.getElementById("cancelLeadEdit").addEventListener("click", closeLeadModal);
+    document.getElementById("closeUserModal").addEventListener("click", closeUserModal);
+    document.getElementById("cancelUserEdit").addEventListener("click", closeUserModal);
+    leadModal.addEventListener("click", (event) => {
+      if (event.target === leadModal) {
+        closeLeadModal();
+      }
+    });
+    userModal.addEventListener("click", (event) => {
+      if (event.target === userModal) {
+        closeUserModal();
+      }
+    });
+    brokerFilter.addEventListener("change", loadBoard);
+    searchInput.addEventListener("input", () => {
+      if (cachedBoard) {
+        renderBoard(cachedBoard);
+      }
+    });
+
+    applyTheme(getStoredTheme(null), { persist: false, user: null });
+    applyLanguage(currentLanguage);
+
+    async function restoreSession() {
+      const savedUser = localStorage.getItem("totalsolutions_user");
+      if (!savedUser || !accessToken) {
+        localStorage.removeItem("totalsolutions_user");
+        localStorage.removeItem("totalsolutions_access_token");
+        accessToken = "";
+        showLoginForm();
+        return;
+      }
+
+      try {
+        const response = await apiFetch(`${API_BASE}/auth/me`);
+        if (!response.ok) {
+          throw new Error("Sessao expirada");
+        }
+        const authenticatedUser = await response.json();
+        await enterDashboard(authenticatedUser);
+      } catch (_error) {
+        localStorage.removeItem("totalsolutions_user");
+        localStorage.removeItem("totalsolutions_access_token");
+        accessToken = "";
+        showLoginForm();
+      }
+    }
+
+    restoreSession();
+  </script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "Total Solutions CRM",
+  "short_name": "Total Solutions",
+  "description": "Sistema operacional de mantenimiento profesional.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#050b12",
+  "theme_color": "#7ac943",
+  "icons": [
+    {
+      "src": "/assets/assets/favicon.svg",
+      "sizes": "128x128",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
