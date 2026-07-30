@@ -1,5 +1,7 @@
 import logging
 import os
+import threading
+import time
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -13,7 +15,7 @@ from app.core.security import hash_password
 from app.core.storage import UPLOADS_DIR
 from app.auth.routes import router as auth_router
 from app.database.connection import Base, SessionLocal, engine
-from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, deletion_request
+from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, deletion_request, notification
 from app.models.lead import Lead
 from app.models.service_order import ServiceOrder
 from app.models.user import User
@@ -22,10 +24,12 @@ from app.routes.integration_routes import router as integration_router
 from app.routes.admin_routes import router as admin_router
 from app.routes.lead_routes import router as lead_router
 from app.routes.lead_document_routes import router as lead_document_router
+from app.routes.notification_routes import router as notification_router
 from app.routes.support_routes import router as support_router
 from app.routes.user_routes import router as user_router
 from app.routes.contract_routes import router as contract_router
 from app.services.service_order_service import ensure_service_order
+from app.services.notification_service import process_email_outbox
 
 app = FastAPI(
     title="Total Solutions CRM",
@@ -34,6 +38,7 @@ app = FastAPI(
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+email_worker_started = False
 
 
 def startup_log(message: str):
@@ -58,6 +63,7 @@ app.add_middleware(
 
 app.include_router(lead_router)
 app.include_router(lead_document_router)
+app.include_router(notification_router)
 app.include_router(user_router)
 app.include_router(support_router)
 app.include_router(import_router)
@@ -108,6 +114,27 @@ def add_column_if_missing(db, table_name: str, column_name: str, column_definiti
 
     db.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}"))
     column_cache[cache_key].add(column_name)
+
+
+def start_email_outbox_worker():
+    global email_worker_started
+    if email_worker_started or os.getenv("EMAIL_OUTBOX_WORKER_ENABLED", "true").lower() != "true":
+        return
+
+    email_worker_started = True
+
+    def worker():
+        while True:
+            db = SessionLocal()
+            try:
+                process_email_outbox(db)
+            except Exception as exc:  # noqa: BLE001 - background worker must not crash the app.
+                logger.warning("Falha ao processar email_outbox: %s", exc.__class__.__name__)
+            finally:
+                db.close()
+            time.sleep(int(os.getenv("EMAIL_OUTBOX_INTERVAL_SECONDS", "30")))
+
+    threading.Thread(target=worker, name="email-outbox-worker", daemon=True).start()
 
 
 @app.on_event("startup")
@@ -246,6 +273,7 @@ def create_database_tables():
             db.add(root_user)
             db.commit()
         startup_log("Preparacao do banco de dados concluida.")
+        start_email_outbox_worker()
     finally:
         db.close()
 

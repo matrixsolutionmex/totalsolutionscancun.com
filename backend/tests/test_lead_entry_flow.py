@@ -17,6 +17,7 @@ from app.models.deletion_request import DeletionRequest
 from app.models.lead import Lead
 from app.models.lead_document import LeadDocument
 from app.models.lead_event import LeadEvent
+from app.models.notification import EmailOutbox, Notification, NotificationPreference
 from app.models.service_order import ServiceOrder
 from app.models.user import User
 from app.routes.integration_routes import create_integration_lead, require_integration_token
@@ -29,6 +30,7 @@ from app.routes.lead_document_routes import (
     upload_lead_document,
 )
 from app.routes.lead_routes import assign_lead, create_lead, list_leads, service_dossier_pdf, update_lead, update_lead_pipeline
+from app.routes.notification_routes import list_notifications, mark_all_notifications_read, mark_notification_read, unread_notification_count
 from app.schemas.lead_schema import IntegrationLeadCreate, LeadAssignUpdate, LeadCreate, LeadPipelineUpdate, LeadUpdate
 
 
@@ -48,6 +50,9 @@ def db():
             LeadEvent.__table__,
             LeadDocument.__table__,
             DeletionRequest.__table__,
+            Notification.__table__,
+            NotificationPreference.__table__,
+            EmailOutbox.__table__,
         ],
     )
     session = sessionmaker(bind=engine)()
@@ -204,6 +209,37 @@ def test_service_order_tracks_assignment_and_pipeline(db):
     assert assigned.service_order.supervisor_user_id == manager.id
     assert moved.service_order.status == "APROVADA"
     assert moved.service_order.completed_at is not None
+
+
+def test_assignment_creates_isolated_persistent_notification_and_email_outbox(db):
+    root = make_user(db, "root", "ROOT")
+    manager = make_user(db, "supervisor", "GERENTE")
+    technician = make_user(db, "tecnico-alerta", "BROKER", manager_id=manager.id)
+    lead = create_lead(LeadCreate(nombre="Cliente Alerta", telefono="9988881111", urgencia="EMERGENCIA"), db, root)
+
+    assigned = assign_lead(lead.id, LeadAssignUpdate(assigned_to_user_id=technician.id), db, root)
+
+    assert assigned.assigned_to_user_id == technician.id
+    technician_notifications = list_notifications(20, None, db, technician)
+    root_notifications = list_notifications(20, None, db, root)
+    assert len(technician_notifications) == 1
+    assert root_notifications == []
+    assert technician_notifications[0].type == "lead_assigned"
+    assert technician_notifications[0].priority == "URGENTE"
+    assert technician_notifications[0].lead_id == lead.id
+    assert unread_notification_count(db, technician)["unread"] == 1
+    assert db.query(EmailOutbox).count() == 1
+
+    marked = mark_notification_read(technician_notifications[0].id, db, technician)
+    assert marked.read_at is not None
+    assert unread_notification_count(db, technician)["unread"] == 0
+
+    reassigned = assign_lead(lead.id, LeadAssignUpdate(assigned_to_user_id=manager.id), db, root)
+    assert reassigned.assigned_to_user_id == manager.id
+    assert unread_notification_count(db, technician)["unread"] == 1
+    assert unread_notification_count(db, manager)["unread"] == 1
+    assert mark_all_notifications_read(db, technician)["updated"] == 1
+    assert unread_notification_count(db, technician)["unread"] == 0
 
 
 def test_integration_blocks_duplicates_by_external_id_phone_and_email(db):

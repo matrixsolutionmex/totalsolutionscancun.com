@@ -17,6 +17,7 @@ from app.models.lead import Lead
 from app.models.lead_event import LeadEvent
 from app.models.user import User
 from app.schemas.user_schema import AssignLeadsRequest, LoginRequest, ReturnLeadsRequest, UserCreate, UserResponse, UserUpdate
+from app.services.notification_service import notify_assignment_change
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -474,6 +475,7 @@ def assign_leads(
     leads = query.order_by(Lead.score.desc().nullslast(), Lead.id).limit(payload.limit).all()
 
     for lead in leads:
+        previous_broker_id = lead.assigned_to_user_id
         lead.assigned_to_user_id = broker.id
         lead.pipeline = "NOVO LEAD"
         lead.pipeline_updated_at = datetime.utcnow()
@@ -484,6 +486,13 @@ def assign_leads(
             actor,
             "DISTRIBUICAO",
             f"Lead enviado para {broker.full_name or broker.username} em Aguardando Atendimento",
+        )
+        notify_assignment_change(
+            db,
+            lead=lead,
+            actor=actor,
+            previous_user_id=previous_broker_id,
+            new_user_id=broker.id,
         )
 
     db.commit()
@@ -540,6 +549,13 @@ def return_leads_to_bank(
             actor,
             "BANCO",
             f"Lead retornou ao banco em lote vindo do broker {previous_broker_id}",
+        )
+        notify_assignment_change(
+            db,
+            lead=lead,
+            actor=actor,
+            previous_user_id=previous_broker_id,
+            new_user_id=None,
         )
 
     db.commit()

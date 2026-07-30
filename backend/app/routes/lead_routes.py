@@ -36,6 +36,7 @@ from app.services.lead_entry_service import (
     validate_responsible,
 )
 from app.services.service_order_service import ensure_service_order, sync_service_order_from_lead
+from app.services.notification_service import notify_assignment_change
 
 router = APIRouter(prefix="/leads", tags=["leads"])
 
@@ -223,6 +224,13 @@ def create_lead(
         actor,
         "ENTRADA",
         f"OS {service_order.order_number} criada para cliente com origem {lead.origen or 'OTRO'}",
+    )
+    notify_assignment_change(
+        db,
+        lead=lead,
+        actor=actor,
+        previous_user_id=None,
+        new_user_id=lead.assigned_to_user_id,
     )
     db.commit()
     db.refresh(lead)
@@ -528,6 +536,13 @@ def assign_lead(
         "ATRIBUICAO",
         f"Responsavel alterado de {previous_broker_id or 'sin asignar'} para {payload.assigned_to_user_id or 'sin asignar'}",
     )
+    notify_assignment_change(
+        db,
+        lead=lead,
+        actor=actor,
+        previous_user_id=previous_broker_id,
+        new_user_id=payload.assigned_to_user_id,
+    )
     db.commit()
     db.refresh(lead)
     return lead
@@ -544,6 +559,7 @@ def return_lead_to_bank(
         raise HTTPException(status_code=404, detail="Lead nao encontrado")
 
     ensure_lead_visible_to_actor(db, lead, actor)
+    previous_broker_id = lead.assigned_to_user_id
     lead.assigned_to_user_id = None
     lead.pipeline = "NOVO LEAD"
     lead.pipeline_updated_at = datetime.utcnow()
@@ -551,6 +567,13 @@ def return_lead_to_bank(
     service_order = ensure_service_order(db, lead, actor=actor)
     sync_service_order_from_lead(db, service_order, lead, actor=actor)
     add_lead_event(db, lead, actor, "BANCO", "Lead voltou para o banco")
+    notify_assignment_change(
+        db,
+        lead=lead,
+        actor=actor,
+        previous_user_id=previous_broker_id,
+        new_user_id=None,
+    )
     db.commit()
     db.refresh(lead)
     return lead
@@ -606,6 +629,8 @@ def update_lead(
             )
         updates["pipeline"] = stage
 
+    assignment_previous_id = None
+    assignment_new_id = None
     if "assigned_to_user_id" in updates:
         requested_responsible_id = updates["assigned_to_user_id"]
         current_responsible_id = lead.assigned_to_user_id
@@ -615,6 +640,8 @@ def update_lead(
             if actor and actor.role == "BROKER":
                 raise HTTPException(status_code=403, detail="Tecnico nao pode redistribuir clientes")
             validate_responsible(db, actor, requested_responsible_id)
+            assignment_previous_id = current_responsible_id
+            assignment_new_id = requested_responsible_id
 
     tracked_fields = {
         "nome",
@@ -669,6 +696,21 @@ def update_lead(
             actor,
             "EDICAO",
             f"Editou dados do lead: {', '.join(changed_fields)}",
+        )
+    if assignment_previous_id != assignment_new_id:
+        add_lead_event(
+            db,
+            lead,
+            actor,
+            "ATRIBUICAO",
+            f"Responsavel alterado de {assignment_previous_id or 'sin asignar'} para {assignment_new_id or 'sin asignar'}",
+        )
+        notify_assignment_change(
+            db,
+            lead=lead,
+            actor=actor,
+            previous_user_id=assignment_previous_id,
+            new_user_id=assignment_new_id,
         )
     db.commit()
     db.refresh(lead)

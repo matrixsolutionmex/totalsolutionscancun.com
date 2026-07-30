@@ -1556,6 +1556,213 @@
       display: block;
     }
 
+    .notification-center {
+      position: relative;
+    }
+
+    .notification-bell {
+      position: relative;
+      width: 44px;
+      min-width: 44px;
+      height: 44px;
+      min-height: 44px;
+      display: inline-grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel);
+      color: var(--text);
+      font-size: 18px;
+      padding: 0;
+      transition: transform 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
+    }
+
+    .notification-bell:hover {
+      transform: translateY(-1px);
+      border-color: rgba(34, 197, 94, 0.65);
+      box-shadow: 0 10px 22px rgba(15, 23, 42, 0.12);
+    }
+
+    .notification-badge {
+      position: absolute;
+      top: -4px;
+      right: -4px;
+      min-width: 20px;
+      height: 20px;
+      display: none;
+      place-items: center;
+      border-radius: 999px;
+      background: #dc2626;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 900;
+      padding: 0 5px;
+    }
+
+    .notification-badge.visible {
+      display: grid;
+    }
+
+    .notification-panel {
+      position: absolute;
+      top: calc(100% + 12px);
+      right: 0;
+      z-index: 70;
+      width: min(420px, calc(100vw - 28px));
+      max-height: min(620px, calc(100vh - 96px));
+      display: none;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 22px 60px rgba(15, 23, 42, 0.26);
+    }
+
+    .notification-center.open .notification-panel {
+      display: block;
+    }
+
+    .notification-header,
+    .notification-footer,
+    .notification-preferences {
+      padding: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .notification-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .notification-header strong {
+      color: var(--text);
+      font-size: 15px;
+    }
+
+    .notification-header button,
+    .notification-footer button,
+    .notification-row button,
+    .notification-preferences button {
+      min-height: 32px;
+      border-radius: 4px;
+      padding: 0 10px;
+      font-size: 12px;
+    }
+
+    .notification-list {
+      max-height: 330px;
+      overflow: auto;
+    }
+
+    .notification-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .notification-row.unread {
+      background: rgba(34, 197, 94, 0.08);
+      border-left: 3px solid var(--green);
+    }
+
+    .notification-row.priority-urgente {
+      border-left-color: #dc2626;
+      background: rgba(220, 38, 38, 0.08);
+    }
+
+    .notification-title {
+      color: var(--text);
+      font-weight: 900;
+      font-size: 13px;
+    }
+
+    .notification-message {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .notification-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 7px;
+      color: var(--green);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .notification-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-items: flex-end;
+    }
+
+    .notification-preferences {
+      display: grid;
+      gap: 10px;
+      border-bottom: 0;
+      background: rgba(148, 163, 184, 0.08);
+    }
+
+    .notification-preferences label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .notification-preferences input[type="range"] {
+      width: 130px;
+    }
+
+    .notification-toast-stack {
+      position: fixed;
+      right: 20px;
+      top: 88px;
+      z-index: 90;
+      display: grid;
+      gap: 10px;
+      width: min(380px, calc(100vw - 28px));
+    }
+
+    .notification-toast {
+      border: 1px solid rgba(34, 197, 94, 0.45);
+      border-left: 4px solid var(--green);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      box-shadow: 0 18px 44px rgba(15, 23, 42, 0.2);
+      padding: 13px 14px;
+      cursor: pointer;
+      animation: notificationFade 260ms ease both;
+    }
+
+    .notification-toast.priority-urgente {
+      border-left-color: #dc2626;
+    }
+
+    @keyframes notificationFade {
+      from {
+        opacity: 0;
+        transform: translateY(-8px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
     .support-header {
       min-height: 64px;
       display: flex;
@@ -1892,6 +2099,40 @@
       <button class="nav-main root-only" data-view-target="usuarios">Equipo</button>
     </nav>
     <div class="spacer"></div>
+    <div class="notification-center" id="notificationCenter">
+      <button class="notification-bell" id="notificationBell" type="button" title="Notificaciones">
+        🔔
+        <span class="notification-badge" id="notificationBadge">0</span>
+      </button>
+      <div class="notification-panel" id="notificationPanel">
+        <div class="notification-header">
+          <strong>Notificaciones</strong>
+          <button class="ghost" id="markAllNotificationsButton" type="button">Marcar todas</button>
+        </div>
+        <div class="notification-list" id="notificationList">
+          <div class="line">Cargando notificaciones...</div>
+        </div>
+        <div class="notification-footer">
+          <button class="ghost" id="reloadNotificationsButton" type="button">Actualizar</button>
+          <button class="ghost" id="enableBrowserNotificationsButton" type="button">Navegador</button>
+        </div>
+        <div class="notification-preferences">
+          <label>
+            <span>Sonido</span>
+            <input id="notificationSoundEnabled" type="checkbox">
+          </label>
+          <label>
+            <span>Volumen</span>
+            <input id="notificationVolume" type="range" min="0" max="100" value="55">
+          </label>
+          <label>
+            <span>Email</span>
+            <input id="notificationEmailEnabled" type="checkbox">
+          </label>
+          <button class="ghost" id="testNotificationSoundButton" type="button">Probar sonido</button>
+        </div>
+      </div>
+    </div>
     <button class="support-button" id="supportButton" type="button">Soporte</button>
     <select id="appTheme" class="theme-select" title="Apariencia"></select>
         <div class="session-profile">
@@ -1902,6 +2143,7 @@
         </div>
         <button class="ghost logout-button" id="logoutButton">Salir</button>
   </header>
+  <div class="notification-toast-stack" id="notificationToastStack" aria-live="polite"></div>
 
   <section class="toolbar">
     <div>
@@ -3142,6 +3384,18 @@
     let cachedInventory = null;
     let cachedSupportTickets = [];
     let cachedDeletionRequests = [];
+    let cachedNotifications = [];
+    let notificationPreferences = {
+      in_app_enabled: true,
+      sound_enabled: true,
+      sound_volume: 55,
+      email_enabled: true,
+      browser_enabled: false
+    };
+    let notificationTimer = null;
+    let notificationInitialized = false;
+    let seenNotificationIds = new Set();
+    let audioContext = null;
     let editingOwnProfile = false;
     let currentUser = { id: 1, username: "root", role: "ROOT" };
     let cachedBoard = null;
@@ -3921,6 +4175,203 @@
         return;
       }
       openLeadModal(lead);
+    }
+
+    function notificationPriorityClass(notification) {
+      return String(notification.priority || "").toUpperCase() === "URGENTE" ? "priority-urgente" : "";
+    }
+
+    function updateNotificationBadge() {
+      const badge = document.getElementById("notificationBadge");
+      if (!badge) return;
+      const unread = cachedNotifications.filter((notification) => !notification.read_at).length;
+      badge.textContent = unread > 99 ? "99+" : String(unread);
+      badge.classList.toggle("visible", unread > 0);
+    }
+
+    function renderNotifications() {
+      const list = document.getElementById("notificationList");
+      if (!list) return;
+
+      updateNotificationBadge();
+
+      if (!cachedNotifications.length) {
+        list.innerHTML = `<div class="line">Sin notificaciones recientes.</div>`;
+        return;
+      }
+
+      list.innerHTML = cachedNotifications.map((notification) => {
+        const createdAt = notification.created_at
+          ? new Date(notification.created_at).toLocaleString(translations[currentLanguage].locale)
+          : "";
+        const unreadClass = notification.read_at ? "" : "unread";
+        const priorityClass = notificationPriorityClass(notification);
+        const actor = notification.actor_name || "Total Solutions";
+        return `
+          <div class="notification-row ${unreadClass} ${priorityClass}">
+            <div>
+              <div class="notification-title">${escapeHtml(notification.title)}</div>
+              <div class="notification-message">${escapeHtml(notification.message)}</div>
+              <div class="notification-meta">
+                <span>${escapeHtml(actor)}</span>
+                <span>${escapeHtml(createdAt)}</span>
+                <span>${escapeHtml(notification.priority || "NORMAL")}</span>
+              </div>
+            </div>
+            <div class="notification-actions">
+              ${notification.lead_id ? `<button type="button" onclick="openNotificationLead(${notification.id}, ${notification.lead_id})">Abrir</button>` : ""}
+              ${notification.read_at ? "" : `<button class="ghost" type="button" onclick="markNotificationRead(${notification.id})">Leída</button>`}
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function syncNotificationPreferenceControls() {
+      const soundEnabled = document.getElementById("notificationSoundEnabled");
+      const volume = document.getElementById("notificationVolume");
+      const emailEnabled = document.getElementById("notificationEmailEnabled");
+      if (soundEnabled) soundEnabled.checked = Boolean(notificationPreferences.sound_enabled);
+      if (volume) volume.value = String(notificationPreferences.sound_volume ?? 55);
+      if (emailEnabled) emailEnabled.checked = Boolean(notificationPreferences.email_enabled);
+    }
+
+    async function loadNotificationPreferences() {
+      const response = await apiFetch(`${API_BASE}/notification-preferences`);
+      if (!response.ok) return;
+      notificationPreferences = { ...notificationPreferences, ...await response.json() };
+      syncNotificationPreferenceControls();
+    }
+
+    async function saveNotificationPreferences(partial) {
+      notificationPreferences = { ...notificationPreferences, ...partial };
+      syncNotificationPreferenceControls();
+      await apiFetch(`${API_BASE}/notification-preferences`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(partial)
+      });
+    }
+
+    function playNotificationSound(force = false) {
+      if (!force && !notificationPreferences.sound_enabled) return;
+      const volume = Math.max(0, Math.min(1, Number(notificationPreferences.sound_volume ?? 55) / 100));
+      try {
+        audioContext = audioContext || new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        oscillator.type = "sine";
+        oscillator.frequency.setValueAtTime(880, audioContext.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(660, audioContext.currentTime + 0.16);
+        gain.gain.setValueAtTime(0.0001, audioContext.currentTime);
+        gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, volume * 0.18), audioContext.currentTime + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.22);
+        oscillator.connect(gain);
+        gain.connect(audioContext.destination);
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.24);
+      } catch (_error) {
+        // Browser audio can be blocked until the first user interaction.
+      }
+    }
+
+    function showNotificationToast(notification) {
+      const stack = document.getElementById("notificationToastStack");
+      if (!stack || !notificationPreferences.in_app_enabled) return;
+      const toast = document.createElement("div");
+      toast.className = `notification-toast ${notificationPriorityClass(notification)}`;
+      toast.innerHTML = `
+        <div class="notification-title">${escapeHtml(notification.title)}</div>
+        <div class="notification-message">${escapeHtml(notification.message)}</div>
+      `;
+      toast.addEventListener("click", () => {
+        if (notification.lead_id) {
+          openNotificationLead(notification.id, notification.lead_id);
+        }
+        toast.remove();
+      });
+      stack.prepend(toast);
+      setTimeout(() => toast.remove(), 7000);
+    }
+
+    function maybeNotifyBrowser(notification) {
+      if (!notificationPreferences.browser_enabled || !("Notification" in window) || Notification.permission !== "granted") {
+        return;
+      }
+      const browserNotification = new Notification(notification.title, {
+        body: notification.message,
+        tag: `ts-notification-${notification.id}`,
+      });
+      browserNotification.onclick = () => {
+        window.focus();
+        if (notification.lead_id) openNotificationLead(notification.id, notification.lead_id);
+      };
+    }
+
+    async function loadNotifications({ announce = false } = {}) {
+      if (!accessToken || !document.body.classList.contains("logged-in")) return;
+      const response = await apiFetch(`${API_BASE}/notifications?limit=30`);
+      if (!response.ok) return;
+      const notifications = await response.json();
+      const incoming = notifications
+        .filter((notification) => !seenNotificationIds.has(notification.id))
+        .sort((a, b) => a.id - b.id);
+      cachedNotifications = notifications;
+      notifications.forEach((notification) => seenNotificationIds.add(notification.id));
+      renderNotifications();
+
+      if (announce && notificationInitialized && incoming.length) {
+        incoming.forEach((notification) => {
+          if (!notification.read_at) {
+            showNotificationToast(notification);
+            maybeNotifyBrowser(notification);
+          }
+        });
+        if (incoming.some((notification) => !notification.read_at)) {
+          playNotificationSound();
+        }
+      }
+      notificationInitialized = true;
+    }
+
+    function startNotificationPolling() {
+      if (notificationTimer) {
+        clearInterval(notificationTimer);
+      }
+      loadNotificationPreferences().catch(() => {});
+      loadNotifications({ announce: false }).catch(() => {});
+      notificationTimer = setInterval(() => {
+        loadNotifications({ announce: true }).catch(() => {});
+      }, 3000);
+    }
+
+    async function markNotificationRead(notificationId) {
+      const response = await apiFetch(`${API_BASE}/notifications/${notificationId}/read`, { method: "PATCH" });
+      if (response.ok) {
+        cachedNotifications = cachedNotifications.map((notification) => (
+          notification.id === Number(notificationId)
+            ? { ...notification, read_at: new Date().toISOString() }
+            : notification
+        ));
+        renderNotifications();
+      }
+    }
+
+    async function markAllNotificationsRead() {
+      const response = await apiFetch(`${API_BASE}/notifications/read-all`, { method: "POST" });
+      if (response.ok) {
+        cachedNotifications = cachedNotifications.map((notification) => ({
+          ...notification,
+          read_at: notification.read_at || new Date().toISOString()
+        }));
+        renderNotifications();
+      }
+    }
+
+    async function openNotificationLead(notificationId, leadId) {
+      await markNotificationRead(notificationId);
+      document.getElementById("notificationCenter")?.classList.remove("open");
+      await openLeadFromRequest(leadId);
     }
 
     function evidenceCategoryLabel(type) {
@@ -5040,6 +5491,7 @@
       startUserPresenceRefresh();
       startBrokerLeadWatch();
       startBoardClock();
+      startNotificationPolling();
     }
 
     function startBrokerLeadWatch() {
@@ -5151,8 +5603,15 @@
         clearInterval(boardClockTimer);
         boardClockTimer = null;
       }
+      if (notificationTimer) {
+        clearInterval(notificationTimer);
+        notificationTimer = null;
+      }
       currentUser = { id: 1, username: "root", role: "ROOT" };
       cachedBoard = null;
+      cachedNotifications = [];
+      notificationInitialized = false;
+      seenNotificationIds = new Set();
       setBodyState({ loggedIn: false });
       boardEl.innerHTML = "";
       totalText.textContent = "Cargando clientes...";
@@ -6125,6 +6584,38 @@
     document.getElementById("backToLoginButton").addEventListener("click", showLoginForm);
     document.getElementById("logoutButton").addEventListener("click", logout);
     document.getElementById("supportButton").addEventListener("click", openSupport);
+    document.getElementById("notificationBell").addEventListener("click", () => {
+      document.getElementById("notificationCenter").classList.toggle("open");
+      loadNotifications({ announce: false }).catch(() => {});
+    });
+    document.getElementById("markAllNotificationsButton").addEventListener("click", markAllNotificationsRead);
+    document.getElementById("reloadNotificationsButton").addEventListener("click", () => {
+      loadNotifications({ announce: false }).catch(() => {});
+    });
+    document.getElementById("testNotificationSoundButton").addEventListener("click", () => playNotificationSound(true));
+    document.getElementById("notificationSoundEnabled").addEventListener("change", (event) => {
+      saveNotificationPreferences({ sound_enabled: event.target.checked }).catch(() => {});
+    });
+    document.getElementById("notificationVolume").addEventListener("input", (event) => {
+      saveNotificationPreferences({ sound_volume: Number(event.target.value) }).catch(() => {});
+    });
+    document.getElementById("notificationEmailEnabled").addEventListener("change", (event) => {
+      saveNotificationPreferences({ email_enabled: event.target.checked }).catch(() => {});
+    });
+    document.getElementById("enableBrowserNotificationsButton").addEventListener("click", async () => {
+      if (!("Notification" in window)) {
+        alert("Este navegador no soporta notificaciones.");
+        return;
+      }
+      const permission = await Notification.requestPermission();
+      await saveNotificationPreferences({ browser_enabled: permission === "granted" });
+    });
+    document.addEventListener("click", (event) => {
+      const center = document.getElementById("notificationCenter");
+      if (center && !center.contains(event.target)) {
+        center.classList.remove("open");
+      }
+    });
     document.getElementById("closeSupportButton").addEventListener("click", closeSupport);
     document.getElementById("supportForm").addEventListener("submit", sendSupportTicket);
     document.getElementById("supportTicketList").addEventListener("change", (event) => {
