@@ -94,10 +94,13 @@ def add_column_if_missing(db, table_name: str, column_name: str, column_definiti
 
 @app.on_event("startup")
 def create_database_tables():
+    logger.info("Iniciando preparacao do banco de dados.")
     Base.metadata.create_all(bind=engine)
+    logger.info("Tabelas verificadas/criadas com sucesso.")
 
     db = SessionLocal()
     try:
+        logger.info("Verificando colunas e defaults de producao.")
         add_column_if_missing(db, "leads", "valor_negocio", "NUMERIC(12, 2) DEFAULT 0")
         add_column_if_missing(db, "leads", "pipeline_updated_at", "TIMESTAMP")
         add_column_if_missing(db, "leads", "created_at", "TIMESTAMP")
@@ -157,6 +160,7 @@ def create_database_tables():
         db.execute(text("UPDATE users SET registered_at = CURRENT_TIMESTAMP WHERE registered_at IS NULL"))
         db.commit()
 
+        logger.info("Sincronizando propriedades e ordens de servico.")
         for existing_lead in db.query(Lead).filter((Lead.property_id.is_(None)) | (Lead.property_id == "")).all():
             existing_lead.property_id = f"TS-{existing_lead.id:06d}"
         db.commit()
@@ -165,6 +169,7 @@ def create_database_tables():
             ensure_service_order(db, existing_lead)
         db.commit()
 
+        logger.info("Criando indices operacionais.")
         ensure_index(
             db,
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email_lower ON users (LOWER(email)) WHERE email IS NOT NULL AND email <> ''",
@@ -209,6 +214,7 @@ def create_database_tables():
         )
 
         if db.query(User).count() == 0:
+            logger.info("Criando usuario ROOT inicial de producao.")
             root_user = User(
                 username=os.getenv("ROOT_USERNAME", "root"),
                 password_hash=hash_password(os.getenv("ROOT_PASSWORD", "12345m*")),
@@ -221,6 +227,7 @@ def create_database_tables():
             )
             db.add(root_user)
             db.commit()
+        logger.info("Preparacao do banco de dados concluida.")
     finally:
         db.close()
 

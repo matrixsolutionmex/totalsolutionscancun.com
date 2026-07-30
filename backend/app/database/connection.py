@@ -3,6 +3,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -32,7 +33,13 @@ if DATABASE_URL in DEFAULT_DATABASE_URLS:
         f"{env_hint}."
     )
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+engine_options = {"pool_pre_ping": True}
+
+database_driver = make_url(DATABASE_URL).get_backend_name()
+if database_driver == "postgresql":
+    engine_options["connect_args"] = {"connect_timeout": 10}
+
+engine = create_engine(DATABASE_URL, **engine_options)
 
 SessionLocal = sessionmaker(
     autocommit=False,
