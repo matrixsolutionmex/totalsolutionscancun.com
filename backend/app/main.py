@@ -33,6 +33,12 @@ app = FastAPI(
 )
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+
+
+def startup_log(message: str):
+    logger.info(message)
+    print(f"[startup] {message}", flush=True)
 
 
 def cors_origins():
@@ -82,25 +88,37 @@ def ensure_index(db, primary_sql: str, *, fallback_sql: str | None = None, label
 
 
 def add_column_if_missing(db, table_name: str, column_name: str, column_definition: str):
+    cache_key = (id(db.bind), table_name)
+    if not hasattr(add_column_if_missing, "_column_cache"):
+        add_column_if_missing._column_cache = {}
+
+    column_cache = add_column_if_missing._column_cache
+    if cache_key not in column_cache:
+        column_cache[cache_key] = {
+            column["name"]
+            for column in inspect(db.bind).get_columns(table_name)
+        }
+
     existing_columns = {
-        column["name"]
-        for column in inspect(db.bind).get_columns(table_name)
+        column_name
+        for column_name in column_cache[cache_key]
     }
     if column_name in existing_columns:
         return
 
     db.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}"))
+    column_cache[cache_key].add(column_name)
 
 
 @app.on_event("startup")
 def create_database_tables():
-    logger.info("Iniciando preparacao do banco de dados.")
+    startup_log("Iniciando preparacao do banco de dados.")
     Base.metadata.create_all(bind=engine)
-    logger.info("Tabelas verificadas/criadas com sucesso.")
+    startup_log("Tabelas verificadas/criadas com sucesso.")
 
     db = SessionLocal()
     try:
-        logger.info("Verificando colunas e defaults de producao.")
+        startup_log("Verificando colunas e defaults de producao.")
         add_column_if_missing(db, "leads", "valor_negocio", "NUMERIC(12, 2) DEFAULT 0")
         add_column_if_missing(db, "leads", "pipeline_updated_at", "TIMESTAMP")
         add_column_if_missing(db, "leads", "created_at", "TIMESTAMP")
@@ -160,7 +178,7 @@ def create_database_tables():
         db.execute(text("UPDATE users SET registered_at = CURRENT_TIMESTAMP WHERE registered_at IS NULL"))
         db.commit()
 
-        logger.info("Sincronizando propriedades e ordens de servico.")
+        startup_log("Sincronizando propriedades e ordens de servico.")
         for existing_lead in db.query(Lead).filter((Lead.property_id.is_(None)) | (Lead.property_id == "")).all():
             existing_lead.property_id = f"TS-{existing_lead.id:06d}"
         db.commit()
@@ -169,7 +187,7 @@ def create_database_tables():
             ensure_service_order(db, existing_lead)
         db.commit()
 
-        logger.info("Criando indices operacionais.")
+        startup_log("Criando indices operacionais.")
         ensure_index(
             db,
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email_lower ON users (LOWER(email)) WHERE email IS NOT NULL AND email <> ''",
@@ -214,7 +232,7 @@ def create_database_tables():
         )
 
         if db.query(User).count() == 0:
-            logger.info("Criando usuario ROOT inicial de producao.")
+            startup_log("Criando usuario ROOT inicial de producao.")
             root_user = User(
                 username=os.getenv("ROOT_USERNAME", "root"),
                 password_hash=hash_password(os.getenv("ROOT_PASSWORD", "12345m*")),
@@ -227,7 +245,7 @@ def create_database_tables():
             )
             db.add(root_user)
             db.commit()
-        logger.info("Preparacao do banco de dados concluida.")
+        startup_log("Preparacao do banco de dados concluida.")
     finally:
         db.close()
 
