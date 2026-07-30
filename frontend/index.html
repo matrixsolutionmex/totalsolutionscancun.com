@@ -4300,7 +4300,9 @@
               <div class="evidence-file-actions">
                 <a href="${escapeHtml(doc.file_path)}" target="_blank" rel="noopener">👁 Visualizar</a>
                 <a href="${escapeHtml(doc.file_path)}" download>⬇ Download</a>
-                <button type="button" onclick="deleteLeadDocument(${leadId}, ${doc.id})">🗑 Excluir</button>
+                ${currentUser.role === "BROKER"
+                  ? `<button type="button" onclick="requestDocumentDeletion(${leadId}, ${doc.id})">🗑 Solicitar exclusión</button>`
+                  : `<button type="button" onclick="deleteLeadDocument(${leadId}, ${doc.id})">🗑 Excluir</button>`}
                 <button type="button" onclick="shareDocument(${escapeHtml(jsString(fileUrl))}, ${escapeHtml(jsString(displayName))})">📤 Compartir</button>
               </div>
             </div>
@@ -4318,6 +4320,11 @@
 
 
     async function deleteLeadDocument(leadId, documentId) {
+      if (currentUser.role === "BROKER") {
+        requestDocumentDeletion(leadId, documentId);
+        return;
+      }
+
       if (!confirm("¿Eliminar este documento definitivamente?")) {
         return;
       }
@@ -4332,6 +4339,28 @@
       }
 
       await loadLeadDocuments(leadId);
+      await loadLeadTimeline(leadId);
+    }
+
+    async function requestDocumentDeletion(leadId, documentId) {
+      const reason = prompt("Informe el motivo para solicitar la exclusión de este documento.");
+      if (!reason || !reason.trim()) {
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("reason", reason.trim());
+      const response = await apiFetch(`${API_BASE}/leads/${leadId}/documents/${documentId}/deletion-request`, {
+        method: "POST",
+        body: formData
+      });
+
+      if (!response.ok) {
+        alert(await responseMessage(response, "No fue posible registrar la solicitud de exclusión."));
+        return;
+      }
+
+      alert("Solicitud de exclusión registrada para aprobación.");
       await loadLeadTimeline(leadId);
     }
 
@@ -5724,7 +5753,7 @@
         observacoes: document.getElementById("leadObservacoes").value
       };
 
-      if (assignedValue) {
+      if (assignedValue && currentUser.role !== "BROKER") {
         payload.assigned_to_user_id = Number(assignedValue);
       }
 

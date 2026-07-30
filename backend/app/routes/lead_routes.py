@@ -606,7 +606,14 @@ def update_lead(
         updates["pipeline"] = stage
 
     if "assigned_to_user_id" in updates:
-        validate_responsible(db, actor, updates["assigned_to_user_id"])
+        requested_responsible_id = updates["assigned_to_user_id"]
+        current_responsible_id = lead.assigned_to_user_id
+        if requested_responsible_id == current_responsible_id:
+            updates.pop("assigned_to_user_id", None)
+        else:
+            if actor and actor.role == "BROKER":
+                raise HTTPException(status_code=403, detail="Tecnico nao pode redistribuir clientes")
+            validate_responsible(db, actor, requested_responsible_id)
 
     tracked_fields = {
         "nome",

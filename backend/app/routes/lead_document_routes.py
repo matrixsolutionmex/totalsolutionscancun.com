@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.jwt_handler import get_current_user as get_actor, get_db
 from app.core.storage import UPLOADS_DIR
+from app.models.deletion_request import DeletionRequest
 from app.models.lead import Lead
 from app.models.lead_document import LeadDocument
 from app.models.lead_event import LeadEvent
@@ -16,6 +17,17 @@ from app.routes.lead_routes import ensure_lead_visible_to_actor, actor_label
 router = APIRouter(prefix="/leads", tags=["lead-documents"])
 
 ALLOWED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".xlsx", ".doc", ".docx", ".mp4", ".mov", ".webm"}
+ALLOWED_DOCUMENT_TYPES = {
+    "ANTES_SERVICIO",
+    "DURANTE_SERVICIO",
+    "DESPUES_SERVICIO",
+    "PRESUPUESTO",
+    "NOTA_FISCAL",
+    "GARANTIA",
+    "VIDEO",
+    "OTROS",
+}
+MAX_UPLOAD_SIZE = 50 * 1024 * 1024
 
 
 @router.get("/{lead_id}/documents")
@@ -73,6 +85,9 @@ def upload_lead_document(
 
     ensure_lead_visible_to_actor(db, lead, actor)
 
+    if document_type not in ALLOWED_DOCUMENT_TYPES:
+        raise HTTPException(status_code=400, detail="Categoria de documento invalida")
+
     original_name = file.filename or "arquivo"
     ext = Path(original_name).suffix.lower()
 
@@ -88,6 +103,11 @@ def upload_lead_document(
     with destination.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
+    file_size = destination.stat().st_size
+    if file_size > MAX_UPLOAD_SIZE:
+        destination.unlink(missing_ok=True)
+        raise HTTPException(status_code=413, detail="Arquivo excede o tamanho maximo permitido")
+
     public_path = f"/uploads/lead_documents/{lead_id}/{safe_name}"
 
     doc = LeadDocument(
@@ -97,7 +117,7 @@ def upload_lead_document(
         file_name=original_name,
         file_path=public_path,
         file_mime=file.content_type,
-        file_size=destination.stat().st_size,
+        file_size=file_size,
     )
 
     db.add(doc)
@@ -139,6 +159,8 @@ def delete_lead_document(
         raise HTTPException(status_code=404, detail="Lead não encontrado")
 
     ensure_lead_visible_to_actor(db, lead, actor)
+    if actor.role == "BROKER":
+        raise HTTPException(status_code=403, detail="Tecnico deve solicitar exclusao de documentos")
 
     doc = (
         db.query(LeadDocument)
@@ -166,3 +188,63 @@ def delete_lead_document(
     db.commit()
 
     return {"ok": True}
+
+
+@router.post("/{lead_id}/documents/{document_id}/deletion-request")
+def request_lead_document_deletion(
+    lead_id: int,
+    document_id: int,
+    reason: str = Form(...),
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_actor),
+):
+    clean_reason = reason.strip()
+    if not clean_reason:
+        raise HTTPException(status_code=400, detail="Motivo obrigatorio")
+
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead não encontrado")
+
+    ensure_lead_visible_to_actor(db, lead, actor)
+
+    doc = (
+        db.query(LeadDocument)
+        .filter(LeadDocument.id == document_id, LeadDocument.lead_id == lead_id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento não encontrado")
+
+    request = DeletionRequest(
+        lead_id=lead_id,
+        document_id=document_id,
+        target_type="DOCUMENT",
+        reason=clean_reason,
+        status="PENDENTE",
+        requested_by_user_id=actor.id,
+        requested_by_role=actor.role,
+    )
+    db.add(request)
+    db.add(
+        LeadEvent(
+            lead_id=lead_id,
+            actor_id=actor.id,
+            actor_name=actor_label(actor),
+            event_type="SOLICITACAO_EXCLUSAO",
+            message=f"Solicitou exclusao de documento: {doc.document_type} - {doc.file_name}",
+        )
+    )
+    db.commit()
+    db.refresh(request)
+
+    return {
+        "id": request.id,
+        "lead_id": request.lead_id,
+        "document_id": request.document_id,
+        "target_type": request.target_type,
+        "status": request.status,
+        "requested_by_user_id": request.requested_by_user_id,
+        "requested_by_role": request.requested_by_role,
+        "created_at": request.created_at,
+    }

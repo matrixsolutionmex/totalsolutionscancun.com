@@ -61,7 +61,7 @@ def validate_responsible(db: Session, actor: User | None, assigned_to_user_id: i
     if not responsible:
         raise HTTPException(status_code=404, detail="Responsavel ativo nao encontrado")
 
-    if actor and actor.role == "BROKER":
+    if actor and actor.role == "BROKER" and responsible.id != actor.id:
         raise HTTPException(status_code=403, detail="Tecnico nao pode redistribuir clientes")
 
     if actor and actor.role == "GERENTE":

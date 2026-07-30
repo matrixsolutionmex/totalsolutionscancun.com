@@ -1,9 +1,11 @@
 import json
 import re
+from io import BytesIO
 from datetime import datetime
 
 import pytest
 from fastapi import HTTPException
+from fastapi import UploadFile
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -11,14 +13,21 @@ from starlette.requests import Request
 
 from app.core.security import hash_password
 from app.database.connection import Base
+from app.models.deletion_request import DeletionRequest
 from app.models.lead import Lead
 from app.models.lead_document import LeadDocument
 from app.models.lead_event import LeadEvent
 from app.models.service_order import ServiceOrder
 from app.models.user import User
 from app.routes.integration_routes import create_integration_lead, require_integration_token
-from app.routes.lead_routes import assign_lead, create_lead, list_leads, service_dossier_pdf, update_lead_pipeline
-from app.schemas.lead_schema import IntegrationLeadCreate, LeadAssignUpdate, LeadCreate, LeadPipelineUpdate
+from app.routes.lead_document_routes import (
+    delete_lead_document,
+    list_lead_documents,
+    request_lead_document_deletion,
+    upload_lead_document,
+)
+from app.routes.lead_routes import assign_lead, create_lead, list_leads, service_dossier_pdf, update_lead, update_lead_pipeline
+from app.schemas.lead_schema import IntegrationLeadCreate, LeadAssignUpdate, LeadCreate, LeadPipelineUpdate, LeadUpdate
 
 
 @pytest.fixture()
@@ -30,7 +39,14 @@ def db():
     )
     Base.metadata.create_all(
         bind=engine,
-        tables=[User.__table__, Lead.__table__, ServiceOrder.__table__, LeadEvent.__table__, LeadDocument.__table__],
+        tables=[
+            User.__table__,
+            Lead.__table__,
+            ServiceOrder.__table__,
+            LeadEvent.__table__,
+            LeadDocument.__table__,
+            DeletionRequest.__table__,
+        ],
     )
     session = sessionmaker(bind=engine)()
     try:
@@ -365,3 +381,118 @@ def test_service_dossier_pdf_is_generated_for_visible_lead(db):
     streams = re.findall(r"stream\n(.*?)\nendstream", text, flags=re.S)
     assert streams
     assert all(" Tj" in stream for stream in streams)
+
+
+def make_upload_file(filename: str, content: bytes = b"fake file", content_type: str = "image/jpeg"):
+    return UploadFile(filename=filename, file=BytesIO(content), headers={"content-type": content_type})
+
+
+def test_technician_creates_client_assigned_to_self_and_edits_operational_fields(db):
+    technician = make_user(db, "tecnico-campo", "BROKER")
+
+    lead = create_lead(
+        LeadCreate(nombre="Cliente Campo", telefono="9981212121", assigned_to_user_id=999),
+        db,
+        technician,
+    )
+
+    assert lead.assigned_to_user_id == technician.id
+
+    updated = update_lead(
+        lead.id,
+        LeadUpdate(
+            nome="Cliente Campo Actualizado",
+            descripcion_problema="Diagnostico actualizado",
+            assigned_to_user_id=technician.id,
+        ),
+        db,
+        technician,
+    )
+
+    assert updated.nome == "Cliente Campo Actualizado"
+    assert updated.descripcion_problema == "Diagnostico actualizado"
+    assert updated.assigned_to_user_id == technician.id
+
+
+def test_technician_cannot_change_responsible_through_update_payload(db):
+    root = make_user(db, "root", "ROOT")
+    technician = make_user(db, "tecnico-payload", "BROKER")
+    other_technician = make_user(db, "tecnico-outro", "BROKER")
+    lead = create_lead(
+        LeadCreate(nombre="Cliente Protegido", telefono="9981313131", assigned_to_user_id=technician.id),
+        db,
+        root,
+    )
+
+    with pytest.raises(HTTPException) as blocked:
+        update_lead(
+            lead.id,
+            LeadUpdate(nome="Tentativa", assigned_to_user_id=other_technician.id),
+            db,
+            technician,
+        )
+
+    assert blocked.value.status_code == 403
+    db.refresh(lead)
+    assert lead.assigned_to_user_id == technician.id
+    assert lead.nome == "Cliente Protegido"
+
+
+def test_technician_uploads_documents_but_cannot_delete_directly(db, tmp_path, monkeypatch):
+    import app.routes.lead_document_routes as document_routes
+
+    monkeypatch.setattr(document_routes, "UPLOADS_DIR", tmp_path)
+    root = make_user(db, "root", "ROOT")
+    technician = make_user(db, "tecnico-docs", "BROKER")
+    lead = create_lead(
+        LeadCreate(nombre="Cliente Evidencias", telefono="9981414141", assigned_to_user_id=technician.id),
+        db,
+        root,
+    )
+
+    upload_cases = [
+        ("ANTES_SERVICIO", "antes.jpg", "image/jpeg"),
+        ("DURANTE_SERVICIO", "durante.jpg", "image/jpeg"),
+        ("DESPUES_SERVICIO", "despues.jpg", "image/jpeg"),
+        ("PRESUPUESTO", "presupuesto.pdf", "application/pdf"),
+        ("NOTA_FISCAL", "nota.pdf", "application/pdf"),
+        ("GARANTIA", "garantia.pdf", "application/pdf"),
+        ("VIDEO", "video.mp4", "video/mp4"),
+        ("OTROS", "archivo.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+    ]
+
+    uploaded = [
+        upload_lead_document(
+            lead.id,
+            document_type,
+            make_upload_file(filename, content_type=mime_type),
+            db,
+            technician,
+        )
+        for document_type, filename, mime_type in upload_cases
+    ]
+
+    assert len(uploaded) == len(upload_cases)
+    assert {doc["document_type"] for doc in uploaded} == {case[0] for case in upload_cases}
+    assert all(doc["uploaded_by_user_id"] == technician.id for doc in uploaded)
+
+    documents = list_lead_documents(lead.id, db, technician)
+    assert len(documents) == len(upload_cases)
+
+    with pytest.raises(HTTPException) as blocked:
+        delete_lead_document(lead.id, uploaded[0]["id"], db, technician)
+    assert blocked.value.status_code == 403
+
+    deletion_request = request_lead_document_deletion(
+        lead.id,
+        uploaded[0]["id"],
+        "Foto duplicada enviada por engano",
+        db,
+        technician,
+    )
+    assert deletion_request["status"] == "PENDENTE"
+    assert deletion_request["requested_by_user_id"] == technician.id
+    assert db.query(LeadDocument).filter(LeadDocument.id == uploaded[0]["id"]).first() is not None
+
+    deleted = delete_lead_document(lead.id, uploaded[0]["id"], db, root)
+    assert deleted["ok"] is True
