@@ -11,3 +11,5 @@ venv/
 exports/
 logs/
 uploads/
+
+.local-secrets/
