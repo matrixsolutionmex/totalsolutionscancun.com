@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.security import hash_password
@@ -34,9 +34,17 @@ app = FastAPI(
 
 logger = logging.getLogger(__name__)
 
+
+def cors_origins():
+    configured = os.getenv("CORS_ORIGINS", "").strip()
+    if not configured:
+        return ["*"]
+    return [origin.strip() for origin in configured.split(",") if origin.strip()]
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -73,62 +81,74 @@ def ensure_index(db, primary_sql: str, *, fallback_sql: str | None = None, label
         db.commit()
 
 
+def add_column_if_missing(db, table_name: str, column_name: str, column_definition: str):
+    existing_columns = {
+        column["name"]
+        for column in inspect(db.bind).get_columns(table_name)
+    }
+    if column_name in existing_columns:
+        return
+
+    db.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}"))
+
+
 @app.on_event("startup")
 def create_database_tables():
     Base.metadata.create_all(bind=engine)
 
     db = SessionLocal()
     try:
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS valor_negocio NUMERIC(12, 2) DEFAULT 0"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS pipeline_updated_at TIMESTAMP"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS created_at TIMESTAMP"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS estado VARCHAR"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS cidade VARCHAR"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS whatsapp VARCHAR"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS colonia VARCHAR"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS codigo_postal VARCHAR"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS google_maps_url VARCHAR"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS descripcion_problema VARCHAR"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS urgencia VARCHAR DEFAULT 'NORMAL'"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS origen VARCHAR"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS origen_detalle VARCHAR"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS external_id VARCHAR"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS external_source VARCHAR"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS received_at TIMESTAMP"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS proximo_contacto TIMESTAMP"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS property_id VARCHAR"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS tipo_imovel VARCHAR"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS tipo_servico VARCHAR"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS empresa VARCHAR"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS pessoa_contato VARCHAR"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS latitude VARCHAR"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS longitude VARCHAR"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS foto_fachada_url VARCHAR"))
-        db.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS property_extra_json VARCHAR"))
+        add_column_if_missing(db, "leads", "valor_negocio", "NUMERIC(12, 2) DEFAULT 0")
+        add_column_if_missing(db, "leads", "pipeline_updated_at", "TIMESTAMP")
+        add_column_if_missing(db, "leads", "created_at", "TIMESTAMP")
+        add_column_if_missing(db, "leads", "updated_at", "TIMESTAMP")
+        add_column_if_missing(db, "leads", "estado", "VARCHAR")
+        add_column_if_missing(db, "leads", "cidade", "VARCHAR")
+        add_column_if_missing(db, "leads", "whatsapp", "VARCHAR")
+        add_column_if_missing(db, "leads", "colonia", "VARCHAR")
+        add_column_if_missing(db, "leads", "codigo_postal", "VARCHAR")
+        add_column_if_missing(db, "leads", "google_maps_url", "VARCHAR")
+        add_column_if_missing(db, "leads", "descripcion_problema", "VARCHAR")
+        add_column_if_missing(db, "leads", "urgencia", "VARCHAR DEFAULT 'NORMAL'")
+        add_column_if_missing(db, "leads", "origen", "VARCHAR")
+        add_column_if_missing(db, "leads", "origen_detalle", "VARCHAR")
+        add_column_if_missing(db, "leads", "external_id", "VARCHAR")
+        add_column_if_missing(db, "leads", "external_source", "VARCHAR")
+        add_column_if_missing(db, "leads", "received_at", "TIMESTAMP")
+        add_column_if_missing(db, "leads", "proximo_contacto", "TIMESTAMP")
+        add_column_if_missing(db, "leads", "property_id", "VARCHAR")
+        add_column_if_missing(db, "leads", "tipo_imovel", "VARCHAR")
+        add_column_if_missing(db, "leads", "tipo_servico", "VARCHAR")
+        add_column_if_missing(db, "leads", "empresa", "VARCHAR")
+        add_column_if_missing(db, "leads", "pessoa_contato", "VARCHAR")
+        add_column_if_missing(db, "leads", "latitude", "VARCHAR")
+        add_column_if_missing(db, "leads", "longitude", "VARCHAR")
+        add_column_if_missing(db, "leads", "foto_fachada_url", "VARCHAR")
+        add_column_if_missing(db, "leads", "property_extra_json", "VARCHAR")
         db.execute(text("UPDATE leads SET urgencia = 'NORMAL' WHERE urgencia IS NULL OR urgencia = ''"))
         db.execute(text("UPDATE leads SET tipo_imovel = 'OUTRO' WHERE tipo_imovel IS NULL OR tipo_imovel = ''"))
         db.execute(text("UPDATE leads SET tipo_servico = COALESCE(NULLIF(tipo_servico, ''), NULLIF(nicho, ''), 'OUTRO') WHERE tipo_servico IS NULL OR tipo_servico = ''"))
         db.execute(text("UPDATE leads SET pipeline_updated_at = COALESCE(pipeline_updated_at, updated_at, CURRENT_TIMESTAMP) WHERE pipeline_updated_at IS NULL"))
         db.execute(text("UPDATE leads SET created_at = COALESCE(created_at, pipeline_updated_at, CURRENT_TIMESTAMP) WHERE created_at IS NULL"))
         db.execute(text("UPDATE leads SET updated_at = COALESCE(updated_at, pipeline_updated_at, CURRENT_TIMESTAMP) WHERE updated_at IS NULL"))
-        db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS manager_id INTEGER"))
-        db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS pais_operacao VARCHAR DEFAULT 'BR'"))
-        db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS estado_operacao VARCHAR DEFAULT ''"))
-        db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS cidade_operacao VARCHAR DEFAULT ''"))
-        db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS idioma VARCHAR DEFAULT 'pt'"))
-        db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_photo_url VARCHAR"))
-        db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP"))
-        db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR"))
-        db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS company VARCHAR"))
-        db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT TRUE"))
-        db.execute(text("ALTER TABLE users ALTER COLUMN email_verified SET DEFAULT FALSE"))
-        db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verification_token VARCHAR"))
-        db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'ACTIVE'"))
-        db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan VARCHAR DEFAULT 'STARTER'"))
-        db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_max_brokers INTEGER DEFAULT 1"))
-        db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_max_leads INTEGER DEFAULT 100"))
-        db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
+        add_column_if_missing(db, "users", "manager_id", "INTEGER")
+        add_column_if_missing(db, "users", "pais_operacao", "VARCHAR DEFAULT 'BR'")
+        add_column_if_missing(db, "users", "estado_operacao", "VARCHAR DEFAULT ''")
+        add_column_if_missing(db, "users", "cidade_operacao", "VARCHAR DEFAULT ''")
+        add_column_if_missing(db, "users", "idioma", "VARCHAR DEFAULT 'pt'")
+        add_column_if_missing(db, "users", "profile_photo_url", "VARCHAR")
+        add_column_if_missing(db, "users", "last_seen_at", "TIMESTAMP")
+        add_column_if_missing(db, "users", "email", "VARCHAR")
+        add_column_if_missing(db, "users", "company", "VARCHAR")
+        add_column_if_missing(db, "users", "email_verified", "BOOLEAN DEFAULT TRUE")
+        if engine.dialect.name == "postgresql":
+            db.execute(text("ALTER TABLE users ALTER COLUMN email_verified SET DEFAULT FALSE"))
+        add_column_if_missing(db, "users", "email_verification_token", "VARCHAR")
+        add_column_if_missing(db, "users", "status", "VARCHAR DEFAULT 'ACTIVE'")
+        add_column_if_missing(db, "users", "plan", "VARCHAR DEFAULT 'STARTER'")
+        add_column_if_missing(db, "users", "plan_max_brokers", "INTEGER DEFAULT 1")
+        add_column_if_missing(db, "users", "plan_max_leads", "INTEGER DEFAULT 100")
+        add_column_if_missing(db, "users", "registered_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
         db.execute(text("UPDATE users SET email_verified = TRUE WHERE email_verified IS NULL"))
         db.execute(text("UPDATE users SET status = 'ACTIVE' WHERE status IS NULL OR status = ''"))
         db.execute(text("UPDATE users SET plan = 'STARTER' WHERE plan IS NULL OR plan = ''"))
