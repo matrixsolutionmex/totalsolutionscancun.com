@@ -2037,6 +2037,10 @@
   <section class="view manager-only" id="view-suporte">
     <div class="view-grid">
       <div class="panel-box" style="grid-column: 1 / -1;">
+        <div class="panel-title">Solicitudes de exclusión</div>
+        <div class="broker-list" id="deletionRequestList"></div>
+      </div>
+      <div class="panel-box" style="grid-column: 1 / -1;">
         <div class="panel-title">Tickets de soporte</div>
         <div class="broker-list" id="supportTicketList"></div>
       </div>
@@ -3137,6 +3141,7 @@
     let cachedBrokers = [];
     let cachedInventory = null;
     let cachedSupportTickets = [];
+    let cachedDeletionRequests = [];
     let editingOwnProfile = false;
     let currentUser = { id: 1, username: "root", role: "ROOT" };
     let cachedBoard = null;
@@ -3686,6 +3691,7 @@
       document.body.classList.add(`view-${viewName}`);
       if (viewName === "suporte") {
         loadSupportTickets().catch(() => {});
+        loadDeletionRequests().catch(() => {});
       }
     }
 
@@ -3902,6 +3908,19 @@
       }
 
       return null;
+    }
+
+    async function openLeadFromRequest(leadId) {
+      let lead = findLeadInCache(leadId);
+      if (!lead) {
+        await loadBoard();
+        lead = findLeadInCache(leadId);
+      }
+      if (!lead) {
+        alert("Cliente no encontrado en el tablero actual.");
+        return;
+      }
+      openLeadModal(lead);
     }
 
     function evidenceCategoryLabel(type) {
@@ -5195,6 +5214,63 @@
       }).join("");
     }
 
+    function deletionRequestStatusLabel(status) {
+      const labels = {
+        PENDENTE: "Pendiente",
+        APROVADA: "Aprobada",
+        REJEITADA: "Rechazada"
+      };
+      return labels[status] || status || "Pendiente";
+    }
+
+    function renderDeletionRequests() {
+      const list = document.getElementById("deletionRequestList");
+      if (!list) {
+        return;
+      }
+
+      if (!cachedDeletionRequests.length) {
+        list.innerHTML = `<div class="line">Ninguna solicitud de exclusión pendiente.</div>`;
+        return;
+      }
+
+      list.innerHTML = cachedDeletionRequests.map((request) => {
+        const createdAt = request.created_at
+          ? new Date(request.created_at).toLocaleString(translations[currentLanguage].locale)
+          : "";
+        const requestedBy = request.requested_by_name || responsibleLabel(request.requested_by_user_id);
+        const documentName = request.document_name || "Documento registrado";
+        const documentType = request.document_type ? evidenceCategoryLabel(request.document_type) : "Documento";
+        const client = request.client_name || `Cliente #${request.lead_id}`;
+        const order = request.service_order ? ` · OS ${request.service_order}` : "";
+        const canReview = request.status === "PENDENTE";
+        return `
+          <div class="ticket-row">
+            <div>
+              <strong>${escapeHtml(client)}${escapeHtml(order)}</strong>
+              <div class="ticket-meta">
+                <span>${escapeHtml(deletionRequestStatusLabel(request.status))}</span>
+                <span>${escapeHtml(documentType)}</span>
+                <span>${escapeHtml(requestedBy)}</span>
+                <span>${escapeHtml(createdAt)}</span>
+              </div>
+              <div class="ticket-message">
+                <strong>${escapeHtml(documentName)}</strong><br>
+                ${escapeHtml(request.reason || "Sin motivo informado.")}
+              </div>
+            </div>
+            <div class="evidence-file-actions">
+              ${canReview ? `
+                <button type="button" onclick="decideDeletionRequest(${request.id}, 'APROVADA')">Aprobar</button>
+                <button type="button" onclick="decideDeletionRequest(${request.id}, 'REJEITADA')">Rechazar</button>
+              ` : ""}
+              <button type="button" onclick="openLeadFromRequest(${request.lead_id})">Ver cliente</button>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
 
     let cachedContracts = [];
 
@@ -5339,6 +5415,60 @@
       cachedSupportTickets = await response.json();
       renderSupportTickets();
       refreshSupportCount();
+    }
+
+    async function loadDeletionRequests() {
+      const list = document.getElementById("deletionRequestList");
+      if (!currentUser || !["ROOT", "GERENTE"].includes(currentUser.role)) {
+        cachedDeletionRequests = [];
+        if (list) {
+          renderDeletionRequests();
+        }
+        return;
+      }
+
+      if (list) {
+        list.innerHTML = `<div class="line">Cargando solicitudes de exclusión...</div>`;
+      }
+
+      const response = await apiFetch(`${API_BASE}/leads/deletion-requests`);
+      if (!response.ok) {
+        if (list) {
+          list.innerHTML = `<div class="line">No fue posible cargar las solicitudes de exclusión.</div>`;
+        }
+        return;
+      }
+
+      cachedDeletionRequests = await response.json();
+      renderDeletionRequests();
+    }
+
+    async function decideDeletionRequest(requestId, status) {
+      const label = status === "APROVADA" ? "aprobar" : "rechazar";
+      if (!confirm(`¿Desea ${label} esta solicitud de exclusión?`)) {
+        return;
+      }
+
+      const decisionReason = prompt("Observación para la revisión (opcional).") || "";
+      const response = await apiFetch(`${API_BASE}/leads/deletion-requests/${requestId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          status,
+          decision_reason: decisionReason.trim()
+        })
+      });
+
+      if (!response.ok) {
+        alert(await responseMessage(response, "No fue posible revisar la solicitud."));
+        return;
+      }
+
+      await loadDeletionRequests();
+      await loadBoard();
+      alert(status === "APROVADA" ? "Exclusión aprobada." : "Exclusión rechazada.");
     }
 
     function openSupport() {

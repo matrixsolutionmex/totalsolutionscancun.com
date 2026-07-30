@@ -21,7 +21,9 @@ from app.models.service_order import ServiceOrder
 from app.models.user import User
 from app.routes.integration_routes import create_integration_lead, require_integration_token
 from app.routes.lead_document_routes import (
+    decide_deletion_request,
     delete_lead_document,
+    list_deletion_requests,
     list_lead_documents,
     request_lead_document_deletion,
     upload_lead_document,
@@ -508,5 +510,32 @@ def test_technician_uploads_documents_but_cannot_delete_directly(db, tmp_path, m
     assert deletion_request["requested_by_user_id"] == technician.id
     assert db.query(LeadDocument).filter(LeadDocument.id == uploaded[0]["id"]).first() is not None
 
-    deleted = delete_lead_document(lead.id, uploaded[0]["id"], db, root)
-    assert deleted["ok"] is True
+    visible_requests = list_deletion_requests("PENDENTE", db, root)
+    assert len(visible_requests) == 1
+    assert visible_requests[0]["document_name"] == "antes.jpg"
+    assert visible_requests[0]["requested_by_name"] == "Tecnico-Docs"
+
+    rejected = decide_deletion_request(
+        deletion_request["id"],
+        {"status": "REJEITADA", "decision_reason": "Documento necesario"},
+        db,
+        root,
+    )
+    assert rejected["status"] == "REJEITADA"
+    assert db.query(LeadDocument).filter(LeadDocument.id == uploaded[0]["id"]).first() is not None
+
+    second_request = request_lead_document_deletion(
+        lead.id,
+        uploaded[0]["id"],
+        "Foto duplicada confirmada",
+        db,
+        technician,
+    )
+    approved = decide_deletion_request(
+        second_request["id"],
+        {"status": "APROVADA"},
+        db,
+        root,
+    )
+    assert approved["status"] == "APROVADA"
+    assert db.query(LeadDocument).filter(LeadDocument.id == uploaded[0]["id"]).first() is None
