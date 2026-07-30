@@ -1608,7 +1608,7 @@
       position: fixed;
       top: 78px;
       right: 22px;
-      z-index: 220;
+      z-index: 10000;
       width: min(420px, calc(100vw - 28px));
       max-height: min(640px, calc(100vh - 94px));
       display: none;
@@ -1620,7 +1620,7 @@
       box-shadow: 0 24px 70px rgba(15, 23, 42, 0.34);
     }
 
-    .notification-center.open .notification-panel {
+    .notification-panel.open {
       display: block;
     }
 
@@ -2157,7 +2157,19 @@
         🔔
         <span class="notification-badge" id="notificationBadge">0</span>
       </button>
-      <div class="notification-panel" id="notificationPanel">
+    </div>
+    <button class="support-button" id="supportButton" type="button">Soporte</button>
+    <select id="appTheme" class="theme-select" title="Apariencia"></select>
+        <div class="session-profile">
+          <div class="profile-avatar profile-avatar-small" aria-hidden="true">
+            <span id="sessionAvatarContent" class="avatar-initials">R</span>
+          </div>
+          <div class="user-pill" id="sessionUser">root <span>Administrador</span></div>
+        </div>
+        <button class="ghost logout-button" id="logoutButton">Salir</button>
+  </header>
+  <div class="notification-toast-stack" id="notificationToastStack" aria-live="polite"></div>
+  <div class="notification-panel" id="notificationPanel">
         <div class="notification-header">
           <strong>Notificaciones</strong>
           <button class="ghost" id="markAllNotificationsButton" type="button">Marcar todas</button>
@@ -2185,18 +2197,6 @@
           <button class="ghost" id="testNotificationSoundButton" type="button">Probar sonido</button>
         </div>
       </div>
-    </div>
-    <button class="support-button" id="supportButton" type="button">Soporte</button>
-    <select id="appTheme" class="theme-select" title="Apariencia"></select>
-        <div class="session-profile">
-          <div class="profile-avatar profile-avatar-small" aria-hidden="true">
-            <span id="sessionAvatarContent" class="avatar-initials">R</span>
-          </div>
-          <div class="user-pill" id="sessionUser">root <span>Administrador</span></div>
-        </div>
-        <button class="ghost logout-button" id="logoutButton">Salir</button>
-  </header>
-  <div class="notification-toast-stack" id="notificationToastStack" aria-live="polite"></div>
 
   <section class="toolbar">
     <div>
@@ -4423,7 +4423,7 @@
 
     async function openNotificationLead(notificationId, leadId) {
       await markNotificationRead(notificationId);
-      document.getElementById("notificationCenter")?.classList.remove("open");
+      document.getElementById("notificationPanel")?.classList.remove("open");
       await openLeadFromRequest(leadId);
     }
 
@@ -6638,7 +6638,7 @@
     document.getElementById("logoutButton").addEventListener("click", logout);
     document.getElementById("supportButton").addEventListener("click", openSupport);
     document.getElementById("notificationBell").addEventListener("click", () => {
-      document.getElementById("notificationCenter").classList.toggle("open");
+      document.getElementById("notificationPanel").classList.toggle("open");
       loadNotifications({ announce: false }).catch(() => {});
     });
     document.getElementById("markAllNotificationsButton").addEventListener("click", markAllNotificationsRead);
@@ -6665,8 +6665,9 @@
     });
     document.addEventListener("click", (event) => {
       const center = document.getElementById("notificationCenter");
-      if (center && !center.contains(event.target)) {
-        center.classList.remove("open");
+      const panel = document.getElementById("notificationPanel");
+      if (center && panel && !center.contains(event.target) && !panel.contains(event.target)) {
+        panel.classList.remove("open");
       }
     });
     document.getElementById("closeSupportButton").addEventListener("click", closeSupport);
