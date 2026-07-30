@@ -141,6 +141,18 @@ def test_manual_client_creation_starts_unassigned(db):
     assert lead.service_order.checklist_status == "PENDENTE"
 
 
+def test_service_order_number_is_generated_sequentially(db):
+    root = make_user(db, "root", "ROOT")
+
+    first = create_lead(LeadCreate(nombre="Cliente Uno OS", telefono="9980000001"), db, root)
+    second = create_lead(LeadCreate(nombre="Cliente Dos OS", telefono="9980000002"), db, root)
+
+    assert first.service_order.order_number == "TS-2026-000001"
+    assert second.service_order.order_number == "TS-2026-000002"
+    assert first.property_id == "TS-000001"
+    assert second.property_id == "TS-000002"
+
+
 def test_integration_client_creation_uses_external_metadata(db, monkeypatch):
     monkeypatch.setenv("MATRIX_IMPORT_TOKEN", "integration-secret")
     assert require_integration_token("Bearer integration-secret") is None
@@ -220,6 +232,8 @@ def test_integration_blocks_duplicates_by_external_id_phone_and_email(db):
             None,
         )
     assert by_phone.value.status_code == 409
+    assert "Cliente duplicado" in by_phone.value.detail
+    assert "TS-2026-000001" in by_phone.value.detail
 
     with pytest.raises(HTTPException) as by_email:
         create_integration_lead(

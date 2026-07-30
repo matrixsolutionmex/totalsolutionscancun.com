@@ -2148,11 +2148,11 @@
           </label>
           <label class="modal-field">
             OS
-            <input id="leadServiceOrderNumber" placeholder="TS-2026-000001" readonly>
+            <input id="leadServiceOrderNumber" placeholder="Se genera al guardar" readonly>
           </label>
           <label class="modal-field">
             ID de la propiedad
-            <input id="leadPropertyId" placeholder="TS-000001">
+            <input id="leadPropertyId" placeholder="Se genera al guardar">
           </label>
           <label class="modal-field">
             Etapa
@@ -5716,7 +5716,6 @@
       const valueInput = document.getElementById("leadValorNegocio").value.replace(",", ".");
       const assignedValue = document.getElementById("leadBrokerTarget").value;
       const payload = {
-        property_id: document.getElementById("leadPropertyId").value,
         tipo_imovel: document.getElementById("leadTipoImovel").value,
         tipo_servico: document.getElementById("leadTipoServico").value,
         nome: document.getElementById("leadNome").value,
@@ -5752,6 +5751,10 @@
         endereco: document.getElementById("leadEndereco").value,
         observacoes: document.getElementById("leadObservacoes").value
       };
+
+      if (leadId) {
+        payload.property_id = document.getElementById("leadPropertyId").value;
+      }
 
       if (assignedValue && currentUser.role !== "BROKER") {
         payload.assigned_to_user_id = Number(assignedValue);

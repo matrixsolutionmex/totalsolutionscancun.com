@@ -29,6 +29,7 @@ from app.services.enrichment_service import EnrichmentError, enrich_lead_record,
 from app.services.dossier_pdf_service import build_service_dossier_pdf
 from app.services.lead_entry_service import (
     duplicate_lead,
+    duplicate_lead_message,
     ensure_property_id,
     lead_mapping_from_manual,
     property_extra_json,
@@ -209,7 +210,7 @@ def create_lead(
         whatsapp=mapping.get("whatsapp"),
     )
     if duplicate:
-        raise HTTPException(status_code=409, detail="Cliente duplicado")
+        raise HTTPException(status_code=409, detail=duplicate_lead_message(duplicate))
 
     lead = Lead(**mapping)
     db.add(lead)

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.auth.jwt_handler import get_db
 from app.models.lead import Lead
 from app.schemas.lead_schema import IntegrationLeadCreate, LeadResponse
-from app.services.lead_entry_service import duplicate_lead, ensure_property_id, lead_mapping_from_integration
+from app.services.lead_entry_service import duplicate_lead, duplicate_lead_message, ensure_property_id, lead_mapping_from_integration
 from app.services.service_order_service import ensure_service_order
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
@@ -38,7 +38,7 @@ def create_integration_lead(
         external_id=mapping.get("external_id"),
     )
     if duplicate:
-        raise HTTPException(status_code=409, detail="Cliente duplicado")
+        raise HTTPException(status_code=409, detail=duplicate_lead_message(duplicate))
 
     lead = Lead(**mapping)
     db.add(lead)

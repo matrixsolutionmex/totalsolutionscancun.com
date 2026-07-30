@@ -98,6 +98,20 @@ def duplicate_lead(db: Session, *, email: str | None = None, contato: str | None
     return None
 
 
+def duplicate_lead_message(lead: Lead) -> str:
+    service_order = getattr(lead, "service_order", None)
+    reference = service_order.order_number if service_order and service_order.order_number else lead.property_id or f"ID {lead.id}"
+    contact_parts = []
+    if lead.contato:
+        contact_parts.append(f"telefone {lead.contato}")
+    if lead.whatsapp and lead.whatsapp != lead.contato:
+        contact_parts.append(f"WhatsApp {lead.whatsapp}")
+    if lead.email:
+        contact_parts.append(f"email {lead.email}")
+    contact = ", ".join(contact_parts) if contact_parts else "contato ja registrado"
+    return f"Cliente duplicado: {contact}. Registro existente: {reference}"
+
+
 def lead_mapping_from_manual(payload, *, actor: User | None = None):
     now = datetime.utcnow()
     assigned_to_user_id = payload.assigned_to_user_id if payload.assigned_to_user_id is not None else payload.responsable
