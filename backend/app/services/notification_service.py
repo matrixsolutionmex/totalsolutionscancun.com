@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import smtplib
 from datetime import datetime, timedelta
@@ -16,6 +17,9 @@ try:
 except ImportError:  # pragma: no cover - production installs the optional push dependency.
     WebPushException = Exception
     webpush = None
+
+
+logger = logging.getLogger(__name__)
 
 
 def actor_name(actor: User | None) -> str:
@@ -117,6 +121,13 @@ def _web_push_ready() -> tuple[str, str, str] | None:
     private_key = os.getenv("WEB_PUSH_VAPID_PRIVATE_KEY", "").strip()
     contact_email = os.getenv("WEB_PUSH_CONTACT_EMAIL", "").strip()
     if not webpush or not public_key or not private_key or not contact_email:
+        logger.info(
+            "Web Push nao configurado: library=%s public_key=%s private_key=%s contact=%s",
+            bool(webpush),
+            bool(public_key),
+            bool(private_key),
+            bool(contact_email),
+        )
         return None
     return public_key, private_key, contact_email
 
@@ -145,10 +156,18 @@ def dispatch_web_push_for_notification_ids(db: Session, notification_ids: list[i
         .all()
     )
     delivered = 0
+    attempted = 0
+    invalidated = 0
+    failed = 0
 
     for notification in notifications:
         preferences = get_or_create_preferences(db, notification.recipient_user_id)
         if not preferences.browser_enabled:
+            logger.info(
+                "Web Push ignorado por preferencia desativada: notification_id=%s user_id=%s",
+                notification.id,
+                notification.recipient_user_id,
+            )
             continue
 
         payload = notification_push_payload(db, notification)
@@ -160,8 +179,15 @@ def dispatch_web_push_for_notification_ids(db: Session, notification_ids: list[i
             )
             .all()
         )
+        if not subscriptions:
+            logger.info(
+                "Web Push sem assinatura ativa: notification_id=%s user_id=%s",
+                notification.id,
+                notification.recipient_user_id,
+            )
 
         for subscription in subscriptions:
+            attempted += 1
             try:
                 webpush(
                     subscription_info={
@@ -174,6 +200,8 @@ def dispatch_web_push_for_notification_ids(db: Session, notification_ids: list[i
                     data=json.dumps(payload, ensure_ascii=False),
                     vapid_private_key=private_key,
                     vapid_claims={"sub": f"mailto:{contact_email}"},
+                    ttl=3600,
+                    timeout=15,
                 )
                 subscription.last_used_at = datetime.utcnow()
                 delivered += 1
@@ -181,10 +209,36 @@ def dispatch_web_push_for_notification_ids(db: Session, notification_ids: list[i
                 if _web_push_status_code(exc) in {404, 410}:
                     subscription.active = False
                     subscription.disabled_at = datetime.utcnow()
-            except Exception:
+                    invalidated += 1
+                else:
+                    failed += 1
+                    logger.warning(
+                        "Web Push falhou: notification_id=%s user_id=%s status=%s error=%s",
+                        notification.id,
+                        notification.recipient_user_id,
+                        _web_push_status_code(exc),
+                        exc.__class__.__name__,
+                    )
+            except Exception as exc:
+                failed += 1
+                logger.warning(
+                    "Web Push falhou antes do provedor: notification_id=%s user_id=%s error=%s",
+                    notification.id,
+                    notification.recipient_user_id,
+                    exc.__class__.__name__,
+                )
                 continue
 
     db.commit()
+    if attempted or delivered or invalidated or failed:
+        logger.info(
+            "Web Push resultado: notifications=%s attempted=%s delivered=%s invalidated=%s failed=%s",
+            len(notifications),
+            attempted,
+            delivered,
+            invalidated,
+            failed,
+        )
     return delivered
 
 

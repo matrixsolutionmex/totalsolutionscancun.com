@@ -3506,6 +3506,7 @@
     let notificationTimer = null;
     let notificationInitialized = false;
     let seenNotificationIds = new Set();
+    let notificationHighWaterMark = 0;
     let serviceWorkerRegistration = null;
     let webPushState = {
       supported: false,
@@ -4299,6 +4300,19 @@
       return String(notification.priority || "").toUpperCase() === "URGENTE" ? "priority-urgente" : "";
     }
 
+    function notificationHighWaterKey() {
+      const userKey = currentUser?.id || currentUser?.username || "anonymous";
+      return `totalsolutions_notification_high_water_${userKey}`;
+    }
+
+    function loadNotificationHighWaterMark() {
+      notificationHighWaterMark = Number(localStorage.getItem(notificationHighWaterKey()) || "0") || 0;
+    }
+
+    function saveNotificationHighWaterMark(value) {
+      localStorage.setItem(notificationHighWaterKey(), String(Number(value) || 0));
+    }
+
     function updateNotificationBadge() {
       const badge = document.getElementById("notificationBadge");
       if (!badge) return;
@@ -4565,6 +4579,9 @@
     }
 
     function maybeNotifyBrowser(notification) {
+      if (webPushState.subscribed) {
+        return;
+      }
       if (!notificationPreferences.browser_enabled || !("Notification" in window) || Notification.permission !== "granted") {
         return;
       }
@@ -4583,11 +4600,17 @@
       const response = await apiFetch(`${API_BASE}/notifications?limit=30`);
       if (!response.ok) return;
       const notifications = await response.json();
+      const previousHighWaterMark = notificationHighWaterMark;
       const incoming = notifications
-        .filter((notification) => !seenNotificationIds.has(notification.id))
+        .filter((notification) => Number(notification.id) > previousHighWaterMark && !seenNotificationIds.has(notification.id))
         .sort((a, b) => a.id - b.id);
       cachedNotifications = notifications;
       notifications.forEach((notification) => seenNotificationIds.add(notification.id));
+      const maxNotificationId = notifications.reduce((maxId, notification) => Math.max(maxId, Number(notification.id) || 0), previousHighWaterMark);
+      if (maxNotificationId > notificationHighWaterMark) {
+        notificationHighWaterMark = maxNotificationId;
+        saveNotificationHighWaterMark(notificationHighWaterMark);
+      }
       renderNotifications();
 
       if (announce && notificationInitialized && incoming.length) {
@@ -4608,6 +4631,7 @@
       if (notificationTimer) {
         clearInterval(notificationTimer);
       }
+      loadNotificationHighWaterMark();
       loadNotificationPreferences().catch(() => {});
       registerServiceWorker().catch(() => {});
       loadWebPushState().catch(() => {});
@@ -5897,6 +5921,7 @@
       cachedNotifications = [];
       notificationInitialized = false;
       seenNotificationIds = new Set();
+      notificationHighWaterMark = 0;
       webPushState = { supported: false, subscribed: false, vapid_public_key: null, subscriptions: [] };
       updateWebPushUi();
       setBodyState({ loggedIn: false });
