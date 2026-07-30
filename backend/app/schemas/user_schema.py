@@ -79,6 +79,11 @@ class UserResponse(BaseModel):
     is_active: bool
     email_verified: bool = False
     status: str = "ACTIVE"
+    status_reason: str | None = None
+    status_changed_at: datetime | None = None
+    status_changed_by: int | None = None
+    archived_at: datetime | None = None
+    anonymized_at: datetime | None = None
     plan: str = "STARTER"
     plan_max_brokers: int = 1
     plan_max_leads: int = 100
@@ -106,3 +111,61 @@ class ReturnLeadsRequest(BaseModel):
     pais: str | None = None
     estado: str | None = None
     cidade: str | None = None
+
+
+class UserLifecycleRequest(BaseModel):
+    reason: str
+
+
+class UserReactivateRequest(BaseModel):
+    reason: str
+    role: str = "BROKER"
+    manager_id: int | None = None
+    plan: str | None = None
+    plan_max_brokers: int | None = None
+    plan_max_leads: int | None = None
+    reset_password: bool = False
+
+
+class UserArchiveRequest(BaseModel):
+    reason: str
+    client_action: str = "UNASSIGN"
+
+
+class UserAnonymizeRequest(BaseModel):
+    reason: str
+    confirmation: str
+    client_action: str = "UNASSIGN"
+
+
+class UserLifecycleEventResponse(BaseModel):
+    id: int
+    user_id: int
+    actor_user_id: int | None = None
+    event_type: str
+    from_status: str | None = None
+    to_status: str
+    reason: str | None = None
+    created_at: datetime
+
+    model_config = {
+        "from_attributes": True,
+    }
+
+
+class UserReactivationRequestResponse(BaseModel):
+    id: int
+    user_id: int
+    email: str
+    requested_name: str | None = None
+    current_status: str
+    reason: str
+    status: str
+    reviewed_by: int | None = None
+    reviewed_at: datetime | None = None
+    review_reason: str | None = None
+    created_at: datetime
+
+    model_config = {
+        "from_attributes": True,
+    }

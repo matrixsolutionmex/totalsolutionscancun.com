@@ -182,12 +182,19 @@
     }
 
     .login-form input,
-    .login-form select {
+    .login-form select,
+    .login-form textarea {
       min-height: 48px;
       border: 1px solid #bdc9dc;
       border-radius: 4px;
       padding: 0 14px;
       font-size: 16px;
+    }
+
+    .login-form textarea {
+      min-height: 110px;
+      padding-top: 12px;
+      resize: vertical;
     }
 
     .login-security-note {
@@ -2130,6 +2137,7 @@
         </div>
         <div class="login-security-note" id="loginNote" data-i18n="login_authorized_only">Acceso permitido solo para personal autorizado.</div>
         <button class="auth-switch" id="showRegisterButton" type="button" data-i18n="login_create_account">Crear cuenta</button>
+        <button class="auth-switch" id="showReactivationButton" type="button">Solicitar reactivación</button>
         <div class="auth-status" id="loginStatus" aria-live="polite"></div>
       </form>
       <form class="login-card hidden" id="registerForm" autocomplete="off">
@@ -2159,6 +2167,25 @@
         </div>
         <button class="auth-switch" id="backToLoginButton" type="button">Volver al acceso</button>
         <div class="auth-status" id="registerStatus" aria-live="polite"></div>
+      </form>
+      <form class="login-card hidden" id="reactivationForm" autocomplete="off">
+        <div class="brand-lockup compact" aria-label="Total Solutions">
+          <img class="brand-logo" src="/assets/assets/favicon.svg" alt="">
+          <div class="brand-wordmark">
+            <span>Total</span>
+            <span>Solutions</span>
+            <small>Reactivación</small>
+          </div>
+        </div>
+        <h1>Solicitar reactivación</h1>
+        <div class="subtitle">Informe su correo y el motivo para que el administrador revise la cuenta.</div>
+        <div class="login-form">
+          <input id="reactivationEmail" type="email" placeholder="E-mail" autocomplete="email">
+          <textarea id="reactivationReason" placeholder="Justificación breve" rows="4"></textarea>
+          <button id="reactivationButton" type="submit">Enviar solicitud</button>
+        </div>
+        <button class="auth-switch" id="backToLoginFromReactivationButton" type="button">Volver al acceso</button>
+        <div class="auth-status" id="reactivationStatus" aria-live="polite"></div>
       </form>
     </div>
   </section>
@@ -2474,7 +2501,14 @@
         </div>
       </div>
       <div class="panel-box root-only">
-        <div class="panel-title" id="pendingUsersTitle">Registros pendientes de aprobación</div>
+        <div class="panel-title" id="pendingUsersTitle">Gestión de usuarios</div>
+        <div class="inline-actions">
+          <button class="ghost" data-admin-user-tab="PENDING" type="button">Pendientes</button>
+          <button class="ghost" data-admin-user-tab="ACTIVE" type="button">Activos</button>
+          <button class="ghost" data-admin-user-tab="SUSPENDED" type="button">Suspendidos</button>
+          <button class="ghost" data-admin-user-tab="ARCHIVED" type="button">Archivados</button>
+          <button class="ghost" data-admin-user-tab="REACTIVATION" type="button">Reactivación</button>
+        </div>
         <div class="broker-list" id="pendingUserList"></div>
       </div>
       <div class="panel-box root-only">
@@ -2888,13 +2922,24 @@
 
     function showLoginForm() {
       document.getElementById("registerForm").classList.add("hidden");
+      document.getElementById("reactivationForm").classList.add("hidden");
       document.getElementById("loginForm").classList.remove("hidden");
       setAuthStatus("registerStatus");
+      setAuthStatus("reactivationStatus");
     }
 
     function showRegisterForm() {
       document.getElementById("loginForm").classList.add("hidden");
+      document.getElementById("reactivationForm").classList.add("hidden");
       document.getElementById("registerForm").classList.remove("hidden");
+      setAuthStatus("loginStatus");
+    }
+
+    function showReactivationForm() {
+      document.getElementById("loginForm").classList.add("hidden");
+      document.getElementById("registerForm").classList.add("hidden");
+      document.getElementById("reactivationForm").classList.remove("hidden");
+      document.getElementById("reactivationEmail").value = document.getElementById("loginUser").value.trim();
       setAuthStatus("loginStatus");
     }
     const stages = [
@@ -3496,6 +3541,7 @@
     let cachedSupportTickets = [];
     let cachedDeletionRequests = [];
     let cachedNotifications = [];
+    let currentAdminUserTab = "PENDING";
     let notificationPreferences = {
       in_app_enabled: true,
       sound_enabled: true,
@@ -4682,6 +4728,26 @@
       window.history.replaceState({}, "", nextUrl);
     }
 
+    async function openAdminUsersFromUrlIfPresent() {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("admin") !== "users" || currentUser.role !== "ROOT") {
+        return;
+      }
+
+      const requestedTab = String(params.get("tab") || "PENDING").toUpperCase();
+      currentAdminUserTab = requestedTab === "REACTIVATION" ? "REACTIVATION" : requestedTab;
+      document.querySelectorAll("[data-admin-user-tab]").forEach((button) => {
+        button.classList.toggle("active", button.dataset.adminUserTab === currentAdminUserTab);
+      });
+      showView("usuarios");
+      await loadPendingUsers();
+      params.delete("admin");
+      params.delete("tab");
+      const nextQuery = params.toString();
+      const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`;
+      window.history.replaceState({}, "", nextUrl);
+    }
+
     function evidenceCategoryLabel(type) {
       return evidenceCategories.find((category) => category.type === type)?.label || type || "Documento";
     }
@@ -5800,6 +5866,7 @@
       startBrokerLeadWatch();
       startBoardClock();
       startNotificationPolling();
+      openAdminUsersFromUrlIfPresent().catch(() => {});
       openLeadFromUrlIfPresent().catch(() => {});
     }
 
@@ -5888,6 +5955,32 @@
         status.appendChild(verificationLink);
       }
       document.getElementById("registerForm").reset();
+    }
+
+    async function requestReactivation(event) {
+      event.preventDefault();
+      setAuthStatus("reactivationStatus");
+      const email = document.getElementById("reactivationEmail").value.trim();
+      const reason = document.getElementById("reactivationReason").value.trim();
+      if (!email || reason.length < 5) {
+        setAuthStatus("reactivationStatus", "Informe el correo y una justificación breve.", "error");
+        return;
+      }
+
+      const response = await fetch(`${API_BASE}/auth/reactivation-request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, reason })
+      });
+
+      if (!response.ok) {
+        setAuthStatus("reactivationStatus", await responseMessage(response, "No fue posible registrar la solicitud."), "error");
+        return;
+      }
+
+      const data = await response.json();
+      setAuthStatus("reactivationStatus", data.message || "Solicitud registrada para aprobación.", "success");
+      document.getElementById("reactivationReason").value = "";
     }
 
     async function logout() {
@@ -6447,6 +6540,35 @@
       }).join("");
     }
 
+    function adminUserActionButtons(user) {
+      const status = String(user.status || "").toUpperCase();
+      if (currentAdminUserTab === "PENDING" || ["PENDING", "PENDING_EMAIL", "PENDING_APPROVAL"].includes(status)) {
+        return `
+          <button class="lv-button-primary" data-approve-pending ${user.email_verified ? "" : "disabled"}>${escapeHtml(t("approve"))}</button>
+          <button class="lv-button-secondary" data-suspend-user>Suspender temporariamente</button>
+        `;
+      }
+      if (status === "ACTIVE") {
+        return `
+          <button class="lv-button-secondary" data-suspend-user>Suspender temporariamente</button>
+          <button class="lv-button-secondary" data-archive-user>Arquivar usuário</button>
+        `;
+      }
+      if (status === "SUSPENDED") {
+        return `
+          <button class="lv-button-primary" data-reactivate-user>Reativar</button>
+          <button class="lv-button-secondary" data-archive-user>Arquivar usuário</button>
+        `;
+      }
+      if (status === "ARCHIVED") {
+        return `
+          <button class="lv-button-primary" data-reactivate-user>Reativar</button>
+          <button class="lv-button-secondary" data-anonymize-user>Anonimizar definitivamente</button>
+        `;
+      }
+      return "";
+    }
+
     function renderPendingUsers(users) {
       const list = document.getElementById("pendingUserList");
       if (currentUser.role !== "ROOT") {
@@ -6483,8 +6605,7 @@
               </select>
               <input class="lv-input" data-pending-max-brokers type="number" min="0" value="${user.plan_max_brokers || 1}" placeholder="${escapeHtml(t("maxBrokers"))}">
               <input class="lv-input" data-pending-max-leads type="number" min="0" value="${user.plan_max_leads || 100}" placeholder="${escapeHtml(t("maxLeads"))}">
-              <button class="lv-button-primary" data-approve-pending ${user.email_verified ? "" : "disabled"}>${escapeHtml(t("approve"))}</button>
-              <button class="lv-button-secondary" data-suspend-pending>${escapeHtml(t("suspend"))}</button>
+              ${adminUserActionButtons(user)}
             </div>
           </div>
         `;
@@ -6509,6 +6630,57 @@
       list.querySelectorAll("[data-suspend-pending]").forEach((button) => {
         button.addEventListener("click", () => suspendPendingUser(button.closest("[data-pending-user-id]")));
       });
+      list.querySelectorAll("[data-suspend-user]").forEach((button) => {
+        button.addEventListener("click", () => lifecycleUserAction(button.closest("[data-pending-user-id]"), "suspend"));
+      });
+      list.querySelectorAll("[data-reactivate-user]").forEach((button) => {
+        button.addEventListener("click", () => lifecycleUserAction(button.closest("[data-pending-user-id]"), "reactivate"));
+      });
+      list.querySelectorAll("[data-archive-user]").forEach((button) => {
+        button.addEventListener("click", () => lifecycleUserAction(button.closest("[data-pending-user-id]"), "archive"));
+      });
+      list.querySelectorAll("[data-anonymize-user]").forEach((button) => {
+        button.addEventListener("click", () => lifecycleUserAction(button.closest("[data-pending-user-id]"), "anonymize"));
+      });
+    }
+
+    function renderReactivationRequests(requests) {
+      const list = document.getElementById("pendingUserList");
+      if (!requests.length) {
+        list.innerHTML = `<div class="pending-user-empty">Nenhuma solicitação de reativação pendente.</div>`;
+        return;
+      }
+      list.innerHTML = requests.map((request) => `
+        <div class="pending-user-row" data-reactivation-request-id="${request.id}" data-reactivation-user-id="${request.user_id}">
+          <div>
+            <strong>${escapeHtml(request.requested_name || request.email)}</strong><br>
+            <small>${escapeHtml(request.email)} · ${escapeHtml(request.current_status)}</small><br>
+            <small>${escapeHtml(request.reason)}</small>
+          </div>
+          <div class="pending-user-controls">
+            <select class="lv-input" data-pending-role>
+              <option value="BROKER">Técnico</option>
+              <option value="GERENTE">Supervisor</option>
+            </select>
+            <select class="lv-input" data-pending-manager>${pendingManagerOptions()}</select>
+            <button class="lv-button-primary" data-reactivate-request>Reativar</button>
+            <button class="lv-button-secondary" data-keep-blocked-request>Manter bloqueado</button>
+            <button class="lv-button-secondary" data-reject-request>Rejeitar solicitação</button>
+          </div>
+        </div>
+      `).join("");
+      list.querySelectorAll("[data-reactivate-request]").forEach((button) => {
+        button.addEventListener("click", () => lifecycleUserAction(button.closest("[data-reactivation-request-id]"), "reactivate"));
+      });
+      list.querySelectorAll("[data-keep-blocked-request]").forEach((button) => {
+        button.addEventListener("click", () => rejectReactivationRequest(
+          button.closest("[data-reactivation-request-id]"),
+          "Conta mantida bloqueada após revisão administrativa."
+        ));
+      });
+      list.querySelectorAll("[data-reject-request]").forEach((button) => {
+        button.addEventListener("click", () => rejectReactivationRequest(button.closest("[data-reactivation-request-id]")));
+      });
     }
 
     async function loadPendingUsers() {
@@ -6517,7 +6689,20 @@
         return;
       }
 
-      const response = await apiFetch(`${API_BASE}/admin/users/pending`);
+      if (currentAdminUserTab === "REACTIVATION") {
+        const response = await apiFetch(`${API_BASE}/admin/reactivation-requests?status=PENDING`);
+        if (!response.ok) {
+          document.getElementById("pendingUserList").innerHTML = "";
+          return;
+        }
+        renderReactivationRequests(await response.json());
+        return;
+      }
+
+      const endpoint = currentAdminUserTab === "PENDING"
+        ? `${API_BASE}/admin/users/pending`
+        : `${API_BASE}/admin/users?status=${encodeURIComponent(currentAdminUserTab)}`;
+      const response = await apiFetch(endpoint);
       if (!response.ok) {
         document.getElementById("pendingUserList").innerHTML = "";
         return;
@@ -6551,10 +6736,65 @@
 
     async function suspendPendingUser(row) {
       const response = await apiFetch(`${API_BASE}/admin/users/${row.dataset.pendingUserId}/suspend`, {
-        method: "POST"
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "Suspensão administrativa" })
       });
       if (!response.ok) {
         alert(await responseMessage(response, t("registrationError")));
+        return;
+      }
+      await loadPendingUsers();
+    }
+
+    async function lifecycleUserAction(row, action) {
+      const userId = row.dataset.pendingUserId || row.dataset.reactivationUserId;
+      let endpoint = `${API_BASE}/admin/users/${userId}/${action}`;
+      let payload = {};
+      if (action === "suspend") {
+        payload = { reason: prompt("Motivo da suspensão temporária:") || "" };
+      } else if (action === "reactivate") {
+        const role = row.querySelector("[data-pending-role]")?.value || "BROKER";
+        const managerValue = row.querySelector("[data-pending-manager]")?.value || "";
+        payload = {
+          reason: prompt("Motivo da reativação:") || "",
+          role,
+          manager_id: role === "BROKER" && managerValue ? Number(managerValue) : null,
+          reset_password: false
+        };
+      } else if (action === "archive") {
+        payload = { reason: prompt("Motivo do arquivamento:") || "", client_action: "UNASSIGN" };
+      } else if (action === "anonymize") {
+        const confirmation = prompt("Digite ANONIMIZAR para confirmar a remoção definitiva:");
+        payload = { reason: prompt("Motivo da anonimização definitiva:") || "", confirmation, client_action: "UNASSIGN" };
+      }
+      if (!payload.reason || (action === "anonymize" && payload.confirmation !== "ANONIMIZAR")) {
+        alert("Ação cancelada.");
+        return;
+      }
+      const response = await apiFetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        alert(await responseMessage(response, "Não foi possível concluir a ação."));
+        return;
+      }
+      await loadBrokers();
+      await loadPendingUsers();
+    }
+
+    async function rejectReactivationRequest(row, defaultReason = "") {
+      const reason = prompt("Motivo para rejeitar/manter bloqueada a solicitação:", defaultReason) || "";
+      if (!reason) return;
+      const response = await apiFetch(`${API_BASE}/admin/reactivation-requests/${row.dataset.reactivationRequestId}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason })
+      });
+      if (!response.ok) {
+        alert(await responseMessage(response, "Não foi possível rejeitar a solicitação."));
         return;
       }
       await loadPendingUsers();
@@ -6892,8 +7132,11 @@
     document.getElementById("seedBrokerButton").addEventListener("click", sendToBroker);
     document.getElementById("loginForm").addEventListener("submit", login);
     document.getElementById("registerForm").addEventListener("submit", register);
+    document.getElementById("reactivationForm").addEventListener("submit", requestReactivation);
     document.getElementById("showRegisterButton").addEventListener("click", showRegisterForm);
+    document.getElementById("showReactivationButton").addEventListener("click", showReactivationForm);
     document.getElementById("backToLoginButton").addEventListener("click", showLoginForm);
+    document.getElementById("backToLoginFromReactivationButton").addEventListener("click", showLoginForm);
     document.getElementById("logoutButton").addEventListener("click", logout);
     document.getElementById("supportButton").addEventListener("click", openSupport);
     document.getElementById("notificationBell").addEventListener("click", () => {
@@ -6996,6 +7239,16 @@
       button.addEventListener("click", () => {
         showView(button.dataset.viewTarget);
       });
+    });
+    document.querySelectorAll("[data-admin-user-tab]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        currentAdminUserTab = button.dataset.adminUserTab;
+        document.querySelectorAll("[data-admin-user-tab]").forEach((tabButton) => {
+          tabButton.classList.toggle("active", tabButton === button);
+        });
+        await loadPendingUsers();
+      });
+      button.classList.toggle("active", button.dataset.adminUserTab === currentAdminUserTab);
     });
     document.getElementById("leadForm").addEventListener("submit", saveLead);
     document.getElementById("userForm").addEventListener("submit", saveUser);

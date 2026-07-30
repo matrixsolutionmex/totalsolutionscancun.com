@@ -28,6 +28,16 @@ class RegisterResponse(BaseModel):
     verification_url: str
 
 
+class ReactivationRequestCreate(BaseModel):
+    email: str
+    reason: str
+
+
+class ReactivationRequestResponse(BaseModel):
+    message: str
+    request_id: int | None = None
+
+
 class UserApprovalRequest(BaseModel):
     role: str = "BROKER"
     plan: str | None = None

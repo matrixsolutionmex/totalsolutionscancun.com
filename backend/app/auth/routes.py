@@ -11,8 +11,10 @@ from sqlalchemy.orm import Session
 from app.auth.jwt_handler import create_access_token, get_current_user, get_db
 from app.core.security import hash_password, password_needs_upgrade, verify_password
 from app.models.user import User
-from app.schemas.auth_schema import AuthLoginRequest, AuthResponse, RegisterRequest, RegisterResponse
+from app.models.user_lifecycle import UserReactivationRequest
+from app.schemas.auth_schema import AuthLoginRequest, AuthResponse, ReactivationRequestCreate, ReactivationRequestResponse, RegisterRequest, RegisterResponse
 from app.schemas.user_schema import UserResponse
+from app.services.notification_service import create_notification
 
 
 logger = logging.getLogger(__name__)
@@ -24,6 +26,60 @@ def normalized_email(value: str) -> str:
     if "@" not in email or email.startswith("@") or email.endswith("@"):
         raise HTTPException(status_code=400, detail="Email invalido")
     return email
+
+
+def public_status_label(status: str | None) -> str:
+    value = (status or "").upper()
+    if value in {"PENDING_EMAIL", "PENDING_APPROVAL", "PENDING"}:
+        return "PENDING"
+    return value or "ACTIVE"
+
+
+def create_reactivation_request_for_user(
+    db: Session,
+    *,
+    user: User,
+    email: str,
+    reason: str,
+) -> UserReactivationRequest:
+    clean_reason = reason.strip()
+    if len(clean_reason) < 5:
+        raise HTTPException(status_code=400, detail="Informe uma justificativa com pelo menos 5 caracteres")
+
+    existing = (
+        db.query(UserReactivationRequest)
+        .filter(UserReactivationRequest.user_id == user.id, UserReactivationRequest.status == "PENDING")
+        .first()
+    )
+    if existing:
+        return existing
+
+    request = UserReactivationRequest(
+        user_id=user.id,
+        email=email,
+        requested_name=user.full_name,
+        current_status=public_status_label(user.status),
+        reason=clean_reason[:2000],
+    )
+    db.add(request)
+    db.flush()
+
+    roots = db.query(User).filter(User.role == "ROOT", User.status == "ACTIVE", User.is_active.is_(True)).all()
+    for root in roots:
+        create_notification(
+            db,
+            recipient=root,
+            actor=None,
+            type_="user_reactivation_requested",
+            title="Solicitud de reactivación",
+            message=f"{user.full_name or email} solicita reactivar una cuenta en estado {public_status_label(user.status)}.",
+            priority="NORMAL",
+            action_url="/?admin=users&tab=reactivation",
+            idempotency_key=f"user_reactivation_request:{request.id}:root:{root.id}",
+            metadata={"request_id": request.id, "user_id": user.id, "status": public_status_label(user.status)},
+        )
+
+    return request
 
 
 @router.post("/register", response_model=RegisterResponse, status_code=201)
@@ -38,6 +94,23 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
         .first()
     )
     if existing:
+        status = public_status_label(existing.status)
+        if status == "ACTIVE":
+            raise HTTPException(status_code=409, detail="Conta ja existe. Use recuperacao de acesso ou entre em contato com o administrador.")
+        if status == "PENDING":
+            raise HTTPException(status_code=409, detail="Sua solicitacao ja esta aguardando analise.")
+        if status in {"SUSPENDED", "ARCHIVED"}:
+            request_row = create_reactivation_request_for_user(
+                db,
+                user=existing,
+                email=email,
+                reason="Solicitacao criada a partir de novo cadastro com email existente.",
+            )
+            db.commit()
+            return RegisterResponse(
+                message="Conta existente bloqueada. Solicitação de reativação enviada ao administrador.",
+                verification_url=f"reactivation-request:{request_row.id}",
+            )
         raise HTTPException(status_code=409, detail="Email ja cadastrado")
 
     token = secrets.token_urlsafe(32)
@@ -65,6 +138,33 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
     return RegisterResponse(
         message="Cadastro recebido. Confirme o email para seguir para aprovacao.",
         verification_url=verification_url,
+    )
+
+
+@router.post("/reactivation-request", response_model=ReactivationRequestResponse)
+def request_reactivation(payload: ReactivationRequestCreate, db: Session = Depends(get_db)):
+    email = normalized_email(payload.email)
+    user = (
+        db.query(User)
+        .filter(or_(func.lower(User.email) == email, func.lower(User.username) == email))
+        .first()
+    )
+    if not user:
+        return ReactivationRequestResponse(message="Se a conta existir e puder ser reativada, o administrador recebera a solicitacao.")
+
+    status = public_status_label(user.status)
+    if status == "ACTIVE":
+        raise HTTPException(status_code=409, detail="Conta ativa. Use a recuperacao de acesso ou fale com o administrador.")
+    if status == "PENDING":
+        raise HTTPException(status_code=409, detail="Cadastro ja esta aguardando analise.")
+    if status not in {"SUSPENDED", "ARCHIVED"}:
+        return ReactivationRequestResponse(message="Se a conta existir e puder ser reativada, o administrador recebera a solicitacao.")
+
+    request_row = create_reactivation_request_for_user(db, user=user, email=email, reason=payload.reason)
+    db.commit()
+    return ReactivationRequestResponse(
+        message="Solicitud de reactivación registrada para aprobación.",
+        request_id=request_row.id,
     )
 
 
@@ -98,7 +198,11 @@ def login(payload: AuthLoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=403, detail="Confirme seu email antes de entrar")
     if user.status == "PENDING_APPROVAL":
         raise HTTPException(status_code=403, detail="Cadastro aguardando aprovacao do administrador")
-    if user.status == "SUSPENDED" or not user.is_active:
+    if user.status == "SUSPENDED":
+        raise HTTPException(status_code=403, detail="Usuario suspenso ou inativo")
+    if user.status in {"ARCHIVED", "ANONYMIZED"}:
+        raise HTTPException(status_code=403, detail="Usuario nao autorizado")
+    if not user.is_active:
         raise HTTPException(status_code=403, detail="Usuario suspenso ou inativo")
 
     if password_needs_upgrade(user.password_hash):

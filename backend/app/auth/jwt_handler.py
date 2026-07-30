@@ -44,6 +44,7 @@ def create_access_token(user: User) -> str:
         "sub": str(user.id),
         "role": user.role,
         "manager_id": user.manager_id,
+        "session_version": user.session_version or 0,
         "iat": now,
         "exp": expires,
         "jti": uuid4().hex,
@@ -105,6 +106,8 @@ def get_current_user(
     user = db.query(User).filter(User.id == user_id).first()
     if not user or not user_can_access(user):
         raise HTTPException(status_code=401, detail="Usuario inativo ou nao autorizado")
+    if credentials and int(payload.get("session_version", -1)) != int(user.session_version or 0):
+        raise HTTPException(status_code=401, detail="Sessao revogada")
 
     return user
 

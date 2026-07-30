@@ -18,6 +18,7 @@ from app.models.lead_event import LeadEvent
 from app.models.user import User
 from app.schemas.user_schema import AssignLeadsRequest, LoginRequest, ReturnLeadsRequest, UserCreate, UserResponse, UserUpdate
 from app.services.notification_service import dispatch_web_push_for_notification_ids, notify_assignment_change
+from app.services.user_lifecycle_service import transition_user_status
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -428,14 +429,20 @@ def deactivate_user(
     if not user:
         raise HTTPException(status_code=404, detail="Usuario nao encontrado")
 
-    user.is_active = False
-    user.status = "SUSPENDED"
-    user.last_seen_at = None
+    transition_user_status(
+        db,
+        user=user,
+        actor=actor,
+        to_status="ARCHIVED",
+        reason="Arquivamento via rota legada de desativacao",
+        event_type="ARCHIVED",
+        is_active=False,
+    )
     db.commit()
 
     return {
-        "deleted": True,
-        "mode": "deactivated",
+        "deleted": False,
+        "mode": "archived",
         "user_id": user_id,
     }
 

@@ -15,7 +15,7 @@ from app.core.security import hash_password
 from app.core.storage import UPLOADS_DIR
 from app.auth.routes import router as auth_router
 from app.database.connection import Base, SessionLocal, engine
-from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, deletion_request, notification
+from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, deletion_request, notification, user_lifecycle
 from app.models.lead import Lead
 from app.models.service_order import ServiceOrder
 from app.models.user import User
@@ -193,12 +193,19 @@ def create_database_tables():
             db.execute(text("ALTER TABLE users ALTER COLUMN email_verified SET DEFAULT FALSE"))
         add_column_if_missing(db, "users", "email_verification_token", "VARCHAR")
         add_column_if_missing(db, "users", "status", "VARCHAR DEFAULT 'ACTIVE'")
+        add_column_if_missing(db, "users", "status_reason", "VARCHAR")
+        add_column_if_missing(db, "users", "status_changed_at", "TIMESTAMP")
+        add_column_if_missing(db, "users", "status_changed_by", "INTEGER")
+        add_column_if_missing(db, "users", "archived_at", "TIMESTAMP")
+        add_column_if_missing(db, "users", "anonymized_at", "TIMESTAMP")
+        add_column_if_missing(db, "users", "session_version", "INTEGER DEFAULT 0")
         add_column_if_missing(db, "users", "plan", "VARCHAR DEFAULT 'STARTER'")
         add_column_if_missing(db, "users", "plan_max_brokers", "INTEGER DEFAULT 1")
         add_column_if_missing(db, "users", "plan_max_leads", "INTEGER DEFAULT 100")
         add_column_if_missing(db, "users", "registered_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
         db.execute(text("UPDATE users SET email_verified = TRUE WHERE email_verified IS NULL"))
         db.execute(text("UPDATE users SET status = 'ACTIVE' WHERE status IS NULL OR status = ''"))
+        db.execute(text("UPDATE users SET session_version = 0 WHERE session_version IS NULL"))
         db.execute(text("UPDATE users SET plan = 'STARTER' WHERE plan IS NULL OR plan = ''"))
         db.execute(text("UPDATE users SET plan_max_brokers = 1 WHERE plan_max_brokers IS NULL"))
         db.execute(text("UPDATE users SET plan_max_leads = 100 WHERE plan_max_leads IS NULL"))
@@ -221,7 +228,10 @@ def create_database_tables():
             label="uq_users_email_lower",
         )
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_users_status ON users (status)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_users_status_changed_at ON users (status_changed_at)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_users_verification_token ON users (email_verification_token)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_user_lifecycle_events_user ON user_lifecycle_events (user_id, created_at)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_user_reactivation_requests_status ON user_reactivation_requests (status, created_at)")
 
         ensure_index(
             db,

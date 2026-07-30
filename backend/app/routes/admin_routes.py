@@ -1,23 +1,150 @@
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from app.auth.jwt_handler import get_db, require_root_user
+from app.auth.jwt_handler import get_db, require_admin_user, require_root_user
+from app.core.security import hash_password
+from app.models.lead import Lead
 from app.models.user import User
+from app.models.user_lifecycle import UserLifecycleEvent, UserReactivationRequest
 from app.schemas.auth_schema import UserApprovalRequest
-from app.schemas.user_schema import UserResponse
+from app.schemas.user_schema import (
+    UserAnonymizeRequest,
+    UserArchiveRequest,
+    UserLifecycleEventResponse,
+    UserLifecycleRequest,
+    UserReactivateRequest,
+    UserReactivationRequestResponse,
+    UserResponse,
+)
+from app.services.user_lifecycle_service import record_user_lifecycle_event, revoke_user_access, transition_user_status
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
+def require_reason(reason: str) -> str:
+    clean_reason = (reason or "").strip()
+    if len(clean_reason) < 3:
+        raise HTTPException(status_code=400, detail="Motivo obrigatorio")
+    return clean_reason[:2000]
+
+
+def visible_user_query(db: Session, actor: User):
+    if actor.role not in {"ROOT", "GERENTE"}:
+        raise HTTPException(status_code=403, detail="Tecnico nao pode executar acoes administrativas")
+    query = db.query(User)
+    if actor.role == "GERENTE":
+        query = query.filter(or_(User.manager_id == actor.id, User.id == actor.id))
+    return query
+
+
+def load_target_user(db: Session, user_id: int, actor: User) -> User:
+    user = visible_user_query(db, actor).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario nao encontrado")
+    if actor.role == "GERENTE" and user.id == actor.id:
+        raise HTTPException(status_code=403, detail="Supervisor nao pode alterar a propria conta")
+    return user
+
+
+def active_root_count(db: Session) -> int:
+    return (
+        db.query(func.count(User.id))
+        .filter(User.role == "ROOT", User.status == "ACTIVE", User.is_active.is_(True))
+        .scalar()
+        or 0
+    )
+
+
+def validate_role_and_manager(db: Session, actor: User, role: str, manager_id: int | None) -> tuple[str, int | None]:
+    role = role.upper()
+    if role not in {"GERENTE", "BROKER"}:
+        raise HTTPException(status_code=400, detail="Role deve ser GERENTE ou BROKER")
+    if actor.role == "GERENTE" and role != "BROKER":
+        raise HTTPException(status_code=403, detail="Supervisor pode reativar apenas tecnicos")
+    if role == "BROKER":
+        if actor.role == "GERENTE":
+            return role, actor.id
+        if manager_id is not None:
+            manager = (
+                db.query(User)
+                .filter(User.id == manager_id, User.role == "GERENTE", User.status == "ACTIVE", User.is_active.is_(True))
+                .first()
+            )
+            if not manager:
+                raise HTTPException(status_code=400, detail="Supervisor responsavel nao encontrado")
+        return role, manager_id
+    return role, None
+
+
+def handle_user_clients(db: Session, user: User, action: str) -> int:
+    active_clients = db.query(Lead).filter(Lead.assigned_to_user_id == user.id).all()
+    if active_clients and action.upper() != "UNASSIGN":
+        raise HTTPException(status_code=409, detail="Usuario possui clientes ativos. Reatribua ou libere antes de concluir.")
+    for lead in active_clients:
+        lead.assigned_to_user_id = None
+        lead.updated_at = datetime.utcnow()
+    return len(active_clients)
+
+
+def approve_pending_user(db: Session, user: User, actor: User, payload: UserApprovalRequest) -> User:
+    if not user.email_verified:
+        raise HTTPException(status_code=400, detail="Email ainda nao confirmado")
+    role, manager_id = validate_role_and_manager(db, actor, payload.role, payload.manager_id)
+    previous_status = user.status
+    user.role = role
+    user.manager_id = manager_id
+    user.plan = (payload.plan or user.plan or "STARTER").upper()
+    if payload.plan_max_brokers is not None:
+        user.plan_max_brokers = max(payload.plan_max_brokers, 0)
+    if payload.plan_max_leads is not None:
+        user.plan_max_leads = max(payload.plan_max_leads, 0)
+    user.status = "ACTIVE"
+    user.is_active = True
+    user.status_reason = "Cadastro aprovado"
+    user.status_changed_at = datetime.utcnow()
+    user.status_changed_by = actor.id
+    revoke_user_access(db, user, deactivate_push=True)
+    record_user_lifecycle_event(
+        db,
+        user=user,
+        actor=actor,
+        event_type="APPROVED",
+        from_status=previous_status,
+        to_status="ACTIVE",
+        reason="Cadastro aprovado",
+        metadata={"role": role, "manager_id": manager_id},
+    )
+    return user
+
+
+@router.get("/users", response_model=list[UserResponse])
+def list_users_by_status(
+    status: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_user),
+):
+    query = visible_user_query(db, actor)
+    if status:
+        normalized = status.strip().upper()
+        if normalized == "PENDING":
+            query = query.filter(User.status.in_(["PENDING", "PENDING_EMAIL", "PENDING_APPROVAL"]))
+        else:
+            query = query.filter(User.status == normalized)
+    return query.order_by(User.registered_at.desc(), User.id.desc()).all()
+
+
 @router.get("/users/pending", response_model=list[UserResponse])
 def pending_users(
     db: Session = Depends(get_db),
-    _: User = Depends(require_root_user),
+    actor: User = Depends(require_admin_user),
 ):
     return (
-        db.query(User)
-        .filter(User.status.in_(["PENDING_EMAIL", "PENDING_APPROVAL"]))
+        visible_user_query(db, actor)
+        .filter(User.status.in_(["PENDING", "PENDING_EMAIL", "PENDING_APPROVAL"]))
         .order_by(User.registered_at.desc(), User.id.desc())
         .all()
     )
@@ -28,61 +155,207 @@ def approve_user(
     user_id: int,
     payload: UserApprovalRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(require_root_user),
+    actor: User = Depends(require_admin_user),
 ):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Usuario nao encontrado")
-    if not user.email_verified:
-        raise HTTPException(status_code=400, detail="Email ainda nao confirmado")
-
-    role = payload.role.upper()
-    if role not in {"GERENTE", "BROKER"}:
-        raise HTTPException(status_code=400, detail="Role deve ser GERENTE ou BROKER")
-
-    if role == "BROKER" and payload.manager_id is not None:
-        manager = (
-            db.query(User)
-            .filter(
-                User.id == payload.manager_id,
-                User.role == "GERENTE",
-                User.is_active.is_(True),
-            )
-            .first()
-        )
-        if not manager:
-            raise HTTPException(status_code=400, detail="Gerente responsavel nao encontrado")
-
-    user.role = role
-    user.manager_id = payload.manager_id if role == "BROKER" else None
-    user.plan = (payload.plan or user.plan or "STARTER").upper()
-    if payload.plan_max_brokers is not None:
-        user.plan_max_brokers = max(payload.plan_max_brokers, 0)
-    if payload.plan_max_leads is not None:
-        user.plan_max_leads = max(payload.plan_max_leads, 0)
-    user.status = "ACTIVE"
-    user.is_active = True
+    user = load_target_user(db, user_id, actor)
+    approved = approve_pending_user(db, user, actor, payload)
     db.commit()
-    db.refresh(user)
-    return user
+    db.refresh(approved)
+    return approved
 
 
 @router.post("/users/{user_id}/suspend", response_model=UserResponse)
 def suspend_user(
     user_id: int,
+    payload: UserLifecycleRequest | None = None,
     db: Session = Depends(get_db),
-    root: User = Depends(require_root_user),
+    actor: User = Depends(require_admin_user),
 ):
-    if user_id == root.id:
-        raise HTTPException(status_code=400, detail="Root nao pode suspender a propria conta")
-
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Usuario nao encontrado")
-
-    user.status = "SUSPENDED"
-    user.is_active = False
-    user.last_seen_at = None
+    if user_id == actor.id:
+        raise HTTPException(status_code=400, detail="Administrador nao pode suspender a propria conta")
+    user = load_target_user(db, user_id, actor)
+    if user.role == "ROOT" and active_root_count(db) <= 1:
+        raise HTTPException(status_code=400, detail="Nao e possivel suspender o ultimo administrador principal ativo")
+    transition_user_status(
+        db,
+        user=user,
+        actor=actor,
+        to_status="SUSPENDED",
+        reason=require_reason(payload.reason if payload else "Suspensao administrativa"),
+        event_type="SUSPENDED",
+        is_active=False,
+    )
     db.commit()
     db.refresh(user)
     return user
+
+
+@router.post("/users/{user_id}/reactivate", response_model=UserResponse)
+def reactivate_user(
+    user_id: int,
+    payload: UserReactivateRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_user),
+):
+    user = load_target_user(db, user_id, actor)
+    if user.status not in {"SUSPENDED", "ARCHIVED", "PENDING", "PENDING_APPROVAL"}:
+        raise HTTPException(status_code=400, detail="Usuario nao esta em estado de reativacao")
+    role, manager_id = validate_role_and_manager(db, actor, payload.role, payload.manager_id)
+    user.role = role
+    user.manager_id = manager_id
+    if payload.plan:
+        user.plan = payload.plan.upper()
+    if payload.plan_max_brokers is not None:
+        user.plan_max_brokers = max(payload.plan_max_brokers, 0)
+    if payload.plan_max_leads is not None:
+        user.plan_max_leads = max(payload.plan_max_leads, 0)
+    if payload.reset_password:
+        user.password_hash = hash_password(f"reset-required-{user.id}-{datetime.utcnow().timestamp()}")
+    transition_user_status(
+        db,
+        user=user,
+        actor=actor,
+        to_status="ACTIVE",
+        reason=require_reason(payload.reason),
+        event_type="REACTIVATED",
+        is_active=True,
+        metadata={"role": role, "manager_id": manager_id, "reset_password": payload.reset_password},
+    )
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.post("/users/{user_id}/archive", response_model=UserResponse)
+def archive_user(
+    user_id: int,
+    payload: UserArchiveRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_user),
+):
+    if user_id == actor.id:
+        raise HTTPException(status_code=400, detail="Administrador nao pode arquivar a propria conta")
+    user = load_target_user(db, user_id, actor)
+    if user.role == "ROOT" and active_root_count(db) <= 1:
+        raise HTTPException(status_code=400, detail="Nao e possivel arquivar o ultimo administrador principal ativo")
+    released_clients = handle_user_clients(db, user, payload.client_action)
+    transition_user_status(
+        db,
+        user=user,
+        actor=actor,
+        to_status="ARCHIVED",
+        reason=require_reason(payload.reason),
+        event_type="ARCHIVED",
+        is_active=False,
+        metadata={"released_clients": released_clients},
+    )
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.post("/users/{user_id}/anonymize", response_model=UserResponse)
+def anonymize_user(
+    user_id: int,
+    payload: UserAnonymizeRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    if user_id == actor.id:
+        raise HTTPException(status_code=400, detail="Administrador nao pode anonimizar a propria conta")
+    if payload.confirmation != "ANONIMIZAR":
+        raise HTTPException(status_code=400, detail="Confirmacao invalida")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario nao encontrado")
+    if user.role == "ROOT" and active_root_count(db) <= 1:
+        raise HTTPException(status_code=400, detail="Nao e possivel anonimizar o ultimo administrador principal ativo")
+    released_clients = handle_user_clients(db, user, payload.client_action)
+    user.username = f"removed-user-{user.id}"
+    user.email = None
+    user.email_pessoal = None
+    user.telefone = None
+    user.full_name = "Usuario removido"
+    user.company = None
+    user.creci = None
+    user.data_nascimento = None
+    user.documento = None
+    user.observacoes = None
+    user.profile_photo_url = None
+    user.email_verification_token = None
+    user.email_verified = False
+    user.password_hash = hash_password(f"removed-{user.id}-{datetime.utcnow().timestamp()}")
+    transition_user_status(
+        db,
+        user=user,
+        actor=actor,
+        to_status="ANONYMIZED",
+        reason=require_reason(payload.reason),
+        event_type="ANONYMIZED",
+        is_active=False,
+        metadata={"released_clients": released_clients},
+    )
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.get("/users/{user_id}/events", response_model=list[UserLifecycleEventResponse])
+def user_lifecycle_events(
+    user_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_user),
+):
+    load_target_user(db, user_id, actor)
+    return (
+        db.query(UserLifecycleEvent)
+        .filter(UserLifecycleEvent.user_id == user_id)
+        .order_by(UserLifecycleEvent.created_at.desc(), UserLifecycleEvent.id.desc())
+        .all()
+    )
+
+
+@router.get("/reactivation-requests", response_model=list[UserReactivationRequestResponse])
+def list_reactivation_requests(
+    status: str | None = Query(default="PENDING"),
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_user),
+):
+    query = db.query(UserReactivationRequest).join(User, User.id == UserReactivationRequest.user_id)
+    if actor.role == "GERENTE":
+        query = query.filter(User.manager_id == actor.id)
+    if status:
+        query = query.filter(UserReactivationRequest.status == status.upper())
+    return query.order_by(UserReactivationRequest.created_at.desc(), UserReactivationRequest.id.desc()).all()
+
+
+@router.post("/reactivation-requests/{request_id}/reject", response_model=UserReactivationRequestResponse)
+def reject_reactivation_request(
+    request_id: int,
+    payload: UserLifecycleRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_user),
+):
+    request_row = db.query(UserReactivationRequest).filter(UserReactivationRequest.id == request_id).first()
+    if not request_row:
+        raise HTTPException(status_code=404, detail="Solicitacao nao encontrada")
+    load_target_user(db, request_row.user_id, actor)
+    request_row.status = "REJECTED"
+    request_row.reviewed_by = actor.id
+    request_row.reviewed_at = datetime.utcnow()
+    request_row.review_reason = require_reason(payload.reason)
+    user = db.query(User).filter(User.id == request_row.user_id).first()
+    if user:
+        record_user_lifecycle_event(
+            db,
+            user=user,
+            actor=actor,
+            event_type="REACTIVATION_REJECTED",
+            from_status=user.status,
+            to_status=user.status,
+            reason=request_row.review_reason,
+            metadata={"request_id": request_row.id},
+        )
+    db.commit()
+    db.refresh(request_row)
+    return request_row
