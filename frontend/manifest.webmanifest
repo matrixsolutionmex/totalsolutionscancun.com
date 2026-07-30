@@ -2,8 +2,11 @@
   "name": "Total Solutions CRM",
   "short_name": "Total Solutions",
   "description": "Sistema operacional de mantenimiento profesional.",
-  "start_url": "/",
+  "id": "/",
+  "start_url": "/?source=pwa",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#050b12",
   "theme_color": "#7ac943",
   "icons": [

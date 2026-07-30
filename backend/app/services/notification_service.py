@@ -7,9 +7,15 @@ from email.message import EmailMessage
 from sqlalchemy.orm import Session
 
 from app.models.lead import Lead
-from app.models.notification import EmailOutbox, Notification, NotificationPreference
+from app.models.notification import EmailOutbox, Notification, NotificationPreference, WebPushSubscription
 from app.models.service_order import ServiceOrder
 from app.models.user import User
+
+try:
+    from pywebpush import WebPushException, webpush
+except ImportError:  # pragma: no cover - production installs the optional push dependency.
+    WebPushException = Exception
+    webpush = None
 
 
 def actor_name(actor: User | None) -> str:
@@ -85,6 +91,103 @@ def create_notification(
     return notification
 
 
+def notification_push_payload(db: Session, notification: Notification) -> dict:
+    lead = db.query(Lead).filter(Lead.id == notification.lead_id).first() if notification.lead_id else None
+    order_number = service_order_number(db, lead.id) if lead else None
+    base_url = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+    action_url = notification.action_url or (f"/?lead_id={lead.id}" if lead else "/")
+    absolute_url = action_url
+    if action_url.startswith("/") and base_url:
+        absolute_url = f"{base_url}{action_url}"
+
+    return {
+        "title": notification.title,
+        "body": notification.message,
+        "url": absolute_url,
+        "lead_id": notification.lead_id,
+        "notification_id": notification.id,
+        "priority": notification.priority,
+        "order_number": order_number,
+        "tag": f"ts-notification-{notification.id}",
+    }
+
+
+def _web_push_ready() -> tuple[str, str, str] | None:
+    public_key = os.getenv("WEB_PUSH_VAPID_PUBLIC_KEY", "").strip()
+    private_key = os.getenv("WEB_PUSH_VAPID_PRIVATE_KEY", "").strip()
+    contact_email = os.getenv("WEB_PUSH_CONTACT_EMAIL", "").strip()
+    if not webpush or not public_key or not private_key or not contact_email:
+        return None
+    return public_key, private_key, contact_email
+
+
+def _web_push_status_code(exc: Exception) -> int | None:
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if status_code is None:
+        status_code = getattr(response, "status", None)
+    return int(status_code) if status_code else None
+
+
+def dispatch_web_push_for_notification_ids(db: Session, notification_ids: list[int] | None) -> int:
+    if not notification_ids:
+        return 0
+
+    vapid = _web_push_ready()
+    if not vapid:
+        return 0
+
+    _, private_key, contact_email = vapid
+    notifications = (
+        db.query(Notification)
+        .filter(Notification.id.in_(notification_ids))
+        .order_by(Notification.id.asc())
+        .all()
+    )
+    delivered = 0
+
+    for notification in notifications:
+        preferences = get_or_create_preferences(db, notification.recipient_user_id)
+        if not preferences.browser_enabled:
+            continue
+
+        payload = notification_push_payload(db, notification)
+        subscriptions = (
+            db.query(WebPushSubscription)
+            .filter(
+                WebPushSubscription.user_id == notification.recipient_user_id,
+                WebPushSubscription.active.is_(True),
+            )
+            .all()
+        )
+
+        for subscription in subscriptions:
+            try:
+                webpush(
+                    subscription_info={
+                        "endpoint": subscription.endpoint,
+                        "keys": {
+                            "p256dh": subscription.p256dh,
+                            "auth": subscription.auth,
+                        },
+                    },
+                    data=json.dumps(payload, ensure_ascii=False),
+                    vapid_private_key=private_key,
+                    vapid_claims={"sub": f"mailto:{contact_email}"},
+                )
+                subscription.last_used_at = datetime.utcnow()
+                delivered += 1
+            except WebPushException as exc:
+                if _web_push_status_code(exc) in {404, 410}:
+                    subscription.active = False
+                    subscription.disabled_at = datetime.utcnow()
+            except Exception:
+                continue
+
+    db.commit()
+    return delivered
+
+
 def enqueue_notification_email(
     db: Session,
     notification: Notification,
@@ -136,8 +239,9 @@ def notify_assignment_change(
     previous_user_id: int | None,
     new_user_id: int | None,
 ):
+    notification_ids: list[int] = []
     if previous_user_id == new_user_id:
-        return
+        return notification_ids
 
     order_number = service_order_number(db, lead.id)
     action_url = f"/?lead_id={lead.id}"
@@ -152,7 +256,7 @@ def notify_assignment_change(
         type_ = "lead_reassigned" if previous_user_id else "lead_assigned"
         title = "Nueva solicitud asignada" if type_ == "lead_assigned" else "Solicitud redistribuida"
         message = f"{actor_name(actor)} asigno {order_number} - {lead.nome or 'Cliente'} a su responsabilidad."
-        create_notification(
+        notification = create_notification(
             db,
             recipient=recipient,
             actor=actor,
@@ -166,11 +270,13 @@ def notify_assignment_change(
             metadata={"order_number": order_number, "urgency": lead.urgencia},
             enqueue_email=True,
         )
+        if notification:
+            notification_ids.append(notification.id)
 
     if previous_user_id and previous_user_id != new_user_id:
         recipient = users_by_id.get(previous_user_id)
         message = f"{actor_name(actor)} retiro {order_number} - {lead.nome or 'Cliente'} de su responsabilidad."
-        create_notification(
+        notification = create_notification(
             db,
             recipient=recipient,
             actor=actor,
@@ -184,6 +290,10 @@ def notify_assignment_change(
             metadata={"order_number": order_number},
             enqueue_email=False,
         )
+        if notification:
+            notification_ids.append(notification.id)
+
+    return notification_ids
 
 
 def process_email_outbox(db: Session, *, limit: int = 10) -> int:

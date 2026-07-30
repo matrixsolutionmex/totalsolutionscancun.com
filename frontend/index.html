@@ -4,8 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#22C55E">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Total Solutions">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Total Solutions CRM</title>
   <link rel="icon" href="/assets/assets/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/assets/assets/favicon.svg">
   <link rel="manifest" href="/assets/manifest.webmanifest">
   <style>
     :root {
@@ -1729,6 +1734,45 @@
       width: 130px;
     }
 
+    .notification-push-box {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+      border: 1px solid rgba(34, 197, 94, 0.22);
+      border-radius: 8px;
+      background: rgba(34, 197, 94, 0.06);
+    }
+
+    .notification-push-status {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .notification-push-status.active {
+      color: var(--green);
+    }
+
+    .notification-push-status.blocked {
+      color: #dc2626;
+    }
+
+    .notification-push-help {
+      display: none;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .notification-push-help.visible {
+      display: block;
+    }
+
+    .notification-push-actions {
+      display: grid;
+      gap: 8px;
+    }
+
     .notification-toast-stack {
       position: fixed;
       right: 20px;
@@ -1761,6 +1805,11 @@
       border-color: rgba(98, 255, 63, 0.35);
       background: linear-gradient(180deg, #0D1724 0%, #08111D 100%);
       box-shadow: 0 28px 78px rgba(0, 0, 0, 0.62), 0 0 0 1px rgba(98, 255, 63, 0.08);
+    }
+
+    body.theme-premium .notification-push-box {
+      border-color: rgba(98, 255, 63, 0.32);
+      background: rgba(98, 255, 63, 0.08);
     }
 
     body.theme-premium .notification-header,
@@ -1968,11 +2017,11 @@
       }
 
       .notification-panel {
-        top: 72px;
-        right: 12px;
-        left: 12px;
+        top: calc(72px + env(safe-area-inset-top));
+        right: max(12px, env(safe-area-inset-right));
+        left: max(12px, env(safe-area-inset-left));
         width: auto;
-        max-height: calc(100vh - 88px);
+        max-height: calc(100vh - 88px - env(safe-area-inset-bottom));
       }
 
       .nav {
@@ -2179,9 +2228,18 @@
         </div>
         <div class="notification-footer">
           <button class="ghost" id="reloadNotificationsButton" type="button">Actualizar</button>
-          <button class="ghost" id="enableBrowserNotificationsButton" type="button">Navegador</button>
         </div>
         <div class="notification-preferences">
+          <div class="notification-push-box">
+            <div class="notification-push-status" id="webPushStatus">Notificaciones del dispositivo no activadas.</div>
+            <div class="notification-push-help" id="webPushInstallHelp">
+              En iPhone, agregue Total Solutions a la pantalla de inicio y abra la aplicación instalada para activar notificaciones.
+            </div>
+            <div class="notification-push-actions">
+              <button class="ghost" id="enableBrowserNotificationsButton" type="button">Activar notificaciones en este dispositivo</button>
+              <button class="ghost hidden" id="disableBrowserNotificationsButton" type="button">Desactivar en este dispositivo</button>
+            </div>
+          </div>
           <label>
             <span>Sonido</span>
             <input id="notificationSoundEnabled" type="checkbox">
@@ -3448,6 +3506,13 @@
     let notificationTimer = null;
     let notificationInitialized = false;
     let seenNotificationIds = new Set();
+    let serviceWorkerRegistration = null;
+    let webPushState = {
+      supported: false,
+      subscribed: false,
+      vapid_public_key: null,
+      subscriptions: []
+    };
     let audioContext = null;
     let editingOwnProfile = false;
     let currentUser = { id: 1, username: "root", role: "ROOT" };
@@ -4280,6 +4345,158 @@
       }).join("");
     }
 
+    function supportsWebPush() {
+      return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+    }
+
+    function isIosDevice() {
+      return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    }
+
+    function isStandalonePwa() {
+      return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+    }
+
+    function urlBase64ToUint8Array(base64String) {
+      const padding = "=".repeat((4 - base64String.length % 4) % 4);
+      const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+      const rawData = window.atob(base64);
+      const outputArray = new Uint8Array(rawData.length);
+      for (let index = 0; index < rawData.length; index += 1) {
+        outputArray[index] = rawData.charCodeAt(index);
+      }
+      return outputArray;
+    }
+
+    async function registerServiceWorker() {
+      if (!("serviceWorker" in navigator)) return null;
+      if (serviceWorkerRegistration) return serviceWorkerRegistration;
+      serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+      return serviceWorkerRegistration;
+    }
+
+    function updateWebPushUi() {
+      const status = document.getElementById("webPushStatus");
+      const help = document.getElementById("webPushInstallHelp");
+      const enableButton = document.getElementById("enableBrowserNotificationsButton");
+      const disableButton = document.getElementById("disableBrowserNotificationsButton");
+      if (!status || !help || !enableButton || !disableButton) return;
+
+      status.className = "notification-push-status";
+      help.classList.remove("visible");
+      enableButton.disabled = false;
+      disableButton.classList.add("hidden");
+
+      if (!supportsWebPush()) {
+        status.textContent = "Este navegador no soporta notificaciones push.";
+        enableButton.disabled = true;
+        return;
+      }
+
+      if (isIosDevice() && !isStandalonePwa()) {
+        status.textContent = "Instale la aplicación para activar notificaciones.";
+        help.classList.add("visible");
+        enableButton.disabled = true;
+        return;
+      }
+
+      if (Notification.permission === "denied") {
+        status.textContent = "Permiso bloqueado. Active las notificaciones en la configuración del navegador.";
+        status.classList.add("blocked");
+        enableButton.disabled = true;
+        return;
+      }
+
+      if (!webPushState.supported || !webPushState.vapid_public_key) {
+        status.textContent = "Web Push aún no está configurado en el servidor.";
+        enableButton.disabled = true;
+        return;
+      }
+
+      if (webPushState.subscribed) {
+        status.textContent = "Notificaciones activadas en este dispositivo.";
+        status.classList.add("active");
+        enableButton.textContent = "Notificaciones activadas";
+        enableButton.disabled = true;
+        disableButton.classList.remove("hidden");
+        return;
+      }
+
+      status.textContent = "Reciba alertas aunque esta pestaña esté cerrada.";
+      enableButton.textContent = "Activar notificaciones en este dispositivo";
+    }
+
+    async function loadWebPushState() {
+      if (!accessToken || !supportsWebPush()) {
+        updateWebPushUi();
+        return;
+      }
+      const response = await apiFetch(`${API_BASE}/web-push/state`);
+      if (response.ok) {
+        webPushState = { ...webPushState, ...await response.json() };
+      }
+      updateWebPushUi();
+    }
+
+    async function enableWebPushForDevice() {
+      if (!supportsWebPush()) {
+        alert("Este navegador no soporta notificaciones push.");
+        return;
+      }
+      if (isIosDevice() && !isStandalonePwa()) {
+        updateWebPushUi();
+        return;
+      }
+      await loadWebPushState();
+      if (!webPushState.vapid_public_key) {
+        alert("Web Push no está configurado en el servidor.");
+        return;
+      }
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        await saveNotificationPreferences({ browser_enabled: false });
+        updateWebPushUi();
+        return;
+      }
+
+      const registration = await registerServiceWorker();
+      if (!registration) return;
+
+      const existingSubscription = await registration.pushManager.getSubscription();
+      const subscription = existingSubscription || await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(webPushState.vapid_public_key)
+      });
+      const payload = subscription.toJSON();
+      await apiFetch(`${API_BASE}/web-push/subscriptions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          endpoint: payload.endpoint,
+          keys: payload.keys,
+          device_label: navigator.userAgent.includes("Mobile") ? "Celular" : "Navegador"
+        })
+      });
+      await saveNotificationPreferences({ browser_enabled: true });
+      await loadWebPushState();
+    }
+
+    async function disableWebPushForDevice() {
+      const registration = await registerServiceWorker();
+      const subscription = registration ? await registration.pushManager.getSubscription() : null;
+      if (subscription) {
+        await apiFetch(`${API_BASE}/web-push/subscriptions/deactivate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ endpoint: subscription.endpoint })
+        });
+        await subscription.unsubscribe();
+      }
+      await saveNotificationPreferences({ browser_enabled: false });
+      webPushState = { ...webPushState, subscribed: false, subscriptions: [] };
+      updateWebPushUi();
+    }
+
     function syncNotificationPreferenceControls() {
       const soundEnabled = document.getElementById("notificationSoundEnabled");
       const volume = document.getElementById("notificationVolume");
@@ -4392,6 +4609,8 @@
         clearInterval(notificationTimer);
       }
       loadNotificationPreferences().catch(() => {});
+      registerServiceWorker().catch(() => {});
+      loadWebPushState().catch(() => {});
       loadNotifications({ announce: false }).catch(() => {});
       notificationTimer = setInterval(() => {
         loadNotifications({ announce: true }).catch(() => {});
@@ -4425,6 +4644,18 @@
       await markNotificationRead(notificationId);
       document.getElementById("notificationPanel")?.classList.remove("open");
       await openLeadFromRequest(leadId);
+    }
+
+    async function openLeadFromUrlIfPresent() {
+      const params = new URLSearchParams(window.location.search);
+      const leadId = params.get("lead_id");
+      if (!leadId) return;
+      await openLeadFromRequest(leadId);
+      params.delete("lead_id");
+      params.delete("source");
+      const nextQuery = params.toString();
+      const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`;
+      window.history.replaceState({}, "", nextUrl);
     }
 
     function evidenceCategoryLabel(type) {
@@ -5545,6 +5776,7 @@
       startBrokerLeadWatch();
       startBoardClock();
       startNotificationPolling();
+      openLeadFromUrlIfPresent().catch(() => {});
     }
 
     function startBrokerLeadWatch() {
@@ -5665,6 +5897,8 @@
       cachedNotifications = [];
       notificationInitialized = false;
       seenNotificationIds = new Set();
+      webPushState = { supported: false, subscribed: false, vapid_public_key: null, subscriptions: [] };
+      updateWebPushUi();
       setBodyState({ loggedIn: false });
       boardEl.innerHTML = "";
       totalText.textContent = "Cargando clientes...";
@@ -6655,13 +6889,11 @@
     document.getElementById("notificationEmailEnabled").addEventListener("change", (event) => {
       saveNotificationPreferences({ email_enabled: event.target.checked }).catch(() => {});
     });
-    document.getElementById("enableBrowserNotificationsButton").addEventListener("click", async () => {
-      if (!("Notification" in window)) {
-        alert("Este navegador no soporta notificaciones.");
-        return;
-      }
-      const permission = await Notification.requestPermission();
-      await saveNotificationPreferences({ browser_enabled: permission === "granted" });
+    document.getElementById("enableBrowserNotificationsButton").addEventListener("click", () => {
+      enableWebPushForDevice().catch((error) => alert(error.message || "No fue posible activar notificaciones."));
+    });
+    document.getElementById("disableBrowserNotificationsButton").addEventListener("click", () => {
+      disableWebPushForDevice().catch((error) => alert(error.message || "No fue posible desactivar notificaciones."));
     });
     document.addEventListener("click", (event) => {
       const center = document.getElementById("notificationCenter");

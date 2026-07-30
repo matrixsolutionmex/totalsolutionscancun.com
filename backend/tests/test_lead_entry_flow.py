@@ -2,6 +2,7 @@ import json
 import re
 from io import BytesIO
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -17,7 +18,7 @@ from app.models.deletion_request import DeletionRequest
 from app.models.lead import Lead
 from app.models.lead_document import LeadDocument
 from app.models.lead_event import LeadEvent
-from app.models.notification import EmailOutbox, Notification, NotificationPreference
+from app.models.notification import EmailOutbox, Notification, NotificationPreference, WebPushSubscription
 from app.models.service_order import ServiceOrder
 from app.models.user import User
 from app.routes.integration_routes import create_integration_lead, require_integration_token
@@ -30,8 +31,18 @@ from app.routes.lead_document_routes import (
     upload_lead_document,
 )
 from app.routes.lead_routes import assign_lead, create_lead, list_leads, service_dossier_pdf, update_lead, update_lead_pipeline
-from app.routes.notification_routes import list_notifications, mark_all_notifications_read, mark_notification_read, unread_notification_count
+from app.routes.notification_routes import (
+    deactivate_web_push_subscription,
+    deactivate_web_push_subscription_by_id,
+    get_web_push_state,
+    list_notifications,
+    mark_all_notifications_read,
+    mark_notification_read,
+    register_web_push_subscription,
+    unread_notification_count,
+)
 from app.schemas.lead_schema import IntegrationLeadCreate, LeadAssignUpdate, LeadCreate, LeadPipelineUpdate, LeadUpdate
+from app.schemas.notification_schema import WebPushDeactivateRequest, WebPushKeys, WebPushSubscriptionCreate
 
 
 @pytest.fixture()
@@ -53,6 +64,7 @@ def db():
             Notification.__table__,
             NotificationPreference.__table__,
             EmailOutbox.__table__,
+            WebPushSubscription.__table__,
         ],
     )
     session = sessionmaker(bind=engine)()
@@ -240,6 +252,88 @@ def test_assignment_creates_isolated_persistent_notification_and_email_outbox(db
     assert unread_notification_count(db, manager)["unread"] == 1
     assert mark_all_notifications_read(db, technician)["updated"] == 1
     assert unread_notification_count(db, technician)["unread"] == 0
+
+
+def test_web_push_subscription_lifecycle_is_bound_to_current_user(db, monkeypatch):
+    monkeypatch.setenv("WEB_PUSH_VAPID_PUBLIC_KEY", "public-key")
+    root = make_user(db, "root", "ROOT")
+    technician = make_user(db, "tecnico-push", "BROKER")
+
+    payload = WebPushSubscriptionCreate(
+        endpoint="https://push.example.test/device-1",
+        keys=WebPushKeys(p256dh="client-public-key", auth="client-auth-secret"),
+        device_label="Celular tecnico",
+    )
+    subscription = register_web_push_subscription(payload, db, technician, "UnitTest/1.0")
+
+    assert subscription.device_label == "Celular tecnico"
+    state = get_web_push_state(db, technician)
+    assert state.supported is True
+    assert state.subscribed is True
+    assert len(state.subscriptions) == 1
+
+    with pytest.raises(HTTPException) as blocked:
+        deactivate_web_push_subscription_by_id(subscription.id, db, root)
+    assert blocked.value.status_code == 404
+
+    result = deactivate_web_push_subscription(
+        WebPushDeactivateRequest(endpoint="https://push.example.test/device-1"),
+        db,
+        technician,
+    )
+    assert result["deactivated"] is True
+    assert get_web_push_state(db, technician).subscribed is False
+
+
+def test_web_push_delivery_failure_does_not_rollback_assignment(db, monkeypatch):
+    from app.services import notification_service
+
+    monkeypatch.setenv("WEB_PUSH_VAPID_PUBLIC_KEY", "public-key")
+    monkeypatch.setenv("WEB_PUSH_VAPID_PRIVATE_KEY", "private-key")
+    monkeypatch.setenv("WEB_PUSH_CONTACT_EMAIL", "admin@totalsolutions.test")
+
+    class GonePush(Exception):
+        response = type("Response", (), {"status_code": 410})()
+
+    def failing_webpush(**_kwargs):
+        raise GonePush()
+
+    monkeypatch.setattr(notification_service, "webpush", failing_webpush)
+    monkeypatch.setattr(notification_service, "WebPushException", GonePush)
+
+    root = make_user(db, "root", "ROOT")
+    technician = make_user(db, "tecnico-push-failure", "BROKER")
+    subscription = WebPushSubscription(
+        user_id=technician.id,
+        endpoint="https://push.example.test/gone",
+        p256dh="client-public-key",
+        auth="client-auth-secret",
+        active=True,
+    )
+    db.add(subscription)
+    db.add(NotificationPreference(user_id=technician.id, browser_enabled=True))
+    db.commit()
+
+    lead = create_lead(LeadCreate(nombre="Cliente Push", telefono="9981231234"), db, root)
+    assigned = assign_lead(lead.id, LeadAssignUpdate(assigned_to_user_id=technician.id), db, root)
+
+    assert assigned.assigned_to_user_id == technician.id
+    db.refresh(subscription)
+    assert subscription.active is False
+
+
+def test_pwa_manifest_and_service_worker_are_present():
+    project_root = Path(__file__).resolve().parents[2]
+    manifest = json.loads((project_root / "frontend" / "manifest.webmanifest").read_text())
+    service_worker = (project_root / "frontend" / "sw.js").read_text()
+
+    assert manifest["name"] == "Total Solutions CRM"
+    assert manifest["display"] == "standalone"
+    assert manifest["scope"] == "/"
+    assert manifest["start_url"].startswith("/")
+    assert "push" in service_worker
+    assert "showNotification" in service_worker
+    assert "fetch" not in service_worker
 
 
 def test_integration_blocks_duplicates_by_external_id_phone_and_email(db):

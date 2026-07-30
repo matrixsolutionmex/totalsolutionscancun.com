@@ -1,18 +1,23 @@
 import json
+import os
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.auth.jwt_handler import get_current_user as get_actor, get_db
-from app.models.notification import Notification
+from app.models.notification import Notification, WebPushSubscription
 from app.models.user import User
 from app.schemas.notification_schema import (
     NotificationPreferenceResponse,
     NotificationPreferenceUpdate,
     NotificationResponse,
+    WebPushDeactivateRequest,
+    WebPushStateResponse,
+    WebPushSubscriptionCreate,
+    WebPushSubscriptionResponse,
 )
 from app.services.notification_service import get_or_create_preferences
 
@@ -177,3 +182,106 @@ def update_notification_preferences(
 @router.post("/notification-preferences/test-sound")
 def test_notification_sound(actor: User = Depends(get_actor)):
     return {"ok": True, "message": "Reproduza o som no navegador"}
+
+
+def web_push_subscription_payload(subscription: WebPushSubscription) -> WebPushSubscriptionResponse:
+    return WebPushSubscriptionResponse(
+        id=subscription.id,
+        device_label=subscription.device_label,
+        active=subscription.active,
+        created_at=subscription.created_at,
+        last_used_at=subscription.last_used_at,
+    )
+
+
+@router.get("/web-push/state", response_model=WebPushStateResponse)
+def get_web_push_state(
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_actor),
+):
+    vapid_public_key = os.getenv("WEB_PUSH_VAPID_PUBLIC_KEY", "").strip()
+    subscriptions = (
+        db.query(WebPushSubscription)
+        .filter(WebPushSubscription.user_id == actor.id, WebPushSubscription.active.is_(True))
+        .order_by(WebPushSubscription.created_at.desc(), WebPushSubscription.id.desc())
+        .all()
+    )
+    return WebPushStateResponse(
+        supported=bool(vapid_public_key),
+        subscribed=bool(subscriptions),
+        vapid_public_key=vapid_public_key or None,
+        subscriptions=[web_push_subscription_payload(subscription) for subscription in subscriptions],
+    )
+
+
+@router.post("/web-push/subscriptions", response_model=WebPushSubscriptionResponse)
+def register_web_push_subscription(
+    payload: WebPushSubscriptionCreate,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_actor),
+    user_agent: str | None = Header(default=None),
+):
+    endpoint = payload.endpoint.strip()
+    p256dh = payload.keys.p256dh.strip()
+    auth = payload.keys.auth.strip()
+    if not endpoint or not p256dh or not auth:
+        raise HTTPException(status_code=400, detail="Assinatura web push incompleta")
+
+    subscription = db.query(WebPushSubscription).filter(WebPushSubscription.endpoint == endpoint).first()
+    if not subscription:
+        subscription = WebPushSubscription(endpoint=endpoint, user_id=actor.id)
+        db.add(subscription)
+
+    subscription.user_id = actor.id
+    subscription.p256dh = p256dh
+    subscription.auth = auth
+    subscription.device_label = payload.device_label or "Este dispositivo"
+    subscription.user_agent = user_agent
+    subscription.active = True
+    subscription.disabled_at = None
+
+    preferences = get_or_create_preferences(db, actor.id)
+    preferences.browser_enabled = True
+    db.commit()
+    db.refresh(subscription)
+    return web_push_subscription_payload(subscription)
+
+
+@router.post("/web-push/subscriptions/deactivate")
+def deactivate_web_push_subscription(
+    payload: WebPushDeactivateRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_actor),
+):
+    subscription = (
+        db.query(WebPushSubscription)
+        .filter(WebPushSubscription.endpoint == payload.endpoint, WebPushSubscription.user_id == actor.id)
+        .first()
+    )
+    if not subscription:
+        return {"deactivated": False}
+
+    subscription.active = False
+    subscription.disabled_at = func.now()
+    db.commit()
+    return {"deactivated": True}
+
+
+@router.delete("/web-push/subscriptions/{subscription_id}")
+def deactivate_web_push_subscription_by_id(
+    subscription_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_actor),
+):
+    subscription = (
+        db.query(WebPushSubscription)
+        .filter(WebPushSubscription.id == subscription_id, WebPushSubscription.user_id == actor.id)
+        .first()
+    )
+    if not subscription:
+        raise HTTPException(status_code=404, detail="Dispositivo nao encontrado")
+
+    subscription.active = False
+    subscription.disabled_at = func.now()
+    db.commit()
+    return {"deactivated": True}

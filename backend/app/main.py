@@ -252,6 +252,7 @@ def create_database_tables():
         ensure_index(db, "CREATE UNIQUE INDEX IF NOT EXISTS uq_service_orders_order_number ON service_orders (order_number)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_service_orders_status ON service_orders (status)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_service_orders_property_id ON service_orders (property_id)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_web_push_subscriptions_user_active ON web_push_subscriptions (user_id, active)")
         ensure_index(
             db,
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_leads_external_source_id ON leads (external_source, external_id) WHERE external_source IS NOT NULL AND external_source <> '' AND external_id IS NOT NULL AND external_id <> ''",
@@ -289,6 +290,22 @@ def home():
         "sistema": "Total Solutions CRM",
         "mensagem": "CRM iniciado com sucesso"
     }
+
+
+@app.get("/sw.js", include_in_schema=False)
+def service_worker():
+    service_worker_file = frontend_dir / "sw.js"
+    if service_worker_file.exists():
+        return FileResponse(
+            service_worker_file,
+            media_type="application/javascript",
+            headers={
+                "Cache-Control": "no-cache",
+                "Service-Worker-Allowed": "/",
+            },
+        )
+
+    return {"status": "service-worker-not-found"}
 
 
 @app.get("/health")

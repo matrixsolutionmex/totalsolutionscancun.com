@@ -39,3 +39,33 @@ class NotificationPreferenceUpdate(BaseModel):
     urgent_enabled: bool | None = None
     quiet_hours_start: str | None = None
     quiet_hours_end: str | None = None
+
+
+class WebPushKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class WebPushSubscriptionCreate(BaseModel):
+    endpoint: str
+    keys: WebPushKeys
+    device_label: str | None = Field(default=None, max_length=120)
+
+
+class WebPushDeactivateRequest(BaseModel):
+    endpoint: str
+
+
+class WebPushSubscriptionResponse(BaseModel):
+    id: int
+    device_label: str | None = None
+    active: bool
+    created_at: datetime
+    last_used_at: datetime | None = None
+
+
+class WebPushStateResponse(BaseModel):
+    supported: bool
+    subscribed: bool
+    vapid_public_key: str | None = None
+    subscriptions: list[WebPushSubscriptionResponse] = Field(default_factory=list)

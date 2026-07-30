@@ -36,7 +36,7 @@ from app.services.lead_entry_service import (
     validate_responsible,
 )
 from app.services.service_order_service import ensure_service_order, sync_service_order_from_lead
-from app.services.notification_service import notify_assignment_change
+from app.services.notification_service import dispatch_web_push_for_notification_ids, notify_assignment_change
 
 router = APIRouter(prefix="/leads", tags=["leads"])
 
@@ -225,7 +225,7 @@ def create_lead(
         "ENTRADA",
         f"OS {service_order.order_number} criada para cliente com origem {lead.origen or 'OTRO'}",
     )
-    notify_assignment_change(
+    pending_push_notification_ids = notify_assignment_change(
         db,
         lead=lead,
         actor=actor,
@@ -233,6 +233,7 @@ def create_lead(
         new_user_id=lead.assigned_to_user_id,
     )
     db.commit()
+    dispatch_web_push_for_notification_ids(db, pending_push_notification_ids)
     db.refresh(lead)
     return lead
 
@@ -536,7 +537,7 @@ def assign_lead(
         "ATRIBUICAO",
         f"Responsavel alterado de {previous_broker_id or 'sin asignar'} para {payload.assigned_to_user_id or 'sin asignar'}",
     )
-    notify_assignment_change(
+    pending_push_notification_ids = notify_assignment_change(
         db,
         lead=lead,
         actor=actor,
@@ -544,6 +545,7 @@ def assign_lead(
         new_user_id=payload.assigned_to_user_id,
     )
     db.commit()
+    dispatch_web_push_for_notification_ids(db, pending_push_notification_ids)
     db.refresh(lead)
     return lead
 
@@ -567,7 +569,7 @@ def return_lead_to_bank(
     service_order = ensure_service_order(db, lead, actor=actor)
     sync_service_order_from_lead(db, service_order, lead, actor=actor)
     add_lead_event(db, lead, actor, "BANCO", "Lead voltou para o banco")
-    notify_assignment_change(
+    pending_push_notification_ids = notify_assignment_change(
         db,
         lead=lead,
         actor=actor,
@@ -575,6 +577,7 @@ def return_lead_to_bank(
         new_user_id=None,
     )
     db.commit()
+    dispatch_web_push_for_notification_ids(db, pending_push_notification_ids)
     db.refresh(lead)
     return lead
 
@@ -705,7 +708,7 @@ def update_lead(
             "ATRIBUICAO",
             f"Responsavel alterado de {assignment_previous_id or 'sin asignar'} para {assignment_new_id or 'sin asignar'}",
         )
-        notify_assignment_change(
+        pending_push_notification_ids = notify_assignment_change(
             db,
             lead=lead,
             actor=actor,
@@ -713,5 +716,7 @@ def update_lead(
             new_user_id=assignment_new_id,
         )
     db.commit()
+    if assignment_previous_id != assignment_new_id:
+        dispatch_web_push_for_notification_ids(db, pending_push_notification_ids)
     db.refresh(lead)
     return lead
