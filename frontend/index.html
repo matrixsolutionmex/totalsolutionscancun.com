@@ -2262,17 +2262,6 @@
             <option value="pt">Português - Brasil</option>
           </select>
           <select id="loginTheme" title="Apariencia"></select>
-          <button class="auth-switch identity-provider-button" id="googleLoginButton" type="button">
-            <span class="identity-provider-icon" aria-hidden="true">G</span>
-            <span id="googleLoginLabel">Continuar con Google</span>
-            <span class="identity-provider-status" id="googleLoginStatus">pendiente</span>
-          </button>
-          <button class="auth-switch identity-provider-button" id="appleLoginButton" type="button">
-            <span class="identity-provider-icon apple" aria-hidden="true"></span>
-            <span id="appleLoginLabel">Continuar con Apple</span>
-            <span class="identity-provider-status" id="appleLoginStatus">pendiente</span>
-          </button>
-          <div class="auth-divider">ou</div>
           <input id="loginUser" placeholder="Usuario" data-i18n-placeholder="login_username_placeholder" autocomplete="off" autocapitalize="none" spellcheck="false">
           <input id="loginPassword" placeholder="Contraseña" data-i18n-placeholder="login_password_placeholder" type="password" autocomplete="off">
           <div class="turnstile-slot" id="loginTurnstile"></div>
@@ -2329,6 +2318,17 @@
         <h1 id="registerTitle">Crear cuenta</h1>
         <div class="subtitle" id="registerSubtitle">Regístrate para solicitar acceso a la operación.</div>
         <div class="login-form">
+          <button class="auth-switch identity-provider-button" id="googleLoginButton" type="button">
+            <span class="identity-provider-icon" aria-hidden="true">G</span>
+            <span id="googleLoginLabel">Registrarse con Google</span>
+            <span class="identity-provider-status" id="googleLoginStatus">pendiente</span>
+          </button>
+          <button class="auth-switch identity-provider-button" id="appleLoginButton" type="button">
+            <span class="identity-provider-icon apple" aria-hidden="true"></span>
+            <span id="appleLoginLabel">Registrarse con Apple</span>
+            <span class="identity-provider-status" id="appleLoginStatus">pendiente</span>
+          </button>
+          <div class="auth-divider">ou</div>
           <input id="registerFullName" placeholder="Nombre completo" autocomplete="name">
           <input id="registerEmail" type="email" placeholder="E-mail" autocomplete="email">
           <input id="registerCompany" placeholder="Empresa" autocomplete="organization">
@@ -3132,11 +3132,11 @@
       const status = document.getElementById("googleLoginStatus");
       const configured = Boolean(authPublicConfig.google_client_id);
       button.disabled = !configured;
-      label.textContent = configured ? "Continuar con Google" : "Google pendiente de configuración";
+      label.textContent = configured ? "Registrarse con Google" : "Google pendiente de configuración";
       status.textContent = configured ? "activo" : "pendiente";
       button.title = configured
-        ? "Entrar com Google"
-        : "Configure GOOGLE_CLIENT_ID no Railway para ativar esta opção.";
+        ? "Solicitar acceso con Google"
+        : "Configure GOOGLE_CLIENT_ID no Railway para ativar o cadastro com Google.";
     }
 
     function updateAppleProviderButton() {
@@ -3146,7 +3146,7 @@
       button.disabled = true;
       label.textContent = "Apple pendiente de configuración";
       status.textContent = "pendiente";
-      button.title = "Sign in with Apple exige Apple Developer, Services ID e chave privada Apple.";
+      button.title = "Cadastro com Apple exige Apple Developer, Services ID e chave privada Apple.";
     }
 
     function loadTurnstileScript() {
