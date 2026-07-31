@@ -1,9 +1,20 @@
+self.TS_SW_VERSION = "2026-07-31-auth-ui-v4";
+
 self.addEventListener("install", (event) => {
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    caches.keys().then((keys) => Promise.all(keys.map((key) => caches.delete(key)))).then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener("fetch", (event) => {
+  const request = event.request;
+  if (request.mode === "navigate" || new URL(request.url).pathname === "/") {
+    event.respondWith(fetch(request, { cache: "no-store" }));
+  }
 });
 
 self.addEventListener("push", (event) => {

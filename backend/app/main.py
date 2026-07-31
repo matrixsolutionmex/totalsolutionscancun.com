@@ -87,6 +87,11 @@ app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
+    if request.url.path in {"/", "/sw.js"}:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        response.headers["CDN-Cache-Control"] = "no-store"
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("X-Frame-Options", "DENY")
@@ -332,7 +337,15 @@ def create_database_tables():
 def home():
     frontend_index = frontend_dir / "index.html"
     if frontend_index.exists():
-        return FileResponse(frontend_index)
+        return FileResponse(
+            frontend_index,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+                "CDN-Cache-Control": "no-store",
+            },
+        )
 
     return {
         "status": "online",
@@ -349,7 +362,10 @@ def service_worker():
             service_worker_file,
             media_type="application/javascript",
             headers={
-                "Cache-Control": "no-cache",
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+                "CDN-Cache-Control": "no-store",
                 "Service-Worker-Allowed": "/",
             },
         )
