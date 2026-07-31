@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.models.notification import WebPushSubscription
 from app.models.user import User
 from app.models.user_lifecycle import UserLifecycleEvent
+from app.core.auth_security import revoke_sessions_for_user
 
 
 def normalize_user_status(status: str | None) -> str:
@@ -18,6 +19,7 @@ def normalize_user_status(status: str | None) -> str:
 def revoke_user_access(db: Session, user: User, *, deactivate_push: bool = True) -> None:
     user.session_version = int(user.session_version or 0) + 1
     user.last_seen_at = None
+    revoke_sessions_for_user(db, user.id, "user_access_revoked")
     if deactivate_push:
         (
             db.query(WebPushSubscription)

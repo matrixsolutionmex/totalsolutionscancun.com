@@ -6,18 +6,39 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.requests import Request
+from starlette.responses import Response
 from sqlalchemy.pool import StaticPool
 
 from app.auth.jwt_handler import get_current_user, verify_access_token
-from app.auth.routes import login, register, request_reactivation, verify_email
+from app.auth.routes import (
+    google_login,
+    login,
+    request_password_recovery,
+    register,
+    request_reactivation,
+    reset_password,
+    start_mfa_setup_from_challenge,
+    verify_email,
+)
+from app.core.auth_security import hotp, totp_counter, verify_mfa_challenge_token
 from app.core.security import hash_password
 from app.database.connection import Base
+from app.models.auth_security import AuthAuditEvent, MfaRecoveryCode, PasswordResetToken, UserIdentity, UserSession
 from app.models.lead import Lead
 from app.models.notification import EmailOutbox, Notification, NotificationPreference, WebPushSubscription
 from app.models.user import User
 from app.models.user_lifecycle import UserLifecycleEvent, UserReactivationRequest
 from app.routes.admin_routes import anonymize_user, approve_user, archive_user, reactivate_user, suspend_user
-from app.schemas.auth_schema import AuthLoginRequest, ReactivationRequestCreate, RegisterRequest, UserApprovalRequest
+from app.schemas.auth_schema import (
+    AuthLoginRequest,
+    GoogleLoginRequest,
+    MfaSetupChallengeStartRequest,
+    PasswordRecoveryRequest,
+    PasswordResetRequest,
+    ReactivationRequestCreate,
+    RegisterRequest,
+    UserApprovalRequest,
+)
 from app.schemas.user_schema import UserAnonymizeRequest, UserArchiveRequest, UserLifecycleRequest, UserReactivateRequest
 
 
@@ -38,9 +59,30 @@ def create_test_session():
             WebPushSubscription.__table__,
             UserLifecycleEvent.__table__,
             UserReactivationRequest.__table__,
+            UserIdentity.__table__,
+            UserSession.__table__,
+            PasswordResetToken.__table__,
+            MfaRecoveryCode.__table__,
+            AuthAuditEvent.__table__,
         ],
     )
     return sessionmaker(bind=engine)()
+
+
+def make_request(path="/auth/login"):
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "scheme": "http",
+            "server": ("testserver", 80),
+            "path": path,
+            "root_path": "",
+            "query_string": b"",
+            "headers": [(b"user-agent", b"pytest")],
+            "client": ("127.0.0.1", 12345),
+        }
+    )
 
 
 def make_user(session, username, role="BROKER", *, manager_id=None, status="ACTIVE", is_active=True, email=None):
@@ -122,6 +164,8 @@ def test_public_registration_requires_verification_and_root_approval(monkeypatch
 
     authenticated = login(
         AuthLoginRequest(email="broker@example.com", password="broker-password"),
+        make_request(),
+        Response(),
         session,
     )
     claims = verify_access_token(authenticated.access_token)
@@ -148,7 +192,7 @@ def test_suspension_blocks_login_revokes_token_and_disables_push(monkeypatch):
     )
     session.commit()
 
-    authenticated = login(AuthLoginRequest(email=technician.email, password="user-password"), session)
+    authenticated = login(AuthLoginRequest(email=technician.email, password="user-password"), make_request(), Response(), session)
     old_token = authenticated.access_token
 
     suspended = suspend_user(
@@ -164,12 +208,12 @@ def test_suspension_blocks_login_revokes_token_and_disables_push(monkeypatch):
     assert session.query(WebPushSubscription).filter_by(user_id=technician.id, active=True).count() == 0
 
     with pytest.raises(HTTPException) as login_blocked:
-        login(AuthLoginRequest(email=technician.email, password="user-password"), session)
+        login(AuthLoginRequest(email=technician.email, password="user-password"), make_request(), Response(), session)
     assert login_blocked.value.status_code == 403
 
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=old_token)
     with pytest.raises(HTTPException) as token_blocked:
-        get_current_user(credentials=credentials, db=session)
+        get_current_user(make_request(), credentials=credentials, db=session)
     assert token_blocked.value.status_code == 401
     assert session.query(UserLifecycleEvent).filter_by(user_id=technician.id, event_type="SUSPENDED").count() == 1
 
@@ -198,7 +242,7 @@ def test_reactivation_allows_new_login_and_records_audit(monkeypatch):
     assert reactivated.status == "ACTIVE"
     assert reactivated.is_active is True
     assert reactivated.session_version == 2
-    authenticated = login(AuthLoginRequest(email=technician.email, password="user-password"), session)
+    authenticated = login(AuthLoginRequest(email=technician.email, password="user-password"), make_request(), Response(), session)
     assert verify_access_token(authenticated.access_token)["session_version"] == 2
     assert session.query(UserLifecycleEvent).filter_by(user_id=technician.id, event_type="REACTIVATED").count() == 1
 
@@ -221,16 +265,19 @@ def test_suspended_email_creates_reactivation_request_without_duplicate(monkeypa
     with pytest.raises(HTTPException) as active_retry:
         request_reactivation(
             ReactivationRequestCreate(email=root.email, reason="Preciso acessar"),
+            make_request("/auth/reactivation-request"),
             session,
         )
     assert active_retry.value.status_code == 409
 
     response = request_reactivation(
         ReactivationRequestCreate(email="blocked@example.com", reason="Retorno para nova escala"),
+        make_request("/auth/reactivation-request"),
         session,
     )
     duplicate_response = request_reactivation(
         ReactivationRequestCreate(email="blocked@example.com", reason="Retorno para nova escala"),
+        make_request("/auth/reactivation-request"),
         session,
     )
 
@@ -353,4 +400,109 @@ def test_role_limits_last_root_and_archive_client_handling(monkeypatch):
     assert archived.status == "ARCHIVED"
     assert session.query(Lead).filter(Lead.assigned_to_user_id == technician_a.id).count() == 0
 
+    session.close()
+
+
+def test_turnstile_required_and_rate_limit_are_enforced(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("AUTH_SECURITY_TEST_MODE", "true")
+    monkeypatch.setenv("TURNSTILE_SECRET_KEY", "test-secret")
+    session = create_test_session()
+    make_user(session, "rate-user", email="rate@example.com")
+
+    with pytest.raises(HTTPException) as missing_turnstile:
+        login(AuthLoginRequest(email="rate@example.com", password="user-password"), make_request(), Response(), session)
+    assert missing_turnstile.value.status_code == 403
+
+    authenticated = login(
+        AuthLoginRequest(email="rate@example.com", password="user-password", turnstile_token="test:login"),
+        make_request(),
+        Response(),
+        session,
+    )
+    assert authenticated.access_token
+
+    for _ in range(8):
+        with pytest.raises(HTTPException):
+            login(
+                AuthLoginRequest(email="rate@example.com", password="wrong", turnstile_token="test:login"),
+                make_request(),
+                Response(),
+                session,
+            )
+    with pytest.raises(HTTPException) as limited:
+        login(
+            AuthLoginRequest(email="rate@example.com", password="wrong", turnstile_token="test:login"),
+            make_request(),
+            Response(),
+            session,
+        )
+    assert limited.value.status_code == 429
+    assert session.query(AuthAuditEvent).filter(AuthAuditEvent.event_type.like("TURNSTILE%")).count() >= 1
+    session.close()
+
+
+def test_google_login_never_auto_links_existing_email(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("AUTH_SECURITY_TEST_MODE", "true")
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "google-client-id")
+    session = create_test_session()
+    existing = make_user(session, "existing-google", email="same@example.com")
+
+    google_payload = {
+        "iss": "https://accounts.google.com",
+        "aud": "google-client-id",
+        "exp": 4102444800,
+        "sub": "google-sub-1",
+        "email": "same@example.com",
+        "email_verified": True,
+        "name": "Same User",
+    }
+    with pytest.raises(HTTPException) as blocked:
+        google_login(GoogleLoginRequest(id_token=__import__("json").dumps(google_payload)), make_request("/auth/google"), Response(), session)
+    assert blocked.value.status_code == 409
+    assert session.query(UserIdentity).count() == 0
+
+    google_payload["email"] = "new-google@example.com"
+    google_payload["sub"] = "google-sub-2"
+    response = google_login(GoogleLoginRequest(id_token=__import__("json").dumps(google_payload)), make_request("/auth/google"), Response(), session)
+    assert response.access_token is None
+    pending = session.query(User).filter(User.email == "new-google@example.com").one()
+    assert pending.status == "PENDING_APPROVAL"
+    assert pending.is_active is False
+    assert session.query(UserIdentity).filter_by(user_id=pending.id, provider="google").count() == 1
+    assert existing.status == "ACTIVE"
+    session.close()
+
+
+def test_root_requires_mfa_challenge_and_totp_setup(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("AUTH_SECURITY_TEST_MODE", "true")
+    session = create_test_session()
+    root = make_user(session, "root-mfa", "ROOT", email="root-mfa@example.com")
+
+    first_step = login(AuthLoginRequest(email=root.email, password="user-password"), make_request(), Response(), session)
+    assert first_step.access_token is None
+    assert first_step.mfa_required is True
+    assert first_step.mfa_setup_required is True
+    assert verify_mfa_challenge_token(first_step.mfa_challenge_token) == root.id
+
+    setup = start_mfa_setup_from_challenge(
+        MfaSetupChallengeStartRequest(challenge_token=first_step.mfa_challenge_token),
+        session,
+    )
+    code = hotp(setup.secret, totp_counter())
+    from app.auth.routes import confirm_mfa_setup_from_challenge
+    from app.schemas.auth_schema import MfaSetupChallengeConfirmRequest
+
+    final = confirm_mfa_setup_from_challenge(
+        MfaSetupChallengeConfirmRequest(challenge_token=first_step.mfa_challenge_token, code=code),
+        make_request("/auth/mfa/setup/confirm-challenge"),
+        Response(),
+        session,
+    )
+    assert final.access_token
+    session.refresh(root)
+    assert root.mfa_enabled is True
+    assert session.query(MfaRecoveryCode).filter_by(user_id=root.id, used_at=None).count() == 10
     session.close()

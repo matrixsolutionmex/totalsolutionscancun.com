@@ -4,7 +4,7 @@ import threading
 import time
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -15,7 +15,7 @@ from app.core.security import hash_password
 from app.core.storage import UPLOADS_DIR
 from app.auth.routes import router as auth_router
 from app.database.connection import Base, SessionLocal, engine
-from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, deletion_request, notification, user_lifecycle
+from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, deletion_request, notification, user_lifecycle, auth_security
 from app.models.lead import Lead
 from app.models.service_order import ServiceOrder
 from app.models.user import User
@@ -49,7 +49,12 @@ def startup_log(message: str):
 def cors_origins():
     configured = os.getenv("CORS_ORIGINS", "").strip()
     if not configured:
-        return ["*"]
+        public_base_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+        if public_base_url:
+            return [public_base_url]
+        if os.getenv("ENVIRONMENT", "").lower() == "production":
+            return ["https://totalsolutionscancun.com"]
+        return ["http://127.0.0.1:8010", "http://localhost:8010"]
     return [origin.strip() for origin in configured.split(",") if origin.strip()]
 
 
@@ -77,6 +82,30 @@ if frontend_dir.exists():
     app.mount("/assets", StaticFiles(directory=frontend_dir), name="assets")
 
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com https://accounts.google.com; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data: blob: https://lh3.googleusercontent.com; "
+        "connect-src 'self' https://challenges.cloudflare.com https://accounts.google.com; "
+        "frame-src https://challenges.cloudflare.com https://accounts.google.com; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; form-action 'self'",
+    )
+    if request.url.scheme == "https":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
 
 
 def ensure_index(db, primary_sql: str, *, fallback_sql: str | None = None, label: str = ""):
@@ -199,6 +228,10 @@ def create_database_tables():
         add_column_if_missing(db, "users", "archived_at", "TIMESTAMP")
         add_column_if_missing(db, "users", "anonymized_at", "TIMESTAMP")
         add_column_if_missing(db, "users", "session_version", "INTEGER DEFAULT 0")
+        add_column_if_missing(db, "users", "mfa_enabled", "BOOLEAN DEFAULT FALSE")
+        add_column_if_missing(db, "users", "mfa_secret_encrypted", "VARCHAR")
+        add_column_if_missing(db, "users", "mfa_confirmed_at", "TIMESTAMP")
+        add_column_if_missing(db, "users", "mfa_last_counter", "INTEGER")
         add_column_if_missing(db, "users", "plan", "VARCHAR DEFAULT 'STARTER'")
         add_column_if_missing(db, "users", "plan_max_brokers", "INTEGER DEFAULT 1")
         add_column_if_missing(db, "users", "plan_max_leads", "INTEGER DEFAULT 100")
@@ -206,6 +239,7 @@ def create_database_tables():
         db.execute(text("UPDATE users SET email_verified = TRUE WHERE email_verified IS NULL"))
         db.execute(text("UPDATE users SET status = 'ACTIVE' WHERE status IS NULL OR status = ''"))
         db.execute(text("UPDATE users SET session_version = 0 WHERE session_version IS NULL"))
+        db.execute(text("UPDATE users SET mfa_enabled = FALSE WHERE mfa_enabled IS NULL"))
         db.execute(text("UPDATE users SET plan = 'STARTER' WHERE plan IS NULL OR plan = ''"))
         db.execute(text("UPDATE users SET plan_max_brokers = 1 WHERE plan_max_brokers IS NULL"))
         db.execute(text("UPDATE users SET plan_max_leads = 100 WHERE plan_max_leads IS NULL"))
@@ -232,6 +266,11 @@ def create_database_tables():
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_users_verification_token ON users (email_verification_token)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_user_lifecycle_events_user ON user_lifecycle_events (user_id, created_at)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_user_reactivation_requests_status ON user_reactivation_requests (status, created_at)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_user_identities_user ON user_identities (user_id)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_user_sessions_user_active ON user_sessions (user_id, revoked_at, expires_at)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_auth_audit_events_user ON auth_audit_events (user_id, created_at)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens (user_id, expires_at)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_mfa_recovery_codes_user ON mfa_recovery_codes (user_id, used_at)")
 
         ensure_index(
             db,

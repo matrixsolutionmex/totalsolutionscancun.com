@@ -5,7 +5,11 @@ import os
 from passlib.context import CryptContext
 
 
-password_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+password_context = CryptContext(
+    schemes=["argon2", "bcrypt"],
+    deprecated=["bcrypt"],
+    argon2__type="ID",
+)
 
 
 def hash_password(password: str) -> str:
@@ -13,7 +17,7 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    if password_hash.startswith("$2"):
+    if password_hash.startswith("$argon2") or password_hash.startswith("$2"):
         try:
             return password_context.verify(password, password_hash)
         except (TypeError, ValueError):
@@ -41,4 +45,6 @@ def verify_legacy_password(password: str, password_hash: str) -> bool:
 
 
 def password_needs_upgrade(password_hash: str) -> bool:
-    return not password_hash.startswith("$2")
+    if not password_hash.startswith("$argon2"):
+        return True
+    return password_context.needs_update(password_hash)

@@ -3,13 +3,14 @@ import os
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
 from app.database.connection import SessionLocal
 from app.models.user import User
+from app.core.auth_security import validate_session_cookie
 
 
 logger = logging.getLogger(__name__)
@@ -76,11 +77,13 @@ def user_can_access(user: User) -> bool:
 
 
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     x_actor_id: int | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> User:
     user_id = None
+    payload = None
 
     if credentials:
         if credentials.scheme.lower() != "bearer":
@@ -95,6 +98,10 @@ def get_current_user(
         and os.getenv("ALLOW_LEGACY_ACTOR_HEADER", "false").lower() == "true"
     ):
         user_id = x_actor_id
+    else:
+        cookie_user = validate_session_cookie(db, request)
+        if cookie_user:
+            user_id = cookie_user.id
 
     if user_id is None:
         raise HTTPException(
@@ -106,7 +113,7 @@ def get_current_user(
     user = db.query(User).filter(User.id == user_id).first()
     if not user or not user_can_access(user):
         raise HTTPException(status_code=401, detail="Usuario inativo ou nao autorizado")
-    if credentials and int(payload.get("session_version", -1)) != int(user.session_version or 0):
+    if payload and int(payload.get("session_version", -1)) != int(user.session_version or 0):
         raise HTTPException(status_code=401, detail="Sessao revogada")
 
     return user

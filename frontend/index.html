@@ -2131,14 +2131,42 @@
             <option value="pt">Português - Brasil</option>
           </select>
           <select id="loginTheme" title="Apariencia"></select>
+          <button class="auth-switch" id="googleLoginButton" type="button">Continuar com Google</button>
+          <div class="login-security-note">ou</div>
           <input id="loginUser" placeholder="Usuario" data-i18n-placeholder="login_username_placeholder" autocomplete="off" autocapitalize="none" spellcheck="false">
           <input id="loginPassword" placeholder="Contraseña" data-i18n-placeholder="login_password_placeholder" type="password" autocomplete="off">
+          <div class="turnstile-slot" id="loginTurnstile"></div>
           <button id="loginButton" type="submit" data-i18n="login_submit">Ingresar</button>
         </div>
         <div class="login-security-note" id="loginNote" data-i18n="login_authorized_only">Acceso permitido solo para personal autorizado.</div>
+        <button class="auth-switch" id="showRecoveryButton" type="button">Recuperar acceso</button>
         <button class="auth-switch" id="showRegisterButton" type="button" data-i18n="login_create_account">Crear cuenta</button>
         <button class="auth-switch" id="showReactivationButton" type="button">Solicitar reactivación</button>
         <div class="auth-status" id="loginStatus" aria-live="polite"></div>
+      </form>
+      <form class="login-card hidden" id="mfaForm" autocomplete="off">
+        <div class="brand-lockup compact" aria-label="Total Solutions">
+          <img class="brand-logo" src="/assets/assets/favicon.svg" alt="">
+          <div class="brand-wordmark">
+            <span>Total</span>
+            <span>Solutions</span>
+            <small>Segundo factor</small>
+          </div>
+        </div>
+        <h1>Verificación MFA</h1>
+        <div class="subtitle" id="mfaSubtitle">Informe el código de su autenticador.</div>
+        <div class="login-form">
+          <input id="mfaCode" inputmode="numeric" autocomplete="one-time-code" placeholder="Código de 6 dígitos o recovery code">
+          <div class="login-security-note hidden" id="mfaSetupBox">
+            <strong>Configurar autenticador</strong><br>
+            <span>Clave manual:</span>
+            <code id="mfaManualSecret"></code><br>
+            <small id="mfaOtpUrl"></small>
+          </div>
+          <button id="mfaButton" type="submit">Verificar</button>
+        </div>
+        <button class="auth-switch" id="backToLoginFromMfaButton" type="button">Volver al acceso</button>
+        <div class="auth-status" id="mfaStatus" aria-live="polite"></div>
       </form>
       <form class="login-card hidden" id="registerForm" autocomplete="off">
         <div class="brand-lockup compact" aria-label="Total Solutions">
@@ -2163,6 +2191,7 @@
           </select>
           <input id="registerPassword" type="password" placeholder="Contraseña" autocomplete="new-password">
           <input id="registerPasswordConfirm" type="password" placeholder="Confirmar contraseña" autocomplete="new-password">
+          <div class="turnstile-slot" id="registerTurnstile"></div>
           <button id="registerButton" type="submit">Solicitar acceso</button>
         </div>
         <button class="auth-switch" id="backToLoginButton" type="button">Volver al acceso</button>
@@ -2182,10 +2211,30 @@
         <div class="login-form">
           <input id="reactivationEmail" type="email" placeholder="E-mail" autocomplete="email">
           <textarea id="reactivationReason" placeholder="Justificación breve" rows="4"></textarea>
+          <div class="turnstile-slot" id="reactivationTurnstile"></div>
           <button id="reactivationButton" type="submit">Enviar solicitud</button>
         </div>
         <button class="auth-switch" id="backToLoginFromReactivationButton" type="button">Volver al acceso</button>
         <div class="auth-status" id="reactivationStatus" aria-live="polite"></div>
+      </form>
+      <form class="login-card hidden" id="recoveryForm" autocomplete="off">
+        <div class="brand-lockup compact" aria-label="Total Solutions">
+          <img class="brand-logo" src="/assets/assets/favicon.svg" alt="">
+          <div class="brand-wordmark">
+            <span>Total</span>
+            <span>Solutions</span>
+            <small>Recuperación</small>
+          </div>
+        </div>
+        <h1>Recuperar acceso</h1>
+        <div class="subtitle">Informe su e-mail. Si la cuenta existe, enviaremos las instrucciones.</div>
+        <div class="login-form">
+          <input id="recoveryEmail" type="email" placeholder="E-mail" autocomplete="email">
+          <div class="turnstile-slot" id="recoveryTurnstile"></div>
+          <button id="recoveryButton" type="submit">Enviar instrucciones</button>
+        </div>
+        <button class="auth-switch" id="backToLoginFromRecoveryButton" type="button">Volver al acceso</button>
+        <div class="auth-status" id="recoveryStatus" aria-live="polite"></div>
       </form>
     </div>
   </section>
@@ -2886,11 +2935,20 @@
       ? "http://127.0.0.1:8010"
       : window.location.origin;
     let accessToken = localStorage.getItem("totalsolutions_access_token") || "";
+    let csrfToken = document.cookie.split("; ").find((row) => row.startsWith("ts_csrf="))?.split("=")[1] || "";
+    let authPublicConfig = { turnstile_required: false, turnstile_site_key: null, google_client_id: null };
+    let turnstileWidgets = {};
+    let pendingMfaChallenge = "";
+    let pendingMfaSetupRequired = false;
 
     function authHeaders(headers = {}) {
       const authenticatedHeaders = new Headers(headers);
       if (accessToken) {
         authenticatedHeaders.set("Authorization", `Bearer ${accessToken}`);
+      }
+      csrfToken = document.cookie.split("; ").find((row) => row.startsWith("ts_csrf="))?.split("=")[1] || csrfToken;
+      if (csrfToken) {
+        authenticatedHeaders.set("X-CSRF-Token", decodeURIComponent(csrfToken));
       }
       return authenticatedHeaders;
     }
@@ -2898,8 +2956,69 @@
     function apiFetch(url, options = {}) {
       return fetch(url, {
         ...options,
+        credentials: "include",
         headers: authHeaders(options.headers)
       });
+    }
+
+    async function loadAuthPublicConfig() {
+      try {
+        const response = await fetch(`${API_BASE}/auth/public-config`, { credentials: "include" });
+        if (response.ok) {
+          authPublicConfig = await response.json();
+        }
+      } catch (_error) {
+        authPublicConfig = { turnstile_required: false, turnstile_site_key: null, google_client_id: null };
+      }
+      document.getElementById("googleLoginButton").classList.toggle("hidden", !authPublicConfig.google_client_id);
+      if (authPublicConfig.turnstile_site_key) {
+        loadTurnstileScript();
+      }
+    }
+
+    function loadTurnstileScript() {
+      if (document.getElementById("turnstileScript")) return;
+      const script = document.createElement("script");
+      script.id = "turnstileScript";
+      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      script.async = true;
+      script.defer = true;
+      script.onload = renderTurnstileWidgets;
+      document.head.appendChild(script);
+    }
+
+    function renderTurnstileWidgets() {
+      if (!window.turnstile || !authPublicConfig.turnstile_site_key) return;
+      [
+        ["login", "loginTurnstile"],
+        ["register", "registerTurnstile"],
+        ["reactivation", "reactivationTurnstile"],
+        ["password_recovery", "recoveryTurnstile"]
+      ].forEach(([action, elementId]) => {
+        const element = document.getElementById(elementId);
+        if (element && !turnstileWidgets[action]) {
+          turnstileWidgets[action] = window.turnstile.render(element, {
+            sitekey: authPublicConfig.turnstile_site_key,
+            action
+          });
+        }
+      });
+    }
+
+    function turnstileToken(action) {
+      if (!authPublicConfig.turnstile_required) return null;
+      const widget = turnstileWidgets[action];
+      if (window.turnstile && widget !== undefined) {
+        return window.turnstile.getResponse(widget);
+      }
+      return null;
+    }
+
+    function resetTurnstile(action) {
+      const widget = turnstileWidgets[action];
+      if (window.turnstile && widget !== undefined) {
+        window.turnstile.reset(widget);
+      }
     }
 
     async function responseMessage(response, fallback) {
@@ -2923,14 +3042,20 @@
     function showLoginForm() {
       document.getElementById("registerForm").classList.add("hidden");
       document.getElementById("reactivationForm").classList.add("hidden");
+      document.getElementById("recoveryForm").classList.add("hidden");
+      document.getElementById("mfaForm").classList.add("hidden");
       document.getElementById("loginForm").classList.remove("hidden");
       setAuthStatus("registerStatus");
       setAuthStatus("reactivationStatus");
+      setAuthStatus("recoveryStatus");
+      setAuthStatus("mfaStatus");
     }
 
     function showRegisterForm() {
       document.getElementById("loginForm").classList.add("hidden");
       document.getElementById("reactivationForm").classList.add("hidden");
+      document.getElementById("recoveryForm").classList.add("hidden");
+      document.getElementById("mfaForm").classList.add("hidden");
       document.getElementById("registerForm").classList.remove("hidden");
       setAuthStatus("loginStatus");
     }
@@ -2938,9 +3063,38 @@
     function showReactivationForm() {
       document.getElementById("loginForm").classList.add("hidden");
       document.getElementById("registerForm").classList.add("hidden");
+      document.getElementById("recoveryForm").classList.add("hidden");
+      document.getElementById("mfaForm").classList.add("hidden");
       document.getElementById("reactivationForm").classList.remove("hidden");
       document.getElementById("reactivationEmail").value = document.getElementById("loginUser").value.trim();
       setAuthStatus("loginStatus");
+    }
+
+    function showRecoveryForm() {
+      document.getElementById("loginForm").classList.add("hidden");
+      document.getElementById("registerForm").classList.add("hidden");
+      document.getElementById("reactivationForm").classList.add("hidden");
+      document.getElementById("mfaForm").classList.add("hidden");
+      document.getElementById("recoveryForm").classList.remove("hidden");
+      document.getElementById("recoveryEmail").value = document.getElementById("loginUser").value.trim();
+      setAuthStatus("loginStatus");
+    }
+
+    function showMfaForm({ challengeToken, setupRequired, message }) {
+      pendingMfaChallenge = challengeToken || "";
+      pendingMfaSetupRequired = Boolean(setupRequired);
+      document.getElementById("loginForm").classList.add("hidden");
+      document.getElementById("registerForm").classList.add("hidden");
+      document.getElementById("reactivationForm").classList.add("hidden");
+      document.getElementById("recoveryForm").classList.add("hidden");
+      document.getElementById("mfaForm").classList.remove("hidden");
+      document.getElementById("mfaSubtitle").textContent = message || "Informe el código de su autenticador.";
+      document.getElementById("mfaSetupBox").classList.toggle("hidden", !setupRequired);
+      document.getElementById("mfaCode").value = "";
+      setAuthStatus("mfaStatus");
+      if (setupRequired) {
+        startMfaSetupFromChallenge().catch((error) => setAuthStatus("mfaStatus", error.message || "No fue posible iniciar MFA.", "error"));
+      }
     }
     const stages = [
       "NOVO LEAD",
@@ -5895,18 +6049,31 @@
 
       const response = await fetch(`${API_BASE}/auth/login`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email, password, turnstile_token: turnstileToken("login") })
       });
 
       if (!response.ok) {
         setAuthStatus("loginStatus", await responseMessage(response, t("loginInvalid")), "error");
+        resetTurnstile("login");
         return;
       }
 
       const data = await response.json();
+      if (data.mfa_required) {
+        showMfaForm({
+          challengeToken: data.mfa_challenge_token,
+          setupRequired: data.mfa_setup_required,
+          message: data.message
+        });
+        resetTurnstile("login");
+        return;
+      }
       accessToken = data.access_token;
-      localStorage.setItem("totalsolutions_access_token", accessToken);
+      if (accessToken) {
+        localStorage.setItem("totalsolutions_access_token", accessToken);
+      }
       await enterDashboard(data.user);
     }
 
@@ -5930,12 +6097,14 @@
           company: document.getElementById("registerCompany").value.trim() || null,
           phone: document.getElementById("registerPhone").value.trim() || null,
           plan: document.getElementById("registerPlan").value,
-          password
+          password,
+          turnstile_token: turnstileToken("register")
         })
       });
 
       if (!response.ok) {
         setAuthStatus("registerStatus", await responseMessage(response, t("registrationError")), "error");
+        resetTurnstile("register");
         return;
       }
 
@@ -5955,6 +6124,7 @@
         status.appendChild(verificationLink);
       }
       document.getElementById("registerForm").reset();
+      resetTurnstile("register");
     }
 
     async function requestReactivation(event) {
@@ -5969,18 +6139,127 @@
 
       const response = await fetch(`${API_BASE}/auth/reactivation-request`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, reason })
+        body: JSON.stringify({ email, reason, turnstile_token: turnstileToken("reactivation") })
       });
 
       if (!response.ok) {
         setAuthStatus("reactivationStatus", await responseMessage(response, "No fue posible registrar la solicitud."), "error");
+        resetTurnstile("reactivation");
         return;
       }
 
       const data = await response.json();
       setAuthStatus("reactivationStatus", data.message || "Solicitud registrada para aprobación.", "success");
       document.getElementById("reactivationReason").value = "";
+      resetTurnstile("reactivation");
+    }
+
+    async function requestPasswordRecovery(event) {
+      event.preventDefault();
+      setAuthStatus("recoveryStatus");
+      const email = document.getElementById("recoveryEmail").value.trim();
+      const response = await fetch(`${API_BASE}/auth/password-recovery/request`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, turnstile_token: turnstileToken("password_recovery") })
+      });
+      if (!response.ok) {
+        setAuthStatus("recoveryStatus", await responseMessage(response, "No fue posible solicitar recuperación."), "error");
+        resetTurnstile("password_recovery");
+        return;
+      }
+      const data = await response.json();
+      setAuthStatus("recoveryStatus", data.message || "Solicitud recibida.", "success");
+      resetTurnstile("password_recovery");
+    }
+
+    async function startMfaSetupFromChallenge() {
+      const response = await fetch(`${API_BASE}/auth/mfa/setup/start-challenge`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ challenge_token: pendingMfaChallenge })
+      });
+      if (!response.ok) {
+        throw new Error(await responseMessage(response, "No fue posible configurar MFA."));
+      }
+      const data = await response.json();
+      document.getElementById("mfaManualSecret").textContent = data.secret;
+      document.getElementById("mfaOtpUrl").textContent = data.otpauth_url;
+    }
+
+    async function verifyMfa(event) {
+      event.preventDefault();
+      setAuthStatus("mfaStatus");
+      const code = document.getElementById("mfaCode").value.trim();
+      const endpoint = pendingMfaSetupRequired ? "/auth/mfa/setup/confirm-challenge" : "/auth/mfa/verify";
+      const response = await fetch(`${API_BASE}${endpoint}`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ challenge_token: pendingMfaChallenge, code })
+      });
+      if (!response.ok) {
+        setAuthStatus("mfaStatus", await responseMessage(response, "Código inválido."), "error");
+        return;
+      }
+      const data = await response.json();
+      accessToken = data.access_token;
+      if (accessToken) {
+        localStorage.setItem("totalsolutions_access_token", accessToken);
+      }
+      await enterDashboard(data.user);
+    }
+
+    async function googleLogin() {
+      if (!authPublicConfig.google_client_id) {
+        setAuthStatus("loginStatus", "Google Sign-In no está configurado.", "error");
+        return;
+      }
+      if (!window.google?.accounts?.id) {
+        const script = document.createElement("script");
+        script.src = "https://accounts.google.com/gsi/client";
+        script.async = true;
+        script.defer = true;
+        script.onload = googleLogin;
+        document.head.appendChild(script);
+        return;
+      }
+      window.google.accounts.id.initialize({
+        client_id: authPublicConfig.google_client_id,
+        callback: async (credentialResponse) => {
+          const response = await fetch(`${API_BASE}/auth/google`, {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id_token: credentialResponse.credential, turnstile_token: turnstileToken("login") })
+          });
+          if (!response.ok) {
+            setAuthStatus("loginStatus", await responseMessage(response, "No fue posible entrar con Google."), "error");
+            return;
+          }
+          const data = await response.json();
+          if (data.mfa_required) {
+            showMfaForm({
+              challengeToken: data.mfa_challenge_token,
+              setupRequired: data.mfa_setup_required,
+              message: data.message
+            });
+            return;
+          }
+          if (!data.access_token) {
+            setAuthStatus("loginStatus", data.message || "Cadastro recebido e aguardando aprovação.", "success");
+            return;
+          }
+          accessToken = data.access_token;
+          localStorage.setItem("totalsolutions_access_token", accessToken);
+          await enterDashboard(data.user);
+        }
+      });
+      window.google.accounts.id.prompt();
     }
 
     async function logout() {
@@ -7131,12 +7410,18 @@
     document.getElementById("newClientButton").addEventListener("click", openNewLeadModal);
     document.getElementById("seedBrokerButton").addEventListener("click", sendToBroker);
     document.getElementById("loginForm").addEventListener("submit", login);
+    document.getElementById("mfaForm").addEventListener("submit", verifyMfa);
     document.getElementById("registerForm").addEventListener("submit", register);
     document.getElementById("reactivationForm").addEventListener("submit", requestReactivation);
+    document.getElementById("recoveryForm").addEventListener("submit", requestPasswordRecovery);
+    document.getElementById("googleLoginButton").addEventListener("click", googleLogin);
     document.getElementById("showRegisterButton").addEventListener("click", showRegisterForm);
     document.getElementById("showReactivationButton").addEventListener("click", showReactivationForm);
+    document.getElementById("showRecoveryButton").addEventListener("click", showRecoveryForm);
     document.getElementById("backToLoginButton").addEventListener("click", showLoginForm);
     document.getElementById("backToLoginFromReactivationButton").addEventListener("click", showLoginForm);
+    document.getElementById("backToLoginFromRecoveryButton").addEventListener("click", showLoginForm);
+    document.getElementById("backToLoginFromMfaButton").addEventListener("click", showLoginForm);
     document.getElementById("logoutButton").addEventListener("click", logout);
     document.getElementById("supportButton").addEventListener("click", openSupport);
     document.getElementById("notificationBell").addEventListener("click", () => {
@@ -7276,6 +7561,7 @@
     applyTheme(getStoredTheme(null), { persist: false, user: null });
     bindEvidenceUploadArea();
     applyLanguage(currentLanguage);
+    loadAuthPublicConfig().catch(() => {});
 
     function hideSplash() {
       const splash = document.getElementById("appSplash");
