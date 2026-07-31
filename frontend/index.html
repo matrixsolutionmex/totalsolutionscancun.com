@@ -253,6 +253,11 @@
       line-height: 1;
     }
 
+    .identity-provider-icon.apple {
+      background: #111827;
+      font-size: 18px;
+    }
+
     .identity-provider-status {
       font-size: 11px;
       color: var(--muted);
@@ -2198,6 +2203,11 @@
             <span id="googleLoginLabel">Continuar con Google</span>
             <span class="identity-provider-status" id="googleLoginStatus">pendiente</span>
           </button>
+          <button class="auth-switch identity-provider-button" id="appleLoginButton" type="button">
+            <span class="identity-provider-icon apple" aria-hidden="true"></span>
+            <span id="appleLoginLabel">Continuar con Apple</span>
+            <span class="identity-provider-status" id="appleLoginStatus">pendiente</span>
+          </button>
           <div class="auth-divider">ou</div>
           <input id="loginUser" placeholder="Usuario" data-i18n-placeholder="login_username_placeholder" autocomplete="off" autocapitalize="none" spellcheck="false">
           <input id="loginPassword" placeholder="Contraseña" data-i18n-placeholder="login_password_placeholder" type="password" autocomplete="off">
@@ -3037,6 +3047,7 @@
         authPublicConfig = { turnstile_required: false, turnstile_site_key: null, google_client_id: null };
       }
       updateGoogleProviderButton();
+      updateAppleProviderButton();
       if (authPublicConfig.turnstile_site_key) {
         loadTurnstileScript();
       }
@@ -3053,6 +3064,16 @@
       button.title = configured
         ? "Entrar com Google"
         : "Configure GOOGLE_CLIENT_ID no Railway para ativar esta opção.";
+    }
+
+    function updateAppleProviderButton() {
+      const button = document.getElementById("appleLoginButton");
+      const label = document.getElementById("appleLoginLabel");
+      const status = document.getElementById("appleLoginStatus");
+      button.disabled = true;
+      label.textContent = "Apple pendiente de configuración";
+      status.textContent = "pendiente";
+      button.title = "Sign in with Apple exige Apple Developer, Services ID e chave privada Apple.";
     }
 
     function loadTurnstileScript() {
