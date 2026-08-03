@@ -10,13 +10,6 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-self.addEventListener("fetch", (event) => {
-  const request = event.request;
-  if (request.mode === "navigate" || new URL(request.url).pathname === "/") {
-    event.respondWith(fetch(request, { cache: "no-store" }));
-  }
-});
-
 self.addEventListener("push", (event) => {
   let payload = {};
   try {

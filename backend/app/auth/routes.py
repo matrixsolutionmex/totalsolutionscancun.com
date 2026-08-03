@@ -29,6 +29,7 @@ from app.core.auth_security import (
     verify_mfa_challenge_token,
     verify_totp_code,
     verify_turnstile_or_403,
+    decrypt_secret,
     encrypt_secret,
     now_utc,
 )
@@ -367,11 +368,14 @@ def verify_mfa(payload: MfaVerifyRequest, request: Request, response: Response, 
 
 @router.post("/mfa/setup/start", response_model=MfaSetupStartResponse)
 def start_mfa_setup(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    secret = generate_totp_secret()
-    user.mfa_secret_encrypted = encrypt_secret(secret)
-    user.mfa_enabled = False
-    user.mfa_confirmed_at = None
-    db.commit()
+    if user.mfa_secret_encrypted and not user.mfa_enabled:
+        secret = decrypt_secret(user.mfa_secret_encrypted)
+    else:
+        secret = generate_totp_secret()
+        user.mfa_secret_encrypted = encrypt_secret(secret)
+        user.mfa_enabled = False
+        user.mfa_confirmed_at = None
+        db.commit()
     return MfaSetupStartResponse(secret=secret, otpauth_url=otpauth_url(user, secret))
 
 
@@ -381,11 +385,15 @@ def start_mfa_setup_from_challenge(payload: MfaSetupChallengeStartRequest, db: S
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=401, detail="Desafio MFA invalido")
-    secret = generate_totp_secret()
-    user.mfa_secret_encrypted = encrypt_secret(secret)
-    user.mfa_enabled = False
-    user.mfa_confirmed_at = None
-    db.commit()
+    if user.mfa_secret_encrypted and not user.mfa_enabled and not payload.reset_secret:
+        secret = decrypt_secret(user.mfa_secret_encrypted)
+    else:
+        secret = generate_totp_secret()
+        user.mfa_secret_encrypted = encrypt_secret(secret)
+        user.mfa_enabled = False
+        user.mfa_confirmed_at = None
+        user.mfa_last_counter = None
+        db.commit()
     return MfaSetupStartResponse(secret=secret, otpauth_url=otpauth_url(user, secret))
 
 

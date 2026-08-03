@@ -79,6 +79,7 @@ class MfaSetupConfirmResponse(BaseModel):
 
 class MfaSetupChallengeStartRequest(BaseModel):
     challenge_token: str
+    reset_secret: bool = False
 
 
 class MfaSetupChallengeConfirmRequest(BaseModel):

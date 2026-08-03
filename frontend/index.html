@@ -256,6 +256,14 @@
       white-space: nowrap;
     }
 
+    .mfa-reset-button {
+      min-height: 38px;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--line);
+    }
+
     .mfa-setup-card details {
       min-width: 0;
       color: var(--muted);
@@ -2287,11 +2295,13 @@
         <div class="login-form">
           <div class="mfa-setup-card hidden" id="mfaSetupBox">
             <strong>Configurar autenticador</strong>
+            <p class="mfa-help">Use solamente la clave actual. Si ya creó otra cuenta Total Solutions en el autenticador, elimínela antes de continuar.</p>
             <p class="mfa-help">Copie esta clave en Google Authenticator, Microsoft Authenticator o Authy. Después informe el código de 6 dígitos generado por la app.</p>
             <div class="mfa-copy-row">
               <code class="mfa-secret-box" id="mfaManualSecret"></code>
               <button class="mfa-copy-button" id="copyMfaSecretButton" type="button">Copiar</button>
             </div>
+            <button class="mfa-reset-button" id="resetMfaSecretButton" type="button">Generar nueva clave</button>
             <details>
               <summary>Enlace técnico</summary>
               <div class="mfa-copy-row">
@@ -6349,12 +6359,12 @@
       resetTurnstile("password_recovery");
     }
 
-    async function startMfaSetupFromChallenge() {
+    async function startMfaSetupFromChallenge({ resetSecret = false } = {}) {
       const response = await fetch(`${API_BASE}/auth/mfa/setup/start-challenge`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ challenge_token: pendingMfaChallenge })
+        body: JSON.stringify({ challenge_token: pendingMfaChallenge, reset_secret: resetSecret })
       });
       if (!response.ok) {
         throw new Error(await responseMessage(response, "No fue posible configurar MFA."));
@@ -6364,6 +6374,12 @@
       document.getElementById("mfaOtpUrl").textContent = data.otpauth_url;
       document.getElementById("mfaCode").value = "";
       document.getElementById("mfaCode").focus();
+    }
+
+    async function resetMfaSecret() {
+      if (!pendingMfaChallenge) return;
+      await startMfaSetupFromChallenge({ resetSecret: true });
+      setAuthStatus("mfaStatus", "Nueva clave generada. Actualice la cuenta en su autenticador.", "success");
     }
 
     async function copyMfaValue(targetId, buttonId) {
@@ -7604,6 +7620,7 @@
     document.getElementById("mfaForm").addEventListener("submit", verifyMfa);
     document.getElementById("copyMfaSecretButton").addEventListener("click", () => copyMfaValue("mfaManualSecret", "copyMfaSecretButton"));
     document.getElementById("copyMfaOtpButton").addEventListener("click", () => copyMfaValue("mfaOtpUrl", "copyMfaOtpButton"));
+    document.getElementById("resetMfaSecretButton").addEventListener("click", resetMfaSecret);
     document.getElementById("registerForm").addEventListener("submit", register);
     document.getElementById("reactivationForm").addEventListener("submit", requestReactivation);
     document.getElementById("recoveryForm").addEventListener("submit", requestPasswordRecovery);

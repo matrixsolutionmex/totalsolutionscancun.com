@@ -491,7 +491,17 @@ def test_root_requires_mfa_challenge_and_totp_setup(monkeypatch):
         MfaSetupChallengeStartRequest(challenge_token=first_step.mfa_challenge_token),
         session,
     )
-    code = hotp(setup.secret, totp_counter())
+    repeated_setup = start_mfa_setup_from_challenge(
+        MfaSetupChallengeStartRequest(challenge_token=first_step.mfa_challenge_token),
+        session,
+    )
+    assert repeated_setup.secret == setup.secret
+    reset_setup = start_mfa_setup_from_challenge(
+        MfaSetupChallengeStartRequest(challenge_token=first_step.mfa_challenge_token, reset_secret=True),
+        session,
+    )
+    assert reset_setup.secret != setup.secret
+    code = hotp(reset_setup.secret, totp_counter())
     from app.auth.routes import confirm_mfa_setup_from_challenge
     from app.schemas.auth_schema import MfaSetupChallengeConfirmRequest
 
