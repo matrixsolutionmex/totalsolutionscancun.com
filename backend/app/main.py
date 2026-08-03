@@ -80,6 +80,9 @@ app.include_router(contract_router)
 frontend_dir = Path(__file__).resolve().parents[2] / "frontend"
 if frontend_dir.exists():
     app.mount("/assets", StaticFiles(directory=frontend_dir), name="assets")
+    static_dir = frontend_dir / "static"
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
