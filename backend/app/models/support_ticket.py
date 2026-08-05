@@ -10,6 +10,7 @@ class SupportTicket(Base):
     __tablename__ = "support_tickets"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
     protocol = Column(String, unique=True, index=True)
     module = Column(String, nullable=False)
     priority = Column(String, nullable=False, default="Media")

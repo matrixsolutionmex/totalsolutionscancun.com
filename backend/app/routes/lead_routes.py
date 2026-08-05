@@ -52,17 +52,26 @@ PIPELINE_STAGES = [
 
 
 def broker_ids_for_manager(db: Session, manager_id: int):
+    manager = db.query(User).filter(User.id == manager_id).first()
     return [
         broker_id
         for (broker_id,) in (
             db.query(User.id)
-            .filter(User.role == "BROKER", User.manager_id == manager_id, User.is_active.is_(True))
+            .filter(
+                User.role == "BROKER",
+                User.manager_id == manager_id,
+                User.is_active.is_(True),
+                User.organization_id == (manager.organization_id if manager else None),
+            )
             .all()
         )
     ]
 
 
 def apply_actor_scope(query, db: Session, actor: User | None):
+    if actor and actor.organization_id:
+        query = query.filter(Lead.organization_id == actor.organization_id)
+
     if not actor or actor.role == "ROOT":
         return query
 
@@ -83,6 +92,9 @@ def apply_actor_scope(query, db: Session, actor: User | None):
 
 
 def ensure_lead_visible_to_actor(db: Session, lead: Lead, actor: User | None):
+    if actor and lead.organization_id and actor.organization_id != lead.organization_id:
+        raise HTTPException(status_code=403, detail="Registro fora da sua organizacao")
+
     if not actor or actor.role == "ROOT":
         return
 
@@ -109,6 +121,7 @@ def actor_label(actor: User | None):
 def add_lead_event(db: Session, lead: Lead, actor: User | None, event_type: str, message: str):
     db.add(
         LeadEvent(
+            organization_id=lead.organization_id or (actor.organization_id if actor else None),
             lead_id=lead.id,
             actor_id=actor.id if actor else None,
             actor_name=actor_label(actor),
@@ -202,6 +215,7 @@ def create_lead(
     actor: User = Depends(get_actor),
 ):
     mapping = lead_mapping_from_manual(payload, actor=actor)
+    mapping["organization_id"] = actor.organization_id
     validate_responsible(db, actor, mapping.get("assigned_to_user_id"))
 
     duplicate = duplicate_lead(
@@ -209,6 +223,7 @@ def create_lead(
         email=mapping.get("email"),
         contato=mapping.get("contato"),
         whatsapp=mapping.get("whatsapp"),
+        organization_id=actor.organization_id,
     )
     if duplicate:
         raise HTTPException(status_code=409, detail=duplicate_lead_message(duplicate))
@@ -243,39 +258,39 @@ def lead_inventory(
     db: Session = Depends(get_db),
     actor: User = Depends(require_admin_actor),
 ):
-    free_query = db.query(Lead).filter(Lead.assigned_to_user_id.is_(None))
+    free_query = apply_actor_scope(db.query(Lead), db, actor).filter(Lead.assigned_to_user_id.is_(None))
     total_free = free_query.count()
 
     nichos = (
-        db.query(Lead.nicho, func.count(Lead.id))
+        apply_actor_scope(db.query(Lead.nicho, func.count(Lead.id)), db, actor)
         .filter(Lead.assigned_to_user_id.is_(None), Lead.nicho.isnot(None), Lead.nicho != "")
         .group_by(Lead.nicho)
         .order_by(func.count(Lead.id).desc(), Lead.nicho)
         .all()
     )
     paises = (
-        db.query(Lead.pais, func.count(Lead.id))
+        apply_actor_scope(db.query(Lead.pais, func.count(Lead.id)), db, actor)
         .filter(Lead.assigned_to_user_id.is_(None), Lead.pais.isnot(None), Lead.pais != "")
         .group_by(Lead.pais)
         .order_by(func.count(Lead.id).desc(), Lead.pais)
         .all()
     )
     estados = (
-        db.query(Lead.estado, func.count(Lead.id))
+        apply_actor_scope(db.query(Lead.estado, func.count(Lead.id)), db, actor)
         .filter(Lead.assigned_to_user_id.is_(None), Lead.estado.isnot(None), Lead.estado != "")
         .group_by(Lead.estado)
         .order_by(func.count(Lead.id).desc(), Lead.estado)
         .all()
     )
     cidades = (
-        db.query(Lead.cidade, func.count(Lead.id))
+        apply_actor_scope(db.query(Lead.cidade, func.count(Lead.id)), db, actor)
         .filter(Lead.assigned_to_user_id.is_(None), Lead.cidade.isnot(None), Lead.cidade != "")
         .group_by(Lead.cidade)
         .order_by(func.count(Lead.id).desc(), Lead.cidade)
         .all()
     )
     combinacoes = (
-        db.query(Lead.nicho, Lead.pais, Lead.estado, Lead.cidade, func.count(Lead.id))
+        apply_actor_scope(db.query(Lead.nicho, Lead.pais, Lead.estado, Lead.cidade, func.count(Lead.id)), db, actor)
         .filter(Lead.assigned_to_user_id.is_(None))
         .group_by(Lead.nicho, Lead.pais, Lead.estado, Lead.cidade)
         .all()
@@ -372,7 +387,7 @@ def list_lead_events(
 
     return (
         db.query(LeadEvent)
-        .filter(LeadEvent.lead_id == lead.id)
+        .filter(LeadEvent.lead_id == lead.id, LeadEvent.organization_id == lead.organization_id)
         .order_by(LeadEvent.created_at.desc(), LeadEvent.id.desc())
         .limit(100)
         .all()
@@ -409,13 +424,13 @@ def service_dossier_pdf(
 
     events = (
         db.query(LeadEvent)
-        .filter(LeadEvent.lead_id == lead.id)
+        .filter(LeadEvent.lead_id == lead.id, LeadEvent.organization_id == lead.organization_id)
         .order_by(LeadEvent.created_at.asc(), LeadEvent.id.asc())
         .all()
     )
     documents = (
         db.query(LeadDocument)
-        .filter(LeadDocument.lead_id == lead.id)
+        .filter(LeadDocument.lead_id == lead.id, LeadDocument.organization_id == lead.organization_id)
         .order_by(LeadDocument.document_type, LeadDocument.created_at.asc(), LeadDocument.id.asc())
         .all()
     )
@@ -462,6 +477,7 @@ def create_lead_note(
     ensure_lead_visible_to_actor(db, lead, actor)
 
     event = LeadEvent(
+        organization_id=lead.organization_id or (actor.organization_id if actor else None),
         lead_id=lead.id,
         actor_id=actor.id if actor else None,
         actor_name=actor_label(actor),

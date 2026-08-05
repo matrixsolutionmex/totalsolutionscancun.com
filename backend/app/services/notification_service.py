@@ -39,7 +39,8 @@ def get_or_create_preferences(db: Session, user_id: int) -> NotificationPreferen
     if preferences:
         return preferences
 
-    preferences = NotificationPreference(user_id=user_id)
+    user = db.query(User).filter(User.id == user_id).first()
+    preferences = NotificationPreference(user_id=user_id, organization_id=user.organization_id if user else None)
     db.add(preferences)
     db.flush()
     return preferences
@@ -48,6 +49,15 @@ def get_or_create_preferences(db: Session, user_id: int) -> NotificationPreferen
 def service_order_number(db: Session, lead_id: int) -> str:
     order = db.query(ServiceOrder).filter(ServiceOrder.lead_id == lead_id).first()
     return order.order_number if order and order.order_number else f"Cliente #{lead_id}"
+
+
+def role_label(role: str | None) -> str:
+    labels = {
+        "ROOT": "Administrador",
+        "GERENTE": "Supervisor",
+        "BROKER": "Técnico",
+    }
+    return labels.get((role or "").upper(), "Usuario")
 
 
 def create_notification(
@@ -64,10 +74,15 @@ def create_notification(
     idempotency_key: str,
     metadata: dict | None = None,
     enqueue_email: bool = False,
+    allow_actor_recipient: bool = False,
 ) -> Notification | None:
     if not recipient or not recipient.is_active:
         return None
-    if actor and actor.id == recipient.id:
+    if lead and recipient.organization_id != lead.organization_id:
+        return None
+    if actor and recipient.organization_id != actor.organization_id:
+        return None
+    if actor and actor.id == recipient.id and not allow_actor_recipient:
         return None
 
     existing = db.query(Notification).filter(Notification.idempotency_key == idempotency_key).first()
@@ -75,6 +90,7 @@ def create_notification(
         return existing
 
     notification = Notification(
+        organization_id=lead.organization_id if lead else recipient.organization_id,
         recipient_user_id=recipient.id,
         actor_user_id=actor.id if actor else None,
         type=type_,
@@ -93,6 +109,70 @@ def create_notification(
         enqueue_notification_email(db, notification, recipient, actor, lead)
 
     return notification
+
+
+def notify_user_activation(
+    db: Session,
+    *,
+    activated_user: User,
+    actor: User | None,
+) -> list[int]:
+    if not activated_user.organization_id or activated_user.status != "ACTIVE" or not activated_user.is_active:
+        return []
+
+    event_type = "TECHNICIAN_ACTIVATED" if activated_user.role == "BROKER" else "USER_ACTIVATED"
+    display_name = activated_user.full_name or activated_user.username or "Usuario"
+    if event_type == "TECHNICIAN_ACTIVATED":
+        title = "Nuevo técnico registrado"
+        message = f"{display_name} fue activado en el equipo técnico."
+    else:
+        title = "Nuevo usuario activado"
+        message = f"{display_name} se incorporó como {role_label(activated_user.role)}."
+
+    admins = (
+        db.query(User)
+        .filter(
+            User.organization_id == activated_user.organization_id,
+            User.role == "ROOT",
+            User.status == "ACTIVE",
+            User.is_active.is_(True),
+        )
+        .order_by(User.id.asc())
+        .all()
+    )
+    event_key = (
+        f"admin_event:{event_type}:org:{activated_user.organization_id}:"
+        f"user:{activated_user.id}:activated:{activated_user.status_changed_at or activated_user.registered_at}"
+    )
+    eligible_admins = [admin for admin in admins if admin.id != activated_user.id]
+    non_actor_admins = [admin for admin in eligible_admins if not actor or admin.id != actor.id]
+    recipients = non_actor_admins or eligible_admins
+    notification_ids: list[int] = []
+    for admin in recipients:
+        notification = create_notification(
+            db,
+            recipient=admin,
+            actor=actor,
+            type_=event_type.lower(),
+            title=title,
+            message=message,
+            priority="NORMAL",
+            action_url=f"/?admin_user_id={activated_user.id}",
+            idempotency_key=f"{event_key}:recipient:{admin.id}",
+            metadata={
+                "event_type": event_type,
+                "entity_type": "user",
+                "entity_id": activated_user.id,
+                "deduplication_key": event_key,
+                "role": activated_user.role,
+            },
+            enqueue_email=False,
+            allow_actor_recipient=not non_actor_admins,
+        )
+        if notification:
+            notification_ids.append(notification.id)
+
+    return notification_ids
 
 
 def notification_push_payload(db: Session, notification: Notification) -> dict:
@@ -175,6 +255,7 @@ def dispatch_web_push_for_notification_ids(db: Session, notification_ids: list[i
             db.query(WebPushSubscription)
             .filter(
                 WebPushSubscription.user_id == notification.recipient_user_id,
+                WebPushSubscription.organization_id == notification.organization_id,
                 WebPushSubscription.active.is_(True),
             )
             .all()
@@ -273,6 +354,7 @@ def enqueue_notification_email(
         ]
     )
     outbox = EmailOutbox(
+        organization_id=notification.organization_id or recipient.organization_id,
         notification_id=notification.id,
         recipient_user_id=recipient.id,
         to_email=to_email,
@@ -303,6 +385,7 @@ def notify_assignment_change(
     users_by_id = {
         user.id: user
         for user in db.query(User).filter(User.id.in_([uid for uid in {previous_user_id, new_user_id} if uid])).all()
+        if user.organization_id == lead.organization_id
     }
 
     if new_user_id:

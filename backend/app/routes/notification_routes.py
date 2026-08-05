@@ -57,7 +57,10 @@ def list_notifications(
     db: Session = Depends(get_db),
     actor: User = Depends(get_actor),
 ):
-    query = db.query(Notification).filter(Notification.recipient_user_id == actor.id)
+    query = db.query(Notification).filter(
+        Notification.recipient_user_id == actor.id,
+        Notification.organization_id == actor.organization_id,
+    )
     if after_id:
         query = query.filter(Notification.id > after_id)
 
@@ -76,7 +79,11 @@ def unread_notification_count(
 ):
     count = (
         db.query(func.count(Notification.id))
-        .filter(Notification.recipient_user_id == actor.id, Notification.read_at.is_(None))
+        .filter(
+            Notification.recipient_user_id == actor.id,
+            Notification.organization_id == actor.organization_id,
+            Notification.read_at.is_(None),
+        )
         .scalar()
     )
     return {"unread": int(count or 0)}
@@ -90,7 +97,11 @@ def mark_notification_read(
 ):
     notification = (
         db.query(Notification)
-        .filter(Notification.id == notification_id, Notification.recipient_user_id == actor.id)
+        .filter(
+            Notification.id == notification_id,
+            Notification.recipient_user_id == actor.id,
+            Notification.organization_id == actor.organization_id,
+        )
         .first()
     )
     if not notification:
@@ -111,7 +122,11 @@ def mark_all_notifications_read(
 ):
     updated = (
         db.query(Notification)
-        .filter(Notification.recipient_user_id == actor.id, Notification.read_at.is_(None))
+        .filter(
+            Notification.recipient_user_id == actor.id,
+            Notification.organization_id == actor.organization_id,
+            Notification.read_at.is_(None),
+        )
         .update({Notification.read_at: func.now()}, synchronize_session=False)
     )
     db.commit()
@@ -134,7 +149,11 @@ def stream_notifications(
             try:
                 rows = (
                     session.query(Notification)
-                    .filter(Notification.recipient_user_id == actor_id, Notification.id > last_id)
+                    .filter(
+                        Notification.recipient_user_id == actor_id,
+                        Notification.organization_id == actor.organization_id,
+                        Notification.id > last_id,
+                    )
                     .order_by(Notification.id.asc())
                     .limit(20)
                     .all()
@@ -202,7 +221,11 @@ def get_web_push_state(
     vapid_public_key = os.getenv("WEB_PUSH_VAPID_PUBLIC_KEY", "").strip()
     subscriptions = (
         db.query(WebPushSubscription)
-        .filter(WebPushSubscription.user_id == actor.id, WebPushSubscription.active.is_(True))
+        .filter(
+            WebPushSubscription.user_id == actor.id,
+            WebPushSubscription.organization_id == actor.organization_id,
+            WebPushSubscription.active.is_(True),
+        )
         .order_by(WebPushSubscription.created_at.desc(), WebPushSubscription.id.desc())
         .all()
     )
@@ -233,6 +256,7 @@ def register_web_push_subscription(
         db.add(subscription)
 
     subscription.user_id = actor.id
+    subscription.organization_id = actor.organization_id
     subscription.p256dh = p256dh
     subscription.auth = auth
     subscription.device_label = payload.device_label or "Este dispositivo"

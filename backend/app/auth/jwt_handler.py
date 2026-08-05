@@ -43,6 +43,7 @@ def create_access_token(user: User) -> str:
     expires = now + timedelta(hours=int(os.getenv("JWT_EXPIRE_HOURS", "12")))
     payload = {
         "sub": str(user.id),
+        "organization_id": user.organization_id,
         "role": user.role,
         "manager_id": user.manager_id,
         "session_version": user.session_version or 0,
@@ -115,6 +116,8 @@ def get_current_user(
         raise HTTPException(status_code=401, detail="Usuario inativo ou nao autorizado")
     if payload and int(payload.get("session_version", -1)) != int(user.session_version or 0):
         raise HTTPException(status_code=401, detail="Sessao revogada")
+    if payload and payload.get("organization_id") and int(payload["organization_id"]) != int(user.organization_id or 0):
+        raise HTTPException(status_code=401, detail="Sessao fora da organizacao")
 
     return user
 

@@ -23,7 +23,11 @@ def revoke_user_access(db: Session, user: User, *, deactivate_push: bool = True)
     if deactivate_push:
         (
             db.query(WebPushSubscription)
-            .filter(WebPushSubscription.user_id == user.id, WebPushSubscription.active.is_(True))
+            .filter(
+                WebPushSubscription.user_id == user.id,
+                WebPushSubscription.organization_id == user.organization_id,
+                WebPushSubscription.active.is_(True),
+            )
             .update(
                 {
                     WebPushSubscription.active: False,
@@ -46,6 +50,7 @@ def record_user_lifecycle_event(
     metadata: dict | None = None,
 ) -> UserLifecycleEvent:
     event = UserLifecycleEvent(
+        organization_id=user.organization_id or (actor.organization_id if actor else None),
         user_id=user.id,
         actor_user_id=actor.id if actor else None,
         event_type=event_type,

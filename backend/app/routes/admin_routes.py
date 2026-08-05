@@ -19,6 +19,7 @@ from app.schemas.user_schema import (
     UserReactivationRequestResponse,
     UserResponse,
 )
+from app.services.notification_service import dispatch_web_push_for_notification_ids, notify_user_activation
 from app.services.user_lifecycle_service import record_user_lifecycle_event, revoke_user_access, transition_user_status
 
 
@@ -36,6 +37,8 @@ def visible_user_query(db: Session, actor: User):
     if actor.role not in {"ROOT", "GERENTE"}:
         raise HTTPException(status_code=403, detail="Tecnico nao pode executar acoes administrativas")
     query = db.query(User)
+    if actor.organization_id:
+        query = query.filter(User.organization_id == actor.organization_id)
     if actor.role == "GERENTE":
         query = query.filter(or_(User.manager_id == actor.id, User.id == actor.id))
     return query
@@ -71,7 +74,13 @@ def validate_role_and_manager(db: Session, actor: User, role: str, manager_id: i
         if manager_id is not None:
             manager = (
                 db.query(User)
-                .filter(User.id == manager_id, User.role == "GERENTE", User.status == "ACTIVE", User.is_active.is_(True))
+                .filter(
+                    User.id == manager_id,
+                    User.role == "GERENTE",
+                    User.status == "ACTIVE",
+                    User.is_active.is_(True),
+                    User.organization_id == actor.organization_id,
+                )
                 .first()
             )
             if not manager:
@@ -81,7 +90,11 @@ def validate_role_and_manager(db: Session, actor: User, role: str, manager_id: i
 
 
 def handle_user_clients(db: Session, user: User, action: str) -> int:
-    active_clients = db.query(Lead).filter(Lead.assigned_to_user_id == user.id).all()
+    active_clients = (
+        db.query(Lead)
+        .filter(Lead.assigned_to_user_id == user.id, Lead.organization_id == user.organization_id)
+        .all()
+    )
     if active_clients and action.upper() != "UNASSIGN":
         raise HTTPException(status_code=409, detail="Usuario possui clientes ativos. Reatribua ou libere antes de concluir.")
     for lead in active_clients:
@@ -161,6 +174,10 @@ def approve_user(
     approved = approve_pending_user(db, user, actor, payload)
     db.commit()
     db.refresh(approved)
+    notification_ids = notify_user_activation(db, activated_user=approved, actor=actor)
+    db.commit()
+    dispatch_web_push_for_notification_ids(db, notification_ids)
+    db.refresh(approved)
     return approved
 
 
@@ -186,6 +203,10 @@ def suspend_user(
         is_active=False,
     )
     db.commit()
+    db.refresh(user)
+    notification_ids = notify_user_activation(db, activated_user=user, actor=actor)
+    db.commit()
+    dispatch_web_push_for_notification_ids(db, notification_ids)
     db.refresh(user)
     return user
 
@@ -265,7 +286,7 @@ def anonymize_user(
         raise HTTPException(status_code=400, detail="Administrador nao pode anonimizar a propria conta")
     if payload.confirmation != "ANONIMIZAR":
         raise HTTPException(status_code=400, detail="Confirmacao invalida")
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.id == user_id, User.organization_id == actor.organization_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="Usuario nao encontrado")
     if user.role == "ROOT" and active_root_count(db) <= 1:
@@ -322,6 +343,8 @@ def list_reactivation_requests(
     actor: User = Depends(require_admin_user),
 ):
     query = db.query(UserReactivationRequest).join(User, User.id == UserReactivationRequest.user_id)
+    if actor.organization_id:
+        query = query.filter(UserReactivationRequest.organization_id == actor.organization_id)
     if actor.role == "GERENTE":
         query = query.filter(User.manager_id == actor.id)
     if status:
@@ -336,7 +359,11 @@ def reject_reactivation_request(
     db: Session = Depends(get_db),
     actor: User = Depends(require_admin_user),
 ):
-    request_row = db.query(UserReactivationRequest).filter(UserReactivationRequest.id == request_id).first()
+    request_row = (
+        db.query(UserReactivationRequest)
+        .filter(UserReactivationRequest.id == request_id, UserReactivationRequest.organization_id == actor.organization_id)
+        .first()
+    )
     if not request_row:
         raise HTTPException(status_code=404, detail="Solicitacao nao encontrada")
     load_target_user(db, request_row.user_id, actor)

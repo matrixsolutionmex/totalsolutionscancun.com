@@ -45,6 +45,7 @@ def create_ticket(
         raise HTTPException(status_code=400, detail="Mensagem obrigatoria")
 
     ticket = SupportTicket(
+        organization_id=actor.organization_id,
         module=payload.module.strip() or "Geral",
         priority=payload.priority.strip() or "Media",
         message=message,
@@ -66,7 +67,12 @@ def list_tickets(
     db: Session = Depends(get_db),
     _: User = Depends(require_manager_actor),
 ):
-    tickets = db.query(SupportTicket).order_by(SupportTicket.created_at.desc()).all()
+    tickets = (
+        db.query(SupportTicket)
+        .filter(SupportTicket.organization_id == _.organization_id)
+        .order_by(SupportTicket.created_at.desc())
+        .all()
+    )
     return [serialize_ticket(ticket) for ticket in tickets]
 
 
@@ -77,7 +83,11 @@ def update_ticket(
     db: Session = Depends(get_db),
     _: User = Depends(require_manager_actor),
 ):
-    ticket = db.query(SupportTicket).filter(SupportTicket.id == ticket_id).first()
+    ticket = (
+        db.query(SupportTicket)
+        .filter(SupportTicket.id == ticket_id, SupportTicket.organization_id == _.organization_id)
+        .first()
+    )
     if not ticket:
         raise HTTPException(status_code=404, detail="Chamado nao encontrado")
 

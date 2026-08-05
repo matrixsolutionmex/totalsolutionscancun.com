@@ -12,6 +12,7 @@ class UserIdentity(Base):
     )
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     provider = Column(String, nullable=False, index=True)
     provider_subject = Column(String, nullable=False, index=True)
@@ -26,6 +27,7 @@ class UserSession(Base):
     __tablename__ = "user_sessions"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     session_id_hash = Column(String, nullable=False, unique=True, index=True)
     csrf_token_hash = Column(String, nullable=False, index=True)
@@ -42,6 +44,7 @@ class PasswordResetToken(Base):
     __tablename__ = "password_reset_tokens"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     token_hash = Column(String, nullable=False, unique=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -55,6 +58,7 @@ class MfaRecoveryCode(Base):
     __tablename__ = "mfa_recovery_codes"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     code_hash = Column(String, nullable=False, unique=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -65,6 +69,7 @@ class AuthAuditEvent(Base):
     __tablename__ = "auth_audit_events"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     event_type = Column(String, nullable=False, index=True)

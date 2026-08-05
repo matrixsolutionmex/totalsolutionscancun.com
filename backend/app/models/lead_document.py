@@ -8,6 +8,7 @@ class LeadDocument(Base):
     __tablename__ = "lead_documents"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
 
     lead_id = Column(Integer, ForeignKey("leads.id"), nullable=False)
     uploaded_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 
 from app.database.connection import Base
 
@@ -12,6 +12,7 @@ class ImportJob(Base):
     )
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
     source = Column(String, nullable=False, index=True)
     batch_id = Column(String, nullable=False, index=True)
     status = Column(String, nullable=False, default="RECEIVED")

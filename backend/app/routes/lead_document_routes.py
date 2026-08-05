@@ -80,6 +80,8 @@ def list_deletion_requests(
     ensure_deletion_reviewer(actor)
 
     query = db.query(DeletionRequest).order_by(DeletionRequest.created_at.desc(), DeletionRequest.id.desc())
+    if actor.organization_id:
+        query = query.filter(DeletionRequest.organization_id == actor.organization_id)
     if status:
         query = query.filter(DeletionRequest.status == status)
 
@@ -99,12 +101,23 @@ def list_deletion_requests(
     leads = {lead.id: lead for lead in db.query(Lead).filter(Lead.id.in_(lead_ids)).all()}
     documents = {
         doc.id: doc
-        for doc in db.query(LeadDocument).filter(LeadDocument.id.in_(document_ids)).all()
+        for doc in (
+            db.query(LeadDocument)
+            .filter(LeadDocument.id.in_(document_ids), LeadDocument.organization_id == actor.organization_id)
+            .all()
+        )
     } if document_ids else {}
-    users = {user.id: user for user in db.query(User).filter(User.id.in_(user_ids)).all()} if user_ids else {}
+    users = {
+        user.id: user
+        for user in db.query(User).filter(User.id.in_(user_ids), User.organization_id == actor.organization_id).all()
+    } if user_ids else {}
     orders = {
         order.lead_id: order.order_number
-        for order in db.query(ServiceOrder).filter(ServiceOrder.lead_id.in_(lead_ids)).all()
+        for order in (
+            db.query(ServiceOrder)
+            .filter(ServiceOrder.lead_id.in_(lead_ids), ServiceOrder.organization_id == actor.organization_id)
+            .all()
+        )
     }
 
     payloads = []
@@ -147,6 +160,8 @@ def decide_deletion_request(
     request = db.query(DeletionRequest).filter(DeletionRequest.id == request_id).first()
     if not request:
         raise HTTPException(status_code=404, detail="Solicitacao nao encontrada")
+    if actor.organization_id and request.organization_id != actor.organization_id:
+        raise HTTPException(status_code=403, detail="Solicitacao fora da sua organizacao")
 
     if request.status != "PENDENTE":
         raise HTTPException(status_code=409, detail="Solicitacao ja revisada")
@@ -162,7 +177,11 @@ def decide_deletion_request(
     if request.document_id:
         doc = (
             db.query(LeadDocument)
-            .filter(LeadDocument.id == request.document_id, LeadDocument.lead_id == request.lead_id)
+            .filter(
+                LeadDocument.id == request.document_id,
+                LeadDocument.lead_id == request.lead_id,
+                LeadDocument.organization_id == lead.organization_id,
+            )
             .first()
         )
         if doc:
@@ -191,6 +210,7 @@ def decide_deletion_request(
 
     db.add(
         LeadEvent(
+            organization_id=lead.organization_id or actor.organization_id,
             lead_id=request.lead_id,
             actor_id=actor.id,
             actor_name=actor_label(actor),
@@ -218,14 +238,14 @@ def list_lead_documents(
 
     documents = (
         db.query(LeadDocument)
-        .filter(LeadDocument.lead_id == lead_id)
+        .filter(LeadDocument.lead_id == lead_id, LeadDocument.organization_id == lead.organization_id)
         .order_by(LeadDocument.created_at.desc(), LeadDocument.id.desc())
         .all()
     )
     uploader_ids = [doc.uploaded_by_user_id for doc in documents if doc.uploaded_by_user_id]
     uploaders = {
         user.id: actor_label(user)
-        for user in db.query(User).filter(User.id.in_(uploader_ids)).all()
+        for user in db.query(User).filter(User.id.in_(uploader_ids), User.organization_id == actor.organization_id).all()
     } if uploader_ids else {}
 
     return [
@@ -285,6 +305,7 @@ def upload_lead_document(
     public_path = f"/uploads/lead_documents/{lead_id}/{safe_name}"
 
     doc = LeadDocument(
+        organization_id=lead.organization_id or actor.organization_id,
         lead_id=lead_id,
         uploaded_by_user_id=actor.id,
         document_type=document_type,
@@ -297,6 +318,7 @@ def upload_lead_document(
     db.add(doc)
     db.add(
         LeadEvent(
+            organization_id=lead.organization_id or actor.organization_id,
             lead_id=lead_id,
             actor_id=actor.id,
             actor_name=actor_label(actor),
@@ -338,7 +360,7 @@ def delete_lead_document(
 
     doc = (
         db.query(LeadDocument)
-        .filter(LeadDocument.id == document_id, LeadDocument.lead_id == lead_id)
+        .filter(LeadDocument.id == document_id, LeadDocument.lead_id == lead_id, LeadDocument.organization_id == lead.organization_id)
         .first()
     )
     if not doc:
@@ -350,6 +372,7 @@ def delete_lead_document(
 
     db.add(
         LeadEvent(
+            organization_id=lead.organization_id or actor.organization_id,
             lead_id=lead_id,
             actor_id=actor.id,
             actor_name=actor_label(actor),
@@ -384,7 +407,7 @@ def request_lead_document_deletion(
 
     doc = (
         db.query(LeadDocument)
-        .filter(LeadDocument.id == document_id, LeadDocument.lead_id == lead_id)
+        .filter(LeadDocument.id == document_id, LeadDocument.lead_id == lead_id, LeadDocument.organization_id == lead.organization_id)
         .first()
     )
     if not doc:
@@ -393,6 +416,7 @@ def request_lead_document_deletion(
     pending_request = (
         db.query(DeletionRequest)
         .filter(
+            DeletionRequest.organization_id == lead.organization_id,
             DeletionRequest.document_id == document_id,
             DeletionRequest.lead_id == lead_id,
             DeletionRequest.status == "PENDENTE",
@@ -403,6 +427,7 @@ def request_lead_document_deletion(
         raise HTTPException(status_code=409, detail="Ja existe solicitacao pendente para este documento")
 
     request = DeletionRequest(
+        organization_id=lead.organization_id or actor.organization_id,
         lead_id=lead_id,
         document_id=document_id,
         target_type="DOCUMENT",
@@ -414,6 +439,7 @@ def request_lead_document_deletion(
     db.add(request)
     db.add(
         LeadEvent(
+            organization_id=lead.organization_id or actor.organization_id,
             lead_id=lead_id,
             actor_id=actor.id,
             actor_name=actor_label(actor),

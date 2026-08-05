@@ -9,6 +9,7 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
     manager_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     username = Column(String, unique=True, index=True, nullable=False)
     email = Column(String, nullable=True, index=True)

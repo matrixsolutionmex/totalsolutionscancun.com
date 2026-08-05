@@ -12,10 +12,11 @@ from sqlalchemy import inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.security import hash_password
+from app.core.organization import get_or_create_default_organization
 from app.core.storage import UPLOADS_DIR
 from app.auth.routes import router as auth_router
 from app.database.connection import Base, SessionLocal, engine
-from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, deletion_request, notification, user_lifecycle, auth_security
+from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, deletion_request, notification, user_lifecycle, auth_security, organization
 from app.models.lead import Lead
 from app.models.service_order import ServiceOrder
 from app.models.user import User
@@ -183,6 +184,35 @@ def create_database_tables():
     db = SessionLocal()
     try:
         startup_log("Verificando colunas e defaults de producao.")
+        default_organization = get_or_create_default_organization(db)
+        default_organization_id = default_organization.id
+        db.commit()
+
+        for table_name in (
+            "users",
+            "leads",
+            "service_orders",
+            "lead_documents",
+            "lead_events",
+            "deletion_requests",
+            "notifications",
+            "notification_preferences",
+            "email_outbox",
+            "web_push_subscriptions",
+            "support_tickets",
+            "contracts",
+            "contract_events",
+            "import_jobs",
+            "user_lifecycle_events",
+            "user_reactivation_requests",
+            "user_identities",
+            "user_sessions",
+            "password_reset_tokens",
+            "mfa_recovery_codes",
+            "auth_audit_events",
+        ):
+            add_column_if_missing(db, table_name, "organization_id", "INTEGER")
+
         add_column_if_missing(db, "leads", "valor_negocio", "NUMERIC(12, 2) DEFAULT 0")
         add_column_if_missing(db, "leads", "pipeline_updated_at", "TIMESTAMP")
         add_column_if_missing(db, "leads", "created_at", "TIMESTAMP")
@@ -244,6 +274,27 @@ def create_database_tables():
         add_column_if_missing(db, "users", "plan_max_brokers", "INTEGER DEFAULT 1")
         add_column_if_missing(db, "users", "plan_max_leads", "INTEGER DEFAULT 100")
         add_column_if_missing(db, "users", "registered_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        db.execute(text("UPDATE users SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE leads SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE service_orders SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE lead_documents SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE lead_events SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE deletion_requests SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE notifications SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE notification_preferences SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE email_outbox SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE web_push_subscriptions SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE support_tickets SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE contracts SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE contract_events SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE import_jobs SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE user_lifecycle_events SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE user_reactivation_requests SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE user_identities SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE user_sessions SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE password_reset_tokens SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE mfa_recovery_codes SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE auth_audit_events SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
         db.execute(text("UPDATE users SET email_verified = TRUE WHERE email_verified IS NULL"))
         db.execute(text("UPDATE users SET status = 'ACTIVE' WHERE status IS NULL OR status = ''"))
         db.execute(text("UPDATE users SET session_version = 0 WHERE session_version IS NULL"))
@@ -319,6 +370,7 @@ def create_database_tables():
         if db.query(User).count() == 0:
             startup_log("Criando usuario ROOT inicial de producao.")
             root_user = User(
+                organization_id=default_organization_id,
                 username=os.getenv("ROOT_USERNAME", "root"),
                 password_hash=hash_password(os.getenv("ROOT_PASSWORD", "12345m*")),
                 role="ROOT",

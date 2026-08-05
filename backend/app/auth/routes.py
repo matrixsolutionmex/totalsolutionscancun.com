@@ -33,6 +33,7 @@ from app.core.auth_security import (
     encrypt_secret,
     now_utc,
 )
+from app.core.organization import get_or_create_default_organization
 from app.core.security import hash_password, password_needs_upgrade, verify_password
 from app.models.auth_security import PasswordResetToken, UserIdentity
 from app.models.user import User
@@ -132,6 +133,7 @@ def create_reactivation_request_for_user(
         return existing
 
     request = UserReactivationRequest(
+        organization_id=user.organization_id,
         user_id=user.id,
         email=email,
         requested_name=user.full_name,
@@ -162,6 +164,7 @@ def create_reactivation_request_for_user(
 @router.post("/register", response_model=RegisterResponse, status_code=201)
 def register(payload: RegisterRequest, request: Request, db: Session = Depends(get_db)):
     email = normalized_email(payload.email)
+    organization = get_or_create_default_organization(db)
     apply_public_rate_limits(request, email, "register")
     verify_turnstile_or_403(db, request, token=payload.turnstile_token, expected_action="register")
     if len(payload.password) < 8:
@@ -194,6 +197,7 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
 
     token = secrets.token_urlsafe(32)
     user = User(
+        organization_id=organization.id,
         username=email,
         email=email,
         full_name=payload.full_name.strip(),
@@ -443,6 +447,7 @@ def request_password_recovery(payload: PasswordRecoveryRequest, request: Request
         raw_token = secrets.token_urlsafe(48)
         db.add(
             PasswordResetToken(
+                organization_id=user.organization_id,
                 user_id=user.id,
                 token_hash=hash_value(raw_token),
                 expires_at=datetime.utcnow() + timedelta(minutes=30),
@@ -503,6 +508,7 @@ def google_login(payload: GoogleLoginRequest, request: Request, response: Respon
             db.commit()
             raise HTTPException(status_code=409, detail="Conta Google precisa ser vinculada após login seguro na conta atual.")
         user = User(
+            organization_id=get_or_create_default_organization(db).id,
             username=provider_email,
             email=provider_email,
             full_name=claims.get("name") or provider_email,
@@ -517,6 +523,7 @@ def google_login(payload: GoogleLoginRequest, request: Request, response: Respon
         db.add(user)
         db.flush()
         identity = UserIdentity(
+            organization_id=user.organization_id,
             user_id=user.id,
             provider="google",
             provider_subject=provider_subject,

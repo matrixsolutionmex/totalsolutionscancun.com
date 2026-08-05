@@ -19,6 +19,7 @@ from app.models.lead import Lead
 from app.models.lead_document import LeadDocument
 from app.models.lead_event import LeadEvent
 from app.models.notification import EmailOutbox, Notification, NotificationPreference, WebPushSubscription
+from app.models.organization import Organization
 from app.models.service_order import ServiceOrder
 from app.models.user import User
 from app.routes.integration_routes import create_integration_lead, require_integration_token
@@ -55,6 +56,7 @@ def db():
     Base.metadata.create_all(
         bind=engine,
         tables=[
+            Organization.__table__,
             User.__table__,
             Lead.__table__,
             ServiceOrder.__table__,
@@ -90,6 +92,46 @@ def make_user(db, username, role, manager_id=None):
     db.commit()
     db.refresh(user)
     return user
+
+
+def make_organization(db, slug, name):
+    organization = Organization(name=name, slug=slug)
+    db.add(organization)
+    db.commit()
+    db.refresh(organization)
+    return organization
+
+
+def test_root_scope_is_limited_to_own_organization(db):
+    org_a = make_organization(db, "org-a", "Empresa A")
+    org_b = make_organization(db, "org-b", "Empresa B")
+    root_a = make_user(db, "root-a", "ROOT")
+    root_b = make_user(db, "root-b", "ROOT")
+    root_a.organization_id = org_a.id
+    root_b.organization_id = org_b.id
+    lead_a = Lead(nome="Cliente A", contato="9980000001", pipeline="NOVO LEAD", organization_id=org_a.id)
+    lead_b = Lead(nome="Cliente B", contato="9980000002", pipeline="NOVO LEAD", organization_id=org_b.id)
+    db.add_all([lead_a, lead_b])
+    db.commit()
+    db.refresh(lead_a)
+
+    visible = list_leads(db=db, actor=root_a, limit=100, offset=0)
+
+    assert [lead.id for lead in visible] == [lead_a.id]
+
+
+def test_duplicate_detection_is_scoped_by_organization(db):
+    from app.services.lead_entry_service import duplicate_lead
+
+    org_a = make_organization(db, "dup-org-a", "Duplicados A")
+    org_b = make_organization(db, "dup-org-b", "Duplicados B")
+    lead_a = Lead(nome="Cliente Compartilhado", email="cliente@example.com", organization_id=org_a.id)
+    db.add(lead_a)
+    db.commit()
+    db.refresh(lead_a)
+
+    assert duplicate_lead(db, email="cliente@example.com", organization_id=org_a.id).id == lead_a.id
+    assert duplicate_lead(db, email="cliente@example.com", organization_id=org_b.id) is None
 
 
 def test_manual_client_creation_starts_unassigned(db):

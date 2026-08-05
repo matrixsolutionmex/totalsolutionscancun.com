@@ -9,6 +9,7 @@ class UserLifecycleEvent(Base):
     __tablename__ = "user_lifecycle_events"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     event_type = Column(String, nullable=False, index=True)
@@ -23,6 +24,7 @@ class UserReactivationRequest(Base):
     __tablename__ = "user_reactivation_requests"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     email = Column(String, nullable=False, index=True)
     requested_name = Column(String, nullable=True)

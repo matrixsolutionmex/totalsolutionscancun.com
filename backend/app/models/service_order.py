@@ -10,6 +10,7 @@ class ServiceOrder(Base):
     __tablename__ = "service_orders"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
     order_number = Column(String, unique=True, index=True, nullable=True)
 
     lead_id = Column(Integer, ForeignKey("leads.id"), unique=True, nullable=False)

@@ -19,6 +19,8 @@ def list_contracts(
     actor: User = Depends(get_actor),
 ):
     query = db.query(Contract)
+    if actor.organization_id:
+        query = query.filter(Contract.organization_id == actor.organization_id)
 
     if actor.role == "BROKER":
         query = query.filter(Contract.created_by_user_id == actor.id)
@@ -39,6 +41,7 @@ def create_contract(
     ensure_lead_visible_to_actor(db, lead, actor)
 
     contract = Contract(
+        organization_id=lead.organization_id or actor.organization_id,
         lead_id=payload.lead_id,
         created_by_user_id=actor.id,
         contract_type=payload.contract_type,
@@ -58,6 +61,7 @@ def create_contract(
 
     db.add(
         ContractEvent(
+            organization_id=contract.organization_id,
             contract_id=contract.id,
             actor_id=actor.id,
             actor_name=actor.full_name or actor.username,
@@ -76,7 +80,7 @@ def get_contract(
     db: Session = Depends(get_db),
     actor: User = Depends(get_actor),
 ):
-    contract = db.query(Contract).filter(Contract.id == contract_id).first()
+    contract = db.query(Contract).filter(Contract.id == contract_id, Contract.organization_id == actor.organization_id).first()
     if not contract:
         raise HTTPException(status_code=404, detail="Contrato não encontrado")
 
@@ -92,7 +96,7 @@ def get_contract_events(
     db: Session = Depends(get_db),
     actor: User = Depends(get_actor),
 ):
-    contract = db.query(Contract).filter(Contract.id == contract_id).first()
+    contract = db.query(Contract).filter(Contract.id == contract_id, Contract.organization_id == actor.organization_id).first()
     if not contract:
         raise HTTPException(status_code=404, detail="Contrato não encontrado")
 
@@ -102,7 +106,7 @@ def get_contract_events(
 
     events = (
         db.query(ContractEvent)
-        .filter(ContractEvent.contract_id == contract_id)
+        .filter(ContractEvent.contract_id == contract_id, ContractEvent.organization_id == actor.organization_id)
         .order_by(ContractEvent.created_at.desc(), ContractEvent.id.desc())
         .all()
     )

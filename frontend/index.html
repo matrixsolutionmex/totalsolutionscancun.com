@@ -396,6 +396,11 @@
       margin-top: 12px;
     }
 
+    .pending-user-row.notification-target {
+      border-color: var(--success) !important;
+      box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.28), var(--shadow-md);
+    }
+
     .pending-user-controls {
       display: grid;
       grid-template-columns: repeat(4, minmax(120px, 1fr));
@@ -4752,7 +4757,7 @@
               </div>
             </div>
             <div class="notification-actions">
-              ${notification.lead_id ? `<button type="button" onclick="openNotificationLead(${notification.id}, ${notification.lead_id})">Abrir</button>` : ""}
+              ${(notification.lead_id || notification.action_url) ? `<button type="button" onclick="openNotificationAction(${notification.id})">Abrir</button>` : ""}
               ${notification.read_at ? "" : `<button class="ghost" type="button" onclick="markNotificationRead(${notification.id})">Leída</button>`}
             </div>
           </div>
@@ -4970,8 +4975,8 @@
         <div class="notification-message">${escapeHtml(notification.message)}</div>
       `;
       toast.addEventListener("click", () => {
-        if (notification.lead_id) {
-          openNotificationLead(notification.id, notification.lead_id);
+        if (notification.lead_id || notification.action_url) {
+          openNotificationAction(notification.id);
         }
         toast.remove();
       });
@@ -4992,7 +4997,7 @@
       });
       browserNotification.onclick = () => {
         window.focus();
-        if (notification.lead_id) openNotificationLead(notification.id, notification.lead_id);
+        if (notification.lead_id || notification.action_url) openNotificationAction(notification.id);
       };
     }
 
@@ -5071,6 +5076,30 @@
       await openLeadFromRequest(leadId);
     }
 
+    async function openNotificationAction(notificationId) {
+      const notification = cachedNotifications.find((item) => Number(item.id) === Number(notificationId));
+      if (!notification) return;
+      await markNotificationRead(notificationId);
+      document.getElementById("notificationPanel")?.classList.remove("open");
+      if (notification.lead_id) {
+        await openLeadFromRequest(notification.lead_id);
+        return;
+      }
+
+      const actionUrl = String(notification.action_url || "");
+      if (!actionUrl) return;
+      const url = new URL(actionUrl, window.location.origin);
+      const adminUserId = url.searchParams.get("admin_user_id");
+      if (adminUserId) {
+        await openAdminUserById(adminUserId);
+        return;
+      }
+      if (url.origin === window.location.origin) {
+        window.history.pushState({}, "", `${url.pathname}${url.search}${url.hash}`);
+        await openAdminUsersFromUrlIfPresent();
+      }
+    }
+
     async function openLeadFromUrlIfPresent() {
       const params = new URLSearchParams(window.location.search);
       const leadId = params.get("lead_id");
@@ -5083,8 +5112,34 @@
       window.history.replaceState({}, "", nextUrl);
     }
 
+    async function openAdminUserById(userId) {
+      if (currentUser.role !== "ROOT") return;
+      currentAdminUserTab = "ACTIVE";
+      document.querySelectorAll("[data-admin-user-tab]").forEach((button) => {
+        button.classList.toggle("active", button.dataset.adminUserTab === currentAdminUserTab);
+      });
+      showView("usuarios");
+      await loadPendingUsers();
+      const safeUserId = String(userId).replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
+      const row = document.querySelector(`[data-pending-user-id="${safeUserId}"]`);
+      if (row) {
+        row.scrollIntoView({ behavior: "smooth", block: "center" });
+        row.classList.add("notification-target");
+        setTimeout(() => row.classList.remove("notification-target"), 4500);
+      }
+    }
+
     async function openAdminUsersFromUrlIfPresent() {
       const params = new URLSearchParams(window.location.search);
+      const adminUserId = params.get("admin_user_id");
+      if (adminUserId) {
+        await openAdminUserById(adminUserId);
+        params.delete("admin_user_id");
+        const nextQuery = params.toString();
+        const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`;
+        window.history.replaceState({}, "", nextUrl);
+        return;
+      }
       if (params.get("admin") !== "users" || currentUser.role !== "ROOT") {
         return;
       }

@@ -34,6 +34,7 @@ PROFILE_PHOTO_TYPES = {
 
 
 def manager_team_broker_ids(db: Session, manager_id: int):
+    manager = db.query(User).filter(User.id == manager_id).first()
     return [
         broker_id
         for (broker_id,) in (
@@ -42,6 +43,7 @@ def manager_team_broker_ids(db: Session, manager_id: int):
                 User.role == "BROKER",
                 User.manager_id == manager_id,
                 User.is_active.is_(True),
+                User.organization_id == (manager.organization_id if manager else None),
             )
             .all()
         )
@@ -58,6 +60,7 @@ def actor_label(actor: User | None):
 def add_lead_event(db: Session, lead: Lead, actor: User | None, event_type: str, message: str):
     db.add(
         LeadEvent(
+            organization_id=lead.organization_id or (actor.organization_id if actor else None),
             lead_id=lead.id,
             actor_id=actor.id if actor else None,
             actor_name=actor_label(actor),
@@ -112,6 +115,8 @@ def list_users(
     actor: User = Depends(require_admin_actor),
 ):
     query = db.query(User)
+    if actor.organization_id:
+        query = query.filter(User.organization_id == actor.organization_id)
     if actor and actor.role == "GERENTE":
         query = query.filter(User.role == "BROKER", User.manager_id == actor.id)
 
@@ -124,6 +129,8 @@ def broker_summary(
     actor: User = Depends(require_admin_actor),
 ):
     query = db.query(User)
+    if actor.organization_id:
+        query = query.filter(User.organization_id == actor.organization_id)
 
     if actor and actor.role == "GERENTE":
         query = query.filter(User.role == "BROKER", User.manager_id == actor.id)
@@ -199,7 +206,12 @@ def create_user(
         elif manager_id is not None:
             manager = (
                 db.query(User)
-                .filter(User.id == manager_id, User.role == "GERENTE", User.is_active.is_(True))
+                .filter(
+                    User.id == manager_id,
+                    User.role == "GERENTE",
+                    User.is_active.is_(True),
+                    User.organization_id == actor.organization_id,
+                )
                 .first()
             )
             if not manager:
@@ -207,11 +219,16 @@ def create_user(
     else:
         manager_id = None
 
-    existing_user = db.query(User).filter(User.username == payload.username).first()
+    existing_user = (
+        db.query(User)
+        .filter(User.username == payload.username, User.organization_id == actor.organization_id)
+        .first()
+    )
     if existing_user:
         raise HTTPException(status_code=409, detail="Usuario ja existe")
 
     user = User(
+        organization_id=actor.organization_id,
         manager_id=manager_id,
         username=payload.username,
         email=(payload.email or payload.email_pessoal or "").strip().lower() or None,
@@ -247,6 +264,8 @@ def get_profile_photo_user(user_id: int, actor: User, db: Session):
         raise HTTPException(status_code=403, detail="Usuario pode alterar apenas a propria foto")
 
     user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
+    if user and actor.organization_id and user.organization_id != actor.organization_id:
+        raise HTTPException(status_code=403, detail="Usuario fora da sua organizacao")
     if not user:
         raise HTTPException(status_code=404, detail="Usuario nao encontrado")
     return user
@@ -307,6 +326,8 @@ def update_user(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="Usuario nao encontrado")
+    if actor.organization_id and user.organization_id != actor.organization_id:
+        raise HTTPException(status_code=403, detail="Usuario fora da sua organizacao")
 
     updates = payload.model_dump(exclude_unset=True)
 
@@ -332,7 +353,12 @@ def update_user(
         elif updates["manager_id"] is not None:
             manager = (
                 db.query(User)
-                .filter(User.id == updates["manager_id"], User.role == "GERENTE", User.is_active.is_(True))
+                .filter(
+                    User.id == updates["manager_id"],
+                    User.role == "GERENTE",
+                    User.is_active.is_(True),
+                    User.organization_id == actor.organization_id,
+                )
                 .first()
             )
             if not manager:
@@ -358,7 +384,7 @@ def update_user(
     if "username" in updates and updates["username"]:
         existing_user = (
             db.query(User)
-            .filter(User.username == updates["username"], User.id != user.id)
+            .filter(User.username == updates["username"], User.id != user.id, User.organization_id == actor.organization_id)
             .first()
         )
         if existing_user:
@@ -455,7 +481,12 @@ def assign_leads(
 ):
     broker = (
         db.query(User)
-        .filter(User.id == payload.broker_id, User.role == "BROKER", User.is_active.is_(True))
+        .filter(
+            User.id == payload.broker_id,
+            User.role == "BROKER",
+            User.is_active.is_(True),
+            User.organization_id == actor.organization_id,
+        )
         .first()
     )
 
@@ -465,7 +496,10 @@ def assign_leads(
     if actor and actor.role == "GERENTE" and broker.manager_id != actor.id:
         raise HTTPException(status_code=403, detail="Gerente pode enviar leads apenas para sua equipe")
 
-    query = db.query(Lead).filter(Lead.assigned_to_user_id.is_(None))
+    query = db.query(Lead).filter(
+        Lead.assigned_to_user_id.is_(None),
+        Lead.organization_id == actor.organization_id,
+    )
 
     if payload.nicho:
         query = query.filter(Lead.nicho == payload.nicho.upper())
@@ -523,6 +557,8 @@ def return_leads_to_bank(
         raise HTTPException(status_code=400, detail="Informe uma quantidade ou marque todos")
 
     query = db.query(Lead).filter(Lead.assigned_to_user_id.isnot(None))
+    if actor.organization_id:
+        query = query.filter(Lead.organization_id == actor.organization_id)
 
     if payload.broker_id:
         query = query.filter(Lead.assigned_to_user_id == payload.broker_id)

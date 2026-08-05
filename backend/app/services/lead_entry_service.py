@@ -35,11 +35,17 @@ def ensure_property_id(lead: Lead):
 
 
 def broker_ids_for_manager(db: Session, manager_id: int):
+    manager = db.query(User).filter(User.id == manager_id).first()
     return [
         broker_id
         for (broker_id,) in (
             db.query(User.id)
-            .filter(User.role == "BROKER", User.manager_id == manager_id, User.is_active.is_(True))
+            .filter(
+                User.role == "BROKER",
+                User.manager_id == manager_id,
+                User.is_active.is_(True),
+                User.organization_id == (manager.organization_id if manager else None),
+            )
             .all()
         )
     ]
@@ -55,6 +61,7 @@ def validate_responsible(db: Session, actor: User | None, assigned_to_user_id: i
             User.id == assigned_to_user_id,
             User.role.in_(["GERENTE", "BROKER"]),
             User.is_active.is_(True),
+            User.organization_id == actor.organization_id if actor else True,
         )
         .first()
     )
@@ -71,10 +78,23 @@ def validate_responsible(db: Session, actor: User | None, assigned_to_user_id: i
     return responsible
 
 
-def duplicate_lead(db: Session, *, email: str | None = None, contato: str | None = None, whatsapp: str | None = None, external_source: str | None = None, external_id: str | None = None):
+def duplicate_lead(
+    db: Session,
+    *,
+    email: str | None = None,
+    contato: str | None = None,
+    whatsapp: str | None = None,
+    external_source: str | None = None,
+    external_id: str | None = None,
+    organization_id: int | None = None,
+):
+    base_query = db.query(Lead)
+    if organization_id:
+        base_query = base_query.filter(Lead.organization_id == organization_id)
+
     if external_source and external_id:
         existing = (
-            db.query(Lead)
+            base_query
             .filter(Lead.external_source == external_source, Lead.external_id == external_id)
             .first()
         )
@@ -85,15 +105,18 @@ def duplicate_lead(db: Session, *, email: str | None = None, contato: str | None
     normalized_phone_candidates = phone_candidates(whatsapp) | phone_candidates(contato)
 
     if normalized_email:
-        existing = db.query(Lead).filter(Lead.email == normalized_email).first()
+        existing = base_query.filter(Lead.email == normalized_email).first()
         if existing:
             return existing
 
     if normalized_phone_candidates:
-        for lead in db.query(Lead.id, Lead.contato, Lead.whatsapp).all():
+        phone_query = db.query(Lead.id, Lead.contato, Lead.whatsapp)
+        if organization_id:
+            phone_query = phone_query.filter(Lead.organization_id == organization_id)
+        for lead in phone_query.all():
             existing_candidates = phone_candidates(lead.contato) | phone_candidates(lead.whatsapp)
             if normalized_phone_candidates & existing_candidates:
-                return db.query(Lead).filter(Lead.id == lead.id).first()
+                return base_query.filter(Lead.id == lead.id).first()
 
     return None
 

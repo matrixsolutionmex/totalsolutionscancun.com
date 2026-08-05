@@ -26,6 +26,7 @@ from app.database.connection import Base
 from app.models.auth_security import AuthAuditEvent, MfaRecoveryCode, PasswordResetToken, UserIdentity, UserSession
 from app.models.lead import Lead
 from app.models.notification import EmailOutbox, Notification, NotificationPreference, WebPushSubscription
+from app.models.organization import Organization
 from app.models.user import User
 from app.models.user_lifecycle import UserLifecycleEvent, UserReactivationRequest
 from app.routes.admin_routes import anonymize_user, approve_user, archive_user, reactivate_user, suspend_user
@@ -52,6 +53,7 @@ def create_test_session():
         bind=engine,
         tables=[
             User.__table__,
+            Organization.__table__,
             Lead.__table__,
             Notification.__table__,
             NotificationPreference.__table__,
@@ -85,7 +87,25 @@ def make_request(path="/auth/login"):
     )
 
 
-def make_user(session, username, role="BROKER", *, manager_id=None, status="ACTIVE", is_active=True, email=None):
+def make_organization(session, slug="total-solutions-test", name="Total Solutions Test"):
+    organization = Organization(name=name, slug=slug)
+    session.add(organization)
+    session.commit()
+    session.refresh(organization)
+    return organization
+
+
+def make_user(
+    session,
+    username,
+    role="BROKER",
+    *,
+    manager_id=None,
+    status="ACTIVE",
+    is_active=True,
+    email=None,
+    organization_id=None,
+):
     user = User(
         username=username,
         email=email or f"{username}@totalsolutions.test",
@@ -96,6 +116,7 @@ def make_user(session, username, role="BROKER", *, manager_id=None, status="ACTI
         status=status,
         is_active=is_active,
         email_verified=True,
+        organization_id=organization_id,
     )
     session.add(user)
     session.commit()
@@ -172,6 +193,108 @@ def test_public_registration_requires_verification_and_root_approval(monkeypatch
     assert claims["sub"] == str(pending.id)
     assert authenticated.user.email == "broker@example.com"
     assert authenticated.user.role == "BROKER"
+
+    session.close()
+
+
+def test_user_activation_notifies_other_root_in_same_organization(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.delenv("WEB_PUSH_VAPID_PUBLIC_KEY", raising=False)
+    session = create_test_session()
+    org_a = make_organization(session, "org-admin-events-a", "Empresa A")
+    org_b = make_organization(session, "org-admin-events-b", "Empresa B")
+    actor_root = make_user(session, "root-actor-events", "ROOT", organization_id=org_a.id)
+    recipient_root = make_user(session, "root-recipient-events", "ROOT", organization_id=org_a.id)
+    outside_root = make_user(session, "root-outside-events", "ROOT", organization_id=org_b.id)
+    pending = make_user(
+        session,
+        "supervisor-pending-events",
+        "BROKER",
+        status="PENDING_APPROVAL",
+        is_active=False,
+        organization_id=org_a.id,
+    )
+
+    approved = approve_user(
+        pending.id,
+        UserApprovalRequest(role="GERENTE", plan="STARTER", plan_max_leads=100),
+        session,
+        actor_root,
+    )
+
+    assert approved.status == "ACTIVE"
+    recipient_notifications = session.query(Notification).filter_by(recipient_user_id=recipient_root.id).all()
+    assert len(recipient_notifications) == 1
+    assert recipient_notifications[0].type == "user_activated"
+    assert recipient_notifications[0].title == "Nuevo usuario activado"
+    assert "se incorporó como Supervisor" in recipient_notifications[0].message
+    assert recipient_notifications[0].organization_id == org_a.id
+    assert session.query(Notification).filter_by(recipient_user_id=actor_root.id).count() == 0
+    assert session.query(Notification).filter_by(recipient_user_id=outside_root.id).count() == 0
+    assert session.query(Notification).filter(Notification.type == "technician_activated").count() == 0
+
+    session.close()
+
+
+def test_technician_activation_uses_specific_event_without_duplicate(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.delenv("WEB_PUSH_VAPID_PUBLIC_KEY", raising=False)
+    session = create_test_session()
+    org = make_organization(session, "org-tech-events", "Empresa Tecnica")
+    actor_root = make_user(session, "root-tech-actor", "ROOT", organization_id=org.id)
+    recipient_root = make_user(session, "root-tech-recipient", "ROOT", organization_id=org.id)
+    pending = make_user(
+        session,
+        "tecnico-pending-events",
+        "BROKER",
+        status="PENDING_APPROVAL",
+        is_active=False,
+        organization_id=org.id,
+    )
+
+    approve_user(
+        pending.id,
+        UserApprovalRequest(role="BROKER", plan="STARTER", plan_max_leads=100),
+        session,
+        actor_root,
+    )
+
+    notifications = session.query(Notification).filter_by(recipient_user_id=recipient_root.id).all()
+    assert len(notifications) == 1
+    assert notifications[0].type == "technician_activated"
+    assert notifications[0].title == "Nuevo técnico registrado"
+    assert "fue activado en el equipo técnico" in notifications[0].message
+    assert session.query(Notification).filter(Notification.type == "user_activated").count() == 0
+
+    session.close()
+
+
+def test_single_root_receives_own_technician_activation_alert(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.delenv("WEB_PUSH_VAPID_PUBLIC_KEY", raising=False)
+    session = create_test_session()
+    org = make_organization(session, "org-single-root-tech-events", "Empresa Root Unico")
+    actor_root = make_user(session, "root-single-tech-actor", "ROOT", organization_id=org.id)
+    pending = make_user(
+        session,
+        "tecnico-single-root-events",
+        "BROKER",
+        status="PENDING_APPROVAL",
+        is_active=False,
+        organization_id=org.id,
+    )
+
+    approve_user(
+        pending.id,
+        UserApprovalRequest(role="BROKER", plan="STARTER", plan_max_leads=100),
+        session,
+        actor_root,
+    )
+
+    notifications = session.query(Notification).filter_by(recipient_user_id=actor_root.id).all()
+    assert len(notifications) == 1
+    assert notifications[0].type == "technician_activated"
+    assert notifications[0].title == "Nuevo técnico registrado"
 
     session.close()
 

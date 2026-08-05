@@ -9,6 +9,7 @@ class Notification(Base):
     __tablename__ = "notifications"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
     recipient_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     type = Column(String, nullable=False, index=True)
@@ -27,6 +28,7 @@ class NotificationPreference(Base):
     __tablename__ = "notification_preferences"
 
     user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
     in_app_enabled = Column(Boolean, default=True, nullable=False)
     sound_enabled = Column(Boolean, default=True, nullable=False)
     sound_volume = Column(Integer, default=55, nullable=False)
@@ -42,6 +44,7 @@ class EmailOutbox(Base):
     __tablename__ = "email_outbox"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
     notification_id = Column(Integer, ForeignKey("notifications.id"), nullable=True, index=True)
     recipient_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     to_email = Column(String, nullable=False)
@@ -60,6 +63,7 @@ class WebPushSubscription(Base):
     __tablename__ = "web_push_subscriptions"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     endpoint = Column(Text, nullable=False, unique=True)
     p256dh = Column(Text, nullable=False)

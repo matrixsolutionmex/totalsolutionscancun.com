@@ -100,9 +100,12 @@ def lead_fingerprints(lead):
     return fingerprints
 
 
-def load_existing_fingerprints(session: Session):
+def load_existing_fingerprints(session: Session, organization_id: int | None = None):
     fingerprints = set()
-    for nome, contato, email, site in session.query(Lead.nome, Lead.contato, Lead.email, Lead.site).all():
+    query = session.query(Lead.nome, Lead.contato, Lead.email, Lead.site)
+    if organization_id:
+        query = query.filter(Lead.organization_id == organization_id)
+    for nome, contato, email, site in query.all():
         fingerprints.update(
             lead_fingerprints(
                 {
@@ -116,7 +119,7 @@ def load_existing_fingerprints(session: Session):
     return fingerprints
 
 
-def prepare_lead_mapping(record):
+def prepare_lead_mapping(record, *, organization_id: int | None = None):
     now = datetime.utcnow()
     endereco = clean_text(record.get("endereco"))
     pais = clean_text(record.get("pais"))
@@ -129,6 +132,7 @@ def prepare_lead_mapping(record):
         cidade = cidade or geography.cidade
 
     lead = {
+        "organization_id": organization_id,
         "nome": clean_text(record.get("nome")),
         "contato": clean_text(record.get("contato")),
         "email": normalize_email(record.get("email")),
@@ -169,14 +173,14 @@ def flush_batch(session: Session, batch):
     return len(batch)
 
 
-def import_lead_records(session: Session, records, batch_size: int = BATCH_SIZE):
+def import_lead_records(session: Session, records, batch_size: int = BATCH_SIZE, organization_id: int | None = None):
     stats = ImportStats(total_received=len(records))
-    existing_fingerprints = load_existing_fingerprints(session)
+    existing_fingerprints = load_existing_fingerprints(session, organization_id=organization_id)
     staged_fingerprints = set()
     batch = []
 
     for raw_record in records:
-        lead = prepare_lead_mapping(raw_record)
+        lead = prepare_lead_mapping(raw_record, organization_id=organization_id)
         if not is_valid_lead_payload(lead):
             stats.invalid += 1
             continue

@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.database.connection import SessionLocal
+from app.core.organization import get_or_create_default_organization
 from app.models.import_job import ImportJob
 from app.schemas.import_schema import ImportJobResponse, MatrixLeadImportRequest
 from app.services.import_service import import_lead_records
@@ -44,15 +45,21 @@ def import_matrix_leads(
     db: Session = Depends(get_db),
     _: None = Depends(require_matrix_token),
 ):
+    organization = get_or_create_default_organization(db)
     existing_job = (
         db.query(ImportJob)
-        .filter(ImportJob.source == payload.source, ImportJob.batch_id == payload.batch_id)
+        .filter(
+            ImportJob.source == payload.source,
+            ImportJob.batch_id == payload.batch_id,
+            ImportJob.organization_id == organization.id,
+        )
         .first()
     )
     if existing_job:
         raise HTTPException(status_code=409, detail="batch_id ja processado para esta origem")
 
     job = ImportJob(
+        organization_id=organization.id,
         source=payload.source,
         batch_id=payload.batch_id,
         status="RECEIVED",
@@ -71,6 +78,7 @@ def import_matrix_leads(
         stats = import_lead_records(
             db,
             [record.model_dump() for record in payload.records],
+            organization_id=organization.id,
         )
 
         job.status = "DONE"
@@ -102,7 +110,14 @@ def list_import_jobs(
     db: Session = Depends(get_db),
     _: None = Depends(require_matrix_token),
 ):
-    jobs = db.query(ImportJob).order_by(ImportJob.created_at.desc()).limit(100).all()
+    organization = get_or_create_default_organization(db)
+    jobs = (
+        db.query(ImportJob)
+        .filter(ImportJob.organization_id == organization.id)
+        .order_by(ImportJob.created_at.desc())
+        .limit(100)
+        .all()
+    )
     return [serialize_job(job) for job in jobs]
 
 
@@ -112,7 +127,8 @@ def get_import_job(
     db: Session = Depends(get_db),
     _: None = Depends(require_matrix_token),
 ):
-    job = db.query(ImportJob).filter(ImportJob.id == job_id).first()
+    organization = get_or_create_default_organization(db)
+    job = db.query(ImportJob).filter(ImportJob.id == job_id, ImportJob.organization_id == organization.id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job de importacao nao encontrado")
 

@@ -8,6 +8,7 @@ class ContractEvent(Base):
     __tablename__ = "contract_events"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
 
     contract_id = Column(Integer, ForeignKey("contracts.id"), nullable=False)
     actor_id = Column(Integer, ForeignKey("users.id"), nullable=True)

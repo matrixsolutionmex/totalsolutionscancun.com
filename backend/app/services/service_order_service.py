@@ -28,6 +28,8 @@ def supervisor_id_for_responsible(db: Session, responsible_user_id: int | None, 
         return actor.id if actor and actor.role == "GERENTE" else None
 
     responsible = db.query(User).filter(User.id == responsible_user_id).first()
+    if actor and responsible and actor.organization_id != responsible.organization_id:
+        return actor.id if actor.role == "GERENTE" else None
     if not responsible:
         return actor.id if actor and actor.role == "GERENTE" else None
     if responsible.role == "GERENTE":
@@ -40,12 +42,14 @@ def supervisor_id_for_responsible(db: Session, responsible_user_id: int | None, 
 def ensure_service_order(db: Session, lead: Lead, *, actor: User | None = None) -> ServiceOrder:
     service_order = db.query(ServiceOrder).filter(ServiceOrder.lead_id == lead.id).first()
     if service_order:
+        service_order.organization_id = lead.organization_id or service_order.organization_id
         sync_service_order_from_lead(db, service_order, lead, actor=actor)
         lead.service_order = service_order
         return service_order
 
     opened_at = lead.created_at or datetime.utcnow()
     service_order = ServiceOrder(
+        organization_id=lead.organization_id or (actor.organization_id if actor else None),
         lead_id=lead.id,
         property_id=lead.property_id,
         status=OS_STATUS_BY_PIPELINE.get(lead.pipeline or "", "ABERTA"),
@@ -71,6 +75,7 @@ def sync_service_order_from_lead(
     actor: User | None = None,
 ) -> ServiceOrder:
     service_order.property_id = lead.property_id
+    service_order.organization_id = lead.organization_id or service_order.organization_id or (actor.organization_id if actor else None)
     service_order.status = OS_STATUS_BY_PIPELINE.get(lead.pipeline or "", service_order.status or "ABERTA")
     service_order.scheduled_at = lead.proximo_contacto
     service_order.responsible_user_id = lead.assigned_to_user_id

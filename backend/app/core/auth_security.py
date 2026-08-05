@@ -77,6 +77,7 @@ def audit_auth_event(
     else:
         safe_detail = detail
     event = AuthAuditEvent(
+        organization_id=(user.organization_id if user else None) or (actor.organization_id if actor else None),
         user_id=user.id if user else None,
         actor_user_id=actor.id if actor else None,
         event_type=event_type[:80],
@@ -182,6 +183,7 @@ def create_user_session(db: Session, request: Request, response: Response, user:
     csrf_token = secrets.token_urlsafe(32)
     expires = now_utc() + timedelta(hours=session_ttl_hours())
     row = UserSession(
+        organization_id=user.organization_id,
         user_id=user.id,
         session_id_hash=hash_value(session_id),
         csrf_token_hash=hash_value(csrf_token),
@@ -348,7 +350,7 @@ def generate_recovery_codes(db: Session, user: User, count: int = 10) -> list[st
     for _ in range(count):
         raw = f"TS-{secrets.token_urlsafe(9).replace('-', '').replace('_', '')[:12].upper()}"
         codes.append(raw)
-        db.add(MfaRecoveryCode(user_id=user.id, code_hash=hash_value(raw)))
+        db.add(MfaRecoveryCode(organization_id=user.organization_id, user_id=user.id, code_hash=hash_value(raw)))
     return codes
 
 

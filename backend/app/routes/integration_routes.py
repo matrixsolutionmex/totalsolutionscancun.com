@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 from app.auth.jwt_handler import get_db
+from app.core.organization import get_or_create_default_organization
 from app.models.lead import Lead
 from app.schemas.lead_schema import IntegrationLeadCreate, LeadResponse
 from app.services.lead_entry_service import duplicate_lead, duplicate_lead_message, ensure_property_id, lead_mapping_from_integration
@@ -28,7 +29,9 @@ def create_integration_lead(
     db: Session = Depends(get_db),
     _token: None = Depends(require_integration_token),
 ):
+    organization = get_or_create_default_organization(db)
     mapping = lead_mapping_from_integration(payload)
+    mapping["organization_id"] = organization.id
     duplicate = duplicate_lead(
         db,
         email=mapping.get("email"),
@@ -36,6 +39,7 @@ def create_integration_lead(
         whatsapp=mapping.get("whatsapp"),
         external_source=mapping.get("external_source"),
         external_id=mapping.get("external_id"),
+        organization_id=organization.id,
     )
     if duplicate:
         raise HTTPException(status_code=409, detail=duplicate_lead_message(duplicate))
