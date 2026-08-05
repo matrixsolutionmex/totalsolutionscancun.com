@@ -401,6 +401,11 @@
       box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.28), var(--shadow-md);
     }
 
+    .card.notification-target {
+      border-color: var(--success) !important;
+      box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.28), var(--shadow-md);
+    }
+
     .pending-user-controls {
       display: grid;
       grid-template-columns: repeat(4, minmax(120px, 1fr));
@@ -4698,6 +4703,13 @@
       if (!lead) {
         alert("Cliente no encontrado en el tablero actual.");
         return;
+      }
+      showView("vendas");
+      const row = document.querySelector(`[data-lead-id="${String(leadId).replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"]`);
+      if (row) {
+        row.scrollIntoView({ behavior: "smooth", block: "center" });
+        row.classList.add("notification-target");
+        setTimeout(() => row.classList.remove("notification-target"), 4500);
       }
       openLeadModal(lead);
     }

@@ -44,6 +44,8 @@ from app.routes.notification_routes import (
 )
 from app.schemas.lead_schema import IntegrationLeadCreate, LeadAssignUpdate, LeadCreate, LeadPipelineUpdate, LeadUpdate
 from app.schemas.notification_schema import WebPushDeactivateRequest, WebPushKeys, WebPushSubscriptionCreate
+from app.services.import_service import import_lead_records
+from app.services.notification_service import notification_push_payload, notify_client_created
 
 
 @pytest.fixture()
@@ -76,7 +78,7 @@ def db():
         session.close()
 
 
-def make_user(db, username, role, manager_id=None):
+def make_user(db, username, role, manager_id=None, organization_id=None, status="ACTIVE", is_active=True):
     user = User(
         username=username,
         email=f"{username}@totalsolutions.test",
@@ -84,8 +86,9 @@ def make_user(db, username, role, manager_id=None):
         password_hash=hash_password("secret"),
         role=role,
         manager_id=manager_id,
-        status="ACTIVE",
-        is_active=True,
+        organization_id=organization_id,
+        status=status,
+        is_active=is_active,
         email_verified=True,
     )
     db.add(user)
@@ -200,6 +203,218 @@ def test_manual_client_creation_starts_unassigned(db):
     assert lead.service_order.qr_token is None
     assert lead.service_order.warranty_seal_status == "PENDENTE"
     assert lead.service_order.checklist_status == "PENDENTE"
+
+
+def test_client_created_notifies_other_active_admin_in_same_organization(db):
+    org = make_organization(db, "client-created-org", "Cliente Created Org")
+    actor = make_user(db, "admin-criador", "ROOT", organization_id=org.id)
+    recipient = make_user(db, "admin-destino", "ROOT", organization_id=org.id)
+
+    lead = create_lead(LeadCreate(nombre="Cliente Privado", telefono="9980001111"), db, actor)
+
+    actor_notifications = list_notifications(20, None, db, actor)
+    recipient_notifications = list_notifications(20, None, db, recipient)
+    assert actor_notifications == []
+    assert len(recipient_notifications) == 1
+    notification = recipient_notifications[0]
+    assert notification.type == "client_created"
+    assert notification.title == "Nuevo cliente registrado"
+    assert notification.message == "Admin-Criador registró un nuevo cliente."
+    assert notification.lead_id == lead.id
+    assert notification.action_url == f"/?lead_id={lead.id}&source=client_created"
+    assert notification.priority == "NORMAL"
+    assert notification.metadata["event_type"] == "CLIENT_CREATED"
+    assert notification.metadata["entity_type"] == "client"
+    assert notification.metadata["entity_id"] == lead.id
+    assert notification.metadata["deduplication_key"] == f"client_created:{org.id}:{lead.id}"
+
+
+def test_client_created_by_technician_notifies_admin_without_sensitive_push_payload(db):
+    org = make_organization(db, "client-created-tech", "Cliente Created Tech")
+    admin = make_user(db, "admin-tecnico", "ROOT", organization_id=org.id)
+    technician = make_user(db, "juan-tecnico", "BROKER", organization_id=org.id)
+
+    lead = create_lead(
+        LeadCreate(
+            nombre="Cliente Sensible",
+            telefono="9989998877",
+            email="cliente.sensible@example.com",
+            direccion="Direccion privada 123",
+            assigned_to_user_id=999,
+        ),
+        db,
+        technician,
+    )
+
+    notifications = list_notifications(20, None, db, admin)
+    assert len(notifications) == 1
+    notification = notifications[0]
+    assert notification.type == "client_created"
+    assert notification.actor_user_id == technician.id
+    assert notification.message == "Juan-Tecnico registró un nuevo cliente."
+    payload = notification_push_payload(db, db.query(Notification).filter(Notification.id == notification.id).first())
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert payload["url"].endswith(f"/?lead_id={lead.id}&source=client_created")
+    assert "Cliente Sensible" not in serialized
+    assert "9989998877" not in serialized
+    assert "cliente.sensible@example.com" not in serialized
+    assert "Direccion privada" not in serialized
+
+
+def test_client_update_does_not_create_client_created_again(db):
+    org = make_organization(db, "client-update-org", "Cliente Update Org")
+    actor = make_user(db, "admin-update", "ROOT", organization_id=org.id)
+    recipient = make_user(db, "admin-update-destino", "ROOT", organization_id=org.id)
+    lead = create_lead(LeadCreate(nombre="Cliente Actualizable", telefono="9981001000"), db, actor)
+    assert unread_notification_count(db, recipient)["unread"] == 1
+
+    update_lead(lead.id, LeadUpdate(nome="Cliente Actualizado"), db, actor)
+
+    notifications = list_notifications(20, None, db, recipient)
+    assert len([notification for notification in notifications if notification.type == "client_created"]) == 1
+
+
+def test_client_created_notification_is_idempotent_per_recipient(db):
+    org = make_organization(db, "client-idempotent-org", "Cliente Idempotente Org")
+    actor = make_user(db, "admin-idempotent", "ROOT", organization_id=org.id)
+    recipient = make_user(db, "admin-idempotent-destino", "ROOT", organization_id=org.id)
+    lead = create_lead(LeadCreate(nombre="Cliente Dedupe", telefono="9981002000"), db, actor)
+    assert unread_notification_count(db, recipient)["unread"] == 1
+
+    first = notify_client_created(db, lead=lead, actor=actor)
+    second = notify_client_created(db, lead=lead, actor=actor)
+    db.commit()
+
+    notifications = list_notifications(20, None, db, recipient)
+    assert first == second == [notifications[0].id]
+    assert len([notification for notification in notifications if notification.type == "client_created"]) == 1
+
+
+def test_client_created_excludes_inactive_admin_and_other_organization(db):
+    org_a = make_organization(db, "client-org-a", "Cliente Org A")
+    org_b = make_organization(db, "client-org-b", "Cliente Org B")
+    actor = make_user(db, "admin-org-a", "ROOT", organization_id=org_a.id)
+    active_admin = make_user(db, "admin-org-a-destino", "ROOT", organization_id=org_a.id)
+    inactive_admin = make_user(db, "admin-inativo", "ROOT", organization_id=org_a.id, status="SUSPENDED", is_active=False)
+    other_admin = make_user(db, "admin-org-b", "ROOT", organization_id=org_b.id)
+
+    create_lead(LeadCreate(nombre="Cliente Isolado", telefono="9981112222"), db, actor)
+
+    assert unread_notification_count(db, active_admin)["unread"] == 1
+    assert unread_notification_count(db, inactive_admin)["unread"] == 0
+    assert unread_notification_count(db, other_admin)["unread"] == 0
+
+
+def test_client_created_single_admin_is_audit_only_without_push(db, monkeypatch):
+    from app.services import notification_service
+
+    org = make_organization(db, "client-single-admin", "Cliente Single Admin")
+    actor = make_user(db, "admin-solo", "ROOT", organization_id=org.id)
+    calls = []
+
+    def unexpected_webpush(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setenv("WEB_PUSH_VAPID_PUBLIC_KEY", "public-key")
+    monkeypatch.setenv("WEB_PUSH_VAPID_PRIVATE_KEY", "private-key")
+    monkeypatch.setenv("WEB_PUSH_CONTACT_EMAIL", "admin@totalsolutions.test")
+    monkeypatch.setattr(notification_service, "webpush", unexpected_webpush)
+    db.add(NotificationPreference(user_id=actor.id, organization_id=org.id, browser_enabled=True))
+    db.add(
+        WebPushSubscription(
+            organization_id=org.id,
+            user_id=actor.id,
+            endpoint="https://push.example.test/actor",
+            p256dh="client-public-key",
+            auth="client-auth-secret",
+            active=True,
+        )
+    )
+    db.commit()
+
+    create_lead(LeadCreate(nombre="Cliente Auditoria", telefono="9982223333"), db, actor)
+
+    notifications = list_notifications(20, None, db, actor)
+    assert len(notifications) == 1
+    assert notifications[0].type == "client_created"
+    assert calls == []
+
+
+def test_web_push_failure_does_not_rollback_client_created(db, monkeypatch):
+    from app.services import notification_service
+
+    org = make_organization(db, "client-push-failure", "Cliente Push Failure")
+    actor = make_user(db, "admin-push-criador", "ROOT", organization_id=org.id)
+    recipient = make_user(db, "admin-push-destino", "ROOT", organization_id=org.id)
+
+    class ProviderFailure(Exception):
+        response = type("Response", (), {"status_code": 500})()
+
+    def failing_webpush(**_kwargs):
+        raise ProviderFailure()
+
+    monkeypatch.setenv("WEB_PUSH_VAPID_PUBLIC_KEY", "public-key")
+    monkeypatch.setenv("WEB_PUSH_VAPID_PRIVATE_KEY", "private-key")
+    monkeypatch.setenv("WEB_PUSH_CONTACT_EMAIL", "admin@totalsolutions.test")
+    monkeypatch.setattr(notification_service, "webpush", failing_webpush)
+    monkeypatch.setattr(notification_service, "WebPushException", ProviderFailure)
+    db.add(NotificationPreference(user_id=recipient.id, organization_id=org.id, browser_enabled=True))
+    db.add(
+        WebPushSubscription(
+            organization_id=org.id,
+            user_id=recipient.id,
+            endpoint="https://push.example.test/failure",
+            p256dh="client-public-key",
+            auth="client-auth-secret",
+            active=True,
+        )
+    )
+    db.commit()
+
+    lead = create_lead(LeadCreate(nombre="Cliente Push Falha", telefono="9983334444"), db, actor)
+
+    assert db.query(Lead).filter(Lead.id == lead.id).first() is not None
+    assert unread_notification_count(db, recipient)["unread"] == 1
+
+
+def test_bulk_import_does_not_emit_individual_client_created_notifications(db):
+    org = make_organization(db, "client-import-org", "Cliente Import Org")
+    admin = make_user(db, "admin-import", "ROOT", organization_id=org.id)
+
+    stats = import_lead_records(
+        db,
+        [
+            {"nome": "Importado Uno", "contato": "9984440001"},
+            {"nome": "Importado Dos", "contato": "9984440002"},
+        ],
+        organization_id=org.id,
+    )
+
+    assert stats.inserted == 2
+    assert unread_notification_count(db, admin)["unread"] == 0
+    assert db.query(Notification).filter(Notification.type == "client_created").count() == 0
+
+
+def test_assignment_push_payload_hides_client_name_but_keeps_existing_alert(db):
+    org = make_organization(db, "assignment-payload-org", "Assignment Payload Org")
+    root = make_user(db, "root-payload", "ROOT", organization_id=org.id)
+    technician = make_user(db, "tecnico-payload-safe", "BROKER", organization_id=org.id)
+    lead = create_lead(
+        LeadCreate(nombre="Cliente Tela Bloqueada", telefono="9985556666", assigned_to_user_id=technician.id),
+        db,
+        root,
+    )
+
+    notification = (
+        db.query(Notification)
+        .filter(Notification.type == "lead_assigned", Notification.recipient_user_id == technician.id)
+        .one()
+    )
+    assert "Cliente Tela Bloqueada" in notification.message
+    payload = notification_push_payload(db, notification)
+    assert payload["title"] == "Nueva solicitud asignada"
+    assert lead.service_order.order_number in payload["body"]
+    assert "Cliente Tela Bloqueada" not in payload["body"]
 
 
 def test_service_order_number_is_generated_sequentially(db):

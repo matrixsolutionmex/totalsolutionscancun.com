@@ -36,7 +36,7 @@ from app.services.lead_entry_service import (
     validate_responsible,
 )
 from app.services.service_order_service import ensure_service_order, sync_service_order_from_lead
-from app.services.notification_service import dispatch_web_push_for_notification_ids, notify_assignment_change
+from app.services.notification_service import dispatch_web_push_for_notification_ids, notify_assignment_change, notify_client_created
 
 router = APIRouter(prefix="/leads", tags=["leads"])
 
@@ -240,13 +240,14 @@ def create_lead(
         "ENTRADA",
         f"OS {service_order.order_number} criada para cliente com origem {lead.origen or 'OTRO'}",
     )
+    pending_push_notification_ids = notify_client_created(db, lead=lead, actor=actor)
     pending_push_notification_ids = notify_assignment_change(
         db,
         lead=lead,
         actor=actor,
         previous_user_id=None,
         new_user_id=lead.assigned_to_user_id,
-    )
+    ) + pending_push_notification_ids
     db.commit()
     dispatch_web_push_for_notification_ids(db, pending_push_notification_ids)
     db.refresh(lead)

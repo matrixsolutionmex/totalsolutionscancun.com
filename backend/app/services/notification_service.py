@@ -184,9 +184,19 @@ def notification_push_payload(db: Session, notification: Notification) -> dict:
     if action_url.startswith("/") and base_url:
         absolute_url = f"{base_url}{action_url}"
 
+    push_body = notification.message
+    if lead and notification.type in {"lead_assigned", "lead_reassigned", "lead_unassigned"}:
+        actor = actor_name(db.query(User).filter(User.id == notification.actor_user_id).first()) if notification.actor_user_id else "Sistema"
+        if notification.type == "lead_unassigned":
+            push_body = f"{actor} retiró la solicitud {order_number} de su responsabilidad."
+        elif notification.type == "lead_reassigned":
+            push_body = f"{actor} reasignó la solicitud {order_number}."
+        else:
+            push_body = f"{actor} asignó la solicitud {order_number} a su responsabilidad."
+
     return {
         "title": notification.title,
-        "body": notification.message,
+        "body": push_body,
         "url": absolute_url,
         "lead_id": notification.lead_id,
         "notification_id": notification.id,
@@ -428,6 +438,68 @@ def notify_assignment_change(
             enqueue_email=False,
         )
         if notification:
+            notification_ids.append(notification.id)
+
+    return notification_ids
+
+
+def notify_client_created(
+    db: Session,
+    *,
+    lead: Lead,
+    actor: User | None,
+) -> list[int]:
+    if not lead.organization_id:
+        return []
+
+    admins = (
+        db.query(User)
+        .filter(
+            User.organization_id == lead.organization_id,
+            User.role == "ROOT",
+            User.status == "ACTIVE",
+            User.is_active.is_(True),
+        )
+        .order_by(User.id.asc())
+        .all()
+    )
+    if not admins:
+        return []
+
+    deduplication_key = f"client_created:{lead.organization_id}:{lead.id}"
+    actor_display_name = actor_name(actor)
+    title = "Nuevo cliente registrado"
+    message = f"{actor_display_name} registró un nuevo cliente."
+    action_url = f"/?lead_id={lead.id}&source=client_created"
+    eligible_admins = [admin for admin in admins if not actor or admin.id != actor.id]
+    recipients = eligible_admins or admins
+    notification_ids: list[int] = []
+
+    for admin in recipients:
+        is_actor_recipient = actor is not None and admin.id == actor.id
+        notification = create_notification(
+            db,
+            recipient=admin,
+            actor=actor,
+            type_="client_created",
+            title=title,
+            message=message,
+            lead=lead,
+            priority="NORMAL",
+            action_url=action_url,
+            idempotency_key=f"{deduplication_key}:recipient:{admin.id}",
+            metadata={
+                "event_type": "CLIENT_CREATED",
+                "entity_type": "client",
+                "entity_id": lead.id,
+                "client_id": lead.id,
+                "deduplication_key": deduplication_key,
+                "deep_link": action_url,
+            },
+            enqueue_email=False,
+            allow_actor_recipient=not eligible_admins,
+        )
+        if notification and not is_actor_recipient:
             notification_ids.append(notification.id)
 
     return notification_ids
