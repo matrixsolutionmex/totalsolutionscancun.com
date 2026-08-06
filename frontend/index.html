@@ -3148,6 +3148,7 @@
     let authPublicConfig = { turnstile_required: false, turnstile_site_key: null, google_client_id: null, public_signup_enabled: true };
     let turnstileWidgets = {};
     let pendingVerificationEmail = "";
+    const pendingVerificationEmailStorageKey = "totalsolutions_pending_verification_email";
     let resendVerificationTimer = null;
     let resendVerificationSeconds = 0;
     let pendingMfaChallenge = "";
@@ -3277,6 +3278,34 @@
       }
     }
 
+    function savePendingVerificationEmail(email) {
+      pendingVerificationEmail = String(email || "").trim();
+      try {
+        if (pendingVerificationEmail) {
+          sessionStorage.setItem(pendingVerificationEmailStorageKey, pendingVerificationEmail);
+        } else {
+          sessionStorage.removeItem(pendingVerificationEmailStorageKey);
+        }
+      } catch (_error) {
+        // sessionStorage pode estar indisponivel em navegadores privados.
+      }
+      return pendingVerificationEmail;
+    }
+
+    function loadPendingVerificationEmail() {
+      if (pendingVerificationEmail) return pendingVerificationEmail;
+      try {
+        pendingVerificationEmail = sessionStorage.getItem(pendingVerificationEmailStorageKey) || "";
+      } catch (_error) {
+        pendingVerificationEmail = "";
+      }
+      return pendingVerificationEmail;
+    }
+
+    function verificationDeliveryFailed(data) {
+      return data?.email_delivery_status === "unavailable";
+    }
+
     function showLoginForm() {
       document.getElementById("registerForm").classList.add("hidden");
       document.getElementById("emailVerificationForm").classList.add("hidden");
@@ -3368,14 +3397,14 @@
     }
 
     function showEmailVerificationForm({ email, maskedEmail, resendAfterSeconds = 60 } = {}) {
-      pendingVerificationEmail = email || pendingVerificationEmail;
+      const currentEmail = savePendingVerificationEmail(email || loadPendingVerificationEmail());
       document.getElementById("loginForm").classList.add("hidden");
       document.getElementById("registerForm").classList.add("hidden");
       document.getElementById("reactivationForm").classList.add("hidden");
       document.getElementById("recoveryForm").classList.add("hidden");
       document.getElementById("mfaForm").classList.add("hidden");
       document.getElementById("emailVerificationForm").classList.remove("hidden");
-      document.getElementById("emailReviewMasked").value = maskedEmail || maskEmailForDisplay(pendingVerificationEmail);
+      document.getElementById("emailReviewMasked").value = maskedEmail || maskEmailForDisplay(currentEmail);
       setAuthStatus("emailVerificationStatus", t("emailReviewSent"), "success");
       resetTurnstile("email_verification_resend");
       resetTurnstile("email_verification_change");
@@ -3545,6 +3574,8 @@
         changeEmailSuccess: "Se a solicitação for válida, enviaremos um novo link para o e-mail informado.",
         changeEmailError: "Não foi possível alterar o e-mail agora.",
         resendError: "Não foi possível reenviar agora.",
+        emailDeliveryUnavailable: "Não foi possível enviar o e-mail agora. Tente novamente em alguns minutos.",
+        emailMissingForResend: "Informe o e-mail para reenviar a confirmação.",
         pendingUsersTitle: "Registros pendientes de aprobación",
         noPendingUsers: "Nenhum cadastro aguardando aprovação.",
         approve: "Aprovar",
@@ -3697,6 +3728,8 @@
         changeEmailSuccess: "If the request is valid, we will send a new link to the informed email.",
         changeEmailError: "We could not change the email right now.",
         resendError: "We could not resend it right now.",
+        emailDeliveryUnavailable: "We could not send the email right now. Try again in a few minutes.",
+        emailMissingForResend: "Enter the email address to resend confirmation.",
         pendingUsersTitle: "Registrations awaiting approval",
         noPendingUsers: "No registrations awaiting approval.",
         approve: "Approve",
@@ -3857,6 +3890,8 @@
         changeEmailSuccess: "Si la solicitud es válida, enviaremos un nuevo enlace al correo informado.",
         changeEmailError: "No fue posible cambiar el correo ahora.",
         resendError: "No fue posible reenviar ahora.",
+        emailDeliveryUnavailable: "No fue posible enviar el correo ahora. Inténtalo nuevamente en unos minutos.",
+        emailMissingForResend: "Informa el correo para reenviar la confirmación.",
         pendingUsersTitle: "Registros pendientes de aprobación",
         noPendingUsers: "No hay registros pendientes de aprobación.",
         approve: "Aprobar",
@@ -6499,6 +6534,7 @@
 
       const response = await fetch(`${API_BASE}/auth/register`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           full_name: document.getElementById("registerFullName").value.trim(),
@@ -6526,40 +6562,56 @@
         maskedEmail: data.masked_email,
         resendAfterSeconds: data.resend_after_seconds || 60
       });
+      if (verificationDeliveryFailed(data)) {
+        setAuthStatus("emailVerificationStatus", data.message || t("emailDeliveryUnavailable"), "error");
+      }
     }
 
     async function resendVerificationEmail() {
-      if (!pendingVerificationEmail) {
-        showRegisterForm();
+      const email = loadPendingVerificationEmail();
+      if (!email) {
+        setAuthStatus("emailVerificationStatus", t("emailMissingForResend"), "error");
         return;
       }
       setAuthStatus("emailVerificationStatus");
-      const response = await fetch(`${API_BASE}/auth/resend-verification`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: pendingVerificationEmail,
-          turnstile_token: turnstileToken("email_verification_resend")
-        })
-      });
+      let response;
+      try {
+        response = await fetch(`${API_BASE}/auth/resend-verification`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email,
+            turnstile_token: turnstileToken("email_verification_resend")
+          })
+        });
+      } catch (_error) {
+        resetTurnstile("email_verification_resend");
+        setAuthStatus("emailVerificationStatus", t("resendError"), "error");
+        return;
+      }
       resetTurnstile("email_verification_resend");
       if (!response.ok) {
         setAuthStatus("emailVerificationStatus", await responseMessage(response, t("resendError")), "error");
         return;
       }
       const data = await response.json();
-      setAuthStatus("emailVerificationStatus", data.message || t("emailReviewSent"), "success");
-      document.getElementById("emailReviewMasked").value = data.masked_email || maskEmailForDisplay(pendingVerificationEmail);
+      const statusType = verificationDeliveryFailed(data) ? "error" : "success";
+      const statusMessage = verificationDeliveryFailed(data)
+        ? data.message || t("emailDeliveryUnavailable")
+        : data.message || t("emailReviewSent");
+      setAuthStatus("emailVerificationStatus", statusMessage, statusType);
+      document.getElementById("emailReviewMasked").value = data.masked_email || maskEmailForDisplay(email);
       startResendVerificationCountdown(data.resend_after_seconds || 60);
     }
 
     async function changeVerificationEmail() {
-      if (!pendingVerificationEmail) {
-        showRegisterForm();
+      const currentEmail = loadPendingVerificationEmail();
+      if (!currentEmail) {
+        setAuthStatus("emailVerificationStatus", t("emailMissingForResend"), "error");
         return;
       }
-      const newEmail = window.prompt(t("changeEmailPrompt"), pendingVerificationEmail);
+      const newEmail = window.prompt(t("changeEmailPrompt"), currentEmail);
       if (!newEmail) return;
       setAuthStatus("emailVerificationStatus");
       const response = await fetch(`${API_BASE}/auth/change-verification-email`, {
@@ -6567,7 +6619,7 @@
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          old_email: pendingVerificationEmail,
+          old_email: currentEmail,
           new_email: newEmail.trim(),
           turnstile_token: turnstileToken("email_verification_change")
         })
@@ -6578,9 +6630,13 @@
         return;
       }
       const data = await response.json();
-      pendingVerificationEmail = newEmail.trim();
-      document.getElementById("emailReviewMasked").value = data.masked_email || maskEmailForDisplay(pendingVerificationEmail);
-      setAuthStatus("emailVerificationStatus", data.message || t("changeEmailSuccess"), "success");
+      const savedEmail = savePendingVerificationEmail(newEmail.trim());
+      document.getElementById("emailReviewMasked").value = data.masked_email || maskEmailForDisplay(savedEmail);
+      const statusType = verificationDeliveryFailed(data) ? "error" : "success";
+      const statusMessage = verificationDeliveryFailed(data)
+        ? data.message || t("emailDeliveryUnavailable")
+        : data.message || t("changeEmailSuccess");
+      setAuthStatus("emailVerificationStatus", statusMessage, statusType);
       startResendVerificationCountdown(data.resend_after_seconds || 60);
     }
 

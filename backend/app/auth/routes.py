@@ -74,6 +74,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 PUBLIC_AUTH_MESSAGE = "Si la información es válida, recibirás las próximas instrucciones."
 PUBLIC_REGISTER_MESSAGE = "Enviamos un enlace de confirmación a tu correo electrónico."
+PUBLIC_EMAIL_DELIVERY_UNAVAILABLE_MESSAGE = "No fue posible enviar el correo ahora. Inténtalo nuevamente en unos minutos."
 EMAIL_VERIFICATION_TTL_MINUTES = 60
 EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS = 60
 EMAIL_CONFIRMED_REDIRECT_PATH = "/?email_confirmed=1"
@@ -328,11 +329,18 @@ def issue_email_verification(db: Session, user: User) -> bool:
     return send_verification_email(to_email=user.email, full_name=user.full_name, verification_url=verification_url)
 
 
-def generic_register_response(email: str) -> RegisterResponse:
+def generic_register_response(
+    email: str,
+    *,
+    message: str = PUBLIC_REGISTER_MESSAGE,
+    email_delivery_status: str = "accepted",
+    resend_after_seconds: int = EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS,
+) -> RegisterResponse:
     return RegisterResponse(
-        message=PUBLIC_REGISTER_MESSAGE,
+        message=message,
         masked_email=mask_email(email),
-        resend_after_seconds=EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS,
+        resend_after_seconds=resend_after_seconds,
+        email_delivery_status=email_delivery_status,
     )
 
 
@@ -450,12 +458,17 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
     db.commit()
     if not email_sent:
         logger.warning("Email de verificacao nao enviado para user_id=%s; configuracao SMTP/PUBLIC_BASE_URL incompleta ou indisponivel.", user.id)
-    return generic_register_response(email)
+    return generic_register_response(
+        email,
+        message=PUBLIC_REGISTER_MESSAGE if email_sent else PUBLIC_EMAIL_DELIVERY_UNAVAILABLE_MESSAGE,
+        email_delivery_status="accepted" if email_sent else "unavailable",
+    )
 
 
 @router.post("/resend-verification", response_model=RegisterResponse)
 def resend_verification(payload: EmailVerificationResendRequest, request: Request, db: Session = Depends(get_db)):
     email = normalized_email(payload.email)
+    logger.info("Solicitacao de reenvio de verificacao recebida: user_email_hash=%s", hash_value(email))
     apply_public_rate_limits(request, email, "email_verification_resend")
     verify_turnstile_or_403(db, request, token=payload.turnstile_token, expected_action="email_verification_resend")
     user = (
@@ -475,7 +488,11 @@ def resend_verification(payload: EmailVerificationResendRequest, request: Reques
         remaining = EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS - int((now - sent_at).total_seconds())
         audit_auth_event(db, request=request, event_type="EMAIL_VERIFICATION_RESEND", outcome="COOLDOWN", user=user)
         db.commit()
-        return RegisterResponse(message=PUBLIC_REGISTER_MESSAGE, masked_email=mask_email(email), resend_after_seconds=max(remaining, 1))
+        return generic_register_response(
+            email,
+            email_delivery_status="cooldown",
+            resend_after_seconds=max(remaining, 1),
+        )
 
     email_sent = issue_email_verification(db, user)
     audit_auth_event(
@@ -489,7 +506,11 @@ def resend_verification(payload: EmailVerificationResendRequest, request: Reques
     db.commit()
     if not email_sent:
         logger.warning("Reenvio de verificacao nao enviado para user_id=%s; configuracao SMTP/PUBLIC_BASE_URL incompleta ou indisponivel.", user.id)
-    return generic_register_response(email)
+    return generic_register_response(
+        email,
+        message=PUBLIC_REGISTER_MESSAGE if email_sent else PUBLIC_EMAIL_DELIVERY_UNAVAILABLE_MESSAGE,
+        email_delivery_status="accepted" if email_sent else "unavailable",
+    )
 
 
 @router.post("/change-verification-email", response_model=RegisterResponse)
@@ -542,7 +563,11 @@ def change_verification_email(payload: EmailVerificationChangeRequest, request: 
     db.commit()
     if not email_sent:
         logger.warning("Alteracao de email pendente para user_id=%s; configuracao SMTP/PUBLIC_BASE_URL incompleta ou indisponivel.", user.id)
-    return generic_register_response(new_email)
+    return generic_register_response(
+        new_email,
+        message=PUBLIC_REGISTER_MESSAGE if email_sent else PUBLIC_EMAIL_DELIVERY_UNAVAILABLE_MESSAGE,
+        email_delivery_status="accepted" if email_sent else "unavailable",
+    )
 
 
 @router.post("/reactivation-request", response_model=ReactivationRequestResponse)

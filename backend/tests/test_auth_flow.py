@@ -155,8 +155,9 @@ def token_from_last_verification_email():
 
 
 class CapturingResendResponse:
-    status = 200
-    body = b'{"id":"email-test-id"}'
+    def __init__(self, status=200, body=b'{"id":"email-test-id"}'):
+        self.status = status
+        self.body = body
 
     def __enter__(self):
         return self
@@ -342,6 +343,40 @@ def test_email_verification_resend_invalidates_old_token_and_expiration(monkeypa
     session.close()
 
 
+def test_email_verification_resend_reports_unavailable_when_provider_fails(monkeypatch, caplog):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    configure_smtp_capture(monkeypatch)
+    session = create_test_session()
+    register(
+        RegisterRequest(
+            full_name="Reenvio Falha",
+            email="reenvio-falha@example.com",
+            password="broker-password",
+        ),
+        make_request("/auth/register"),
+        session,
+    )
+    user = session.query(User).filter(User.email == "reenvio-falha@example.com").one()
+    user.email_verification_sent_at = auth_routes.now_utc() - timedelta(seconds=90)
+    session.commit()
+    CapturingSMTP.fail_send = True
+    CapturingSMTP.sent_messages = []
+
+    with caplog.at_level("INFO"):
+        resend = resend_verification(
+            EmailVerificationResendRequest(email="reenvio-falha@example.com"),
+            make_request("/auth/resend-verification"),
+            session,
+        )
+
+    assert resend.email_delivery_status == "unavailable"
+    assert resend.message == auth_routes.PUBLIC_EMAIL_DELIVERY_UNAVAILABLE_MESSAGE
+    assert "Solicitacao de reenvio de verificacao recebida" in caplog.text
+    assert "reenvio-falha@example.com" not in caplog.text
+    assert "/auth/verify-email?token=" not in caplog.text
+    session.close()
+
+
 def test_raw_legacy_verification_token_is_not_accepted(monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
     session = create_test_session()
@@ -487,6 +522,93 @@ def test_resend_api_is_used_for_verification_email(monkeypatch):
     assert "qa@example.com" in captured["payload"]
 
 
+@pytest.mark.parametrize("status_code", [400, 401, 403, 422, 429, 500])
+def test_resend_api_http_errors_are_controlled_without_token_leak(monkeypatch, caplog, status_code):
+    def fake_urlopen(_request, timeout):
+        raise auth_routes.urlerror.HTTPError(
+            "https://api.resend.com/emails",
+            status_code,
+            "resend-error",
+            hdrs=None,
+            fp=None,
+        )
+
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://totalsolutionscancun.com")
+    monkeypatch.setenv("SMTP_HOST", "smtp.resend.com")
+    monkeypatch.setenv("SMTP_PORT", "465")
+    monkeypatch.setenv("SMTP_USERNAME", "resend")
+    monkeypatch.setenv("SMTP_PASSWORD", "re_test_api_key")
+    monkeypatch.setenv("SMTP_FROM", "no-reply@totalsolutionscancun.com")
+    monkeypatch.setenv("SMTP_USE_SSL", "true")
+    monkeypatch.setenv("SMTP_USE_TLS", "false")
+    monkeypatch.setattr(auth_routes.urlrequest, "urlopen", fake_urlopen)
+
+    with caplog.at_level("WARNING"):
+        sent = auth_routes.send_verification_email(
+            to_email="qa-http@example.com",
+            full_name="QA",
+            verification_url="https://totalsolutionscancun.com/auth/verify-email?token=secret-token",
+        )
+
+    assert sent is False
+    assert f"status={status_code}" in caplog.text
+    assert "secret-token" not in caplog.text
+    assert "qa-http@example.com" not in caplog.text
+
+
+def test_resend_api_timeout_is_controlled_without_token_leak(monkeypatch, caplog):
+    def fake_urlopen(_request, timeout):
+        raise TimeoutError("resend-timeout")
+
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://totalsolutionscancun.com")
+    monkeypatch.setenv("SMTP_HOST", "smtp.resend.com")
+    monkeypatch.setenv("SMTP_PORT", "465")
+    monkeypatch.setenv("SMTP_USERNAME", "resend")
+    monkeypatch.setenv("SMTP_PASSWORD", "re_test_api_key")
+    monkeypatch.setenv("SMTP_FROM", "no-reply@totalsolutionscancun.com")
+    monkeypatch.setenv("SMTP_USE_SSL", "true")
+    monkeypatch.setenv("SMTP_USE_TLS", "false")
+    monkeypatch.setattr(auth_routes.urlrequest, "urlopen", fake_urlopen)
+
+    with caplog.at_level("WARNING"):
+        sent = auth_routes.send_verification_email(
+            to_email="qa-timeout@example.com",
+            full_name="QA",
+            verification_url="https://totalsolutionscancun.com/auth/verify-email?token=secret-token",
+        )
+
+    assert sent is False
+    assert "TimeoutError" in caplog.text
+    assert "secret-token" not in caplog.text
+    assert "qa-timeout@example.com" not in caplog.text
+
+
+def test_resend_api_success_with_invalid_json_is_accepted(monkeypatch, caplog):
+    def fake_urlopen(_request, timeout):
+        return CapturingResendResponse(status=200, body=b"accepted")
+
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://totalsolutionscancun.com")
+    monkeypatch.setenv("SMTP_HOST", "smtp.resend.com")
+    monkeypatch.setenv("SMTP_PORT", "465")
+    monkeypatch.setenv("SMTP_USERNAME", "resend")
+    monkeypatch.setenv("SMTP_PASSWORD", "re_test_api_key")
+    monkeypatch.setenv("SMTP_FROM", "no-reply@totalsolutionscancun.com")
+    monkeypatch.setenv("SMTP_USE_SSL", "true")
+    monkeypatch.setenv("SMTP_USE_TLS", "false")
+    monkeypatch.setattr(auth_routes.urlrequest, "urlopen", fake_urlopen)
+
+    with caplog.at_level("INFO"):
+        sent = auth_routes.send_verification_email(
+            to_email="qa-json@example.com",
+            full_name="QA",
+            verification_url="https://totalsolutionscancun.com/auth/verify-email?token=secret-token",
+        )
+
+    assert sent is True
+    assert "response_id=sem-id" in caplog.text
+    assert "secret-token" not in caplog.text
+
+
 def test_legacy_email_migration_only_verifies_active_approved_users():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     session = sessionmaker(bind=engine)()
@@ -543,6 +665,8 @@ def test_smtp_failure_never_confirms_account_or_logs_token(monkeypatch, caplog):
         )
     assert "token" not in registration.model_dump_json()
     assert "verify-email" not in registration.model_dump_json()
+    assert registration.email_delivery_status == "unavailable"
+    assert registration.message == auth_routes.PUBLIC_EMAIL_DELIVERY_UNAVAILABLE_MESSAGE
     assert CapturingSMTP.sent_messages == []
     pending = session.query(User).filter(User.email == "smtp-falha@example.com").one()
     assert pending.email_verified is False
@@ -819,6 +943,7 @@ def test_suspended_email_creates_reactivation_request_without_duplicate(monkeypa
 
 def test_anonymized_email_can_register_again_as_pending(monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    configure_smtp_capture(monkeypatch)
     session = create_test_session()
     root = make_user(session, "root-anonymize", "ROOT")
     technician = make_user(session, "tecnico-anonymize", "BROKER", email="removed@example.com")

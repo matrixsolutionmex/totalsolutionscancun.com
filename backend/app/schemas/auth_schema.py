@@ -33,6 +33,7 @@ class RegisterResponse(BaseModel):
     message: str
     masked_email: str | None = None
     resend_after_seconds: int = 60
+    email_delivery_status: str = "accepted"
 
 
 class EmailVerificationResendRequest(BaseModel):
