@@ -185,6 +185,11 @@ def send_verification_email_with_resend_api(*, to_email: str, full_name: str | N
     api_key = resend_api_key()
     smtp_from = os.getenv("SMTP_FROM", "").strip()
     if not api_key or not smtp_from:
+        logger.warning(
+            "Email de verificacao via Resend API ignorado por configuracao incompleta: api_key=%s,smtp_from=%s",
+            bool(api_key),
+            bool(smtp_from),
+        )
         return False
 
     greeting = (full_name or "Hola").strip()
@@ -216,8 +221,38 @@ def send_verification_email_with_resend_api(*, to_email: str, full_name: str | N
     )
     try:
         with urlrequest.urlopen(request, timeout=15) as response:
-            return 200 <= response.status < 300
-    except (urlerror.HTTPError, urlerror.URLError, TimeoutError) as exc:
+            response_body = response.read().decode("utf-8", errors="replace")
+            response_id = ""
+            if response_body:
+                try:
+                    response_id = str(json.loads(response_body).get("id", ""))[:80]
+                except json.JSONDecodeError:
+                    response_id = ""
+            delivered = 200 <= response.status < 300
+            if delivered:
+                logger.info(
+                    "Email de verificacao aceito pela Resend API: status=%s,response_id=%s,user_email_hash=%s",
+                    response.status,
+                    response_id or "sem-id",
+                    hash_value(to_email),
+                )
+            else:
+                logger.warning(
+                    "Resend API recusou email de verificacao: status=%s,response_id=%s,user_email_hash=%s",
+                    response.status,
+                    response_id or "sem-id",
+                    hash_value(to_email),
+                )
+            return delivered
+    except urlerror.HTTPError as exc:
+        error_status = getattr(exc, "code", "unknown")
+        logger.warning(
+            "Falha HTTP ao enviar email de verificacao via Resend API: status=%s,user_email_hash=%s",
+            error_status,
+            hash_value(to_email),
+        )
+        return False
+    except (urlerror.URLError, TimeoutError) as exc:
         logger.warning(
             "Falha ao enviar email de verificacao via Resend API para user_email_hash=%s: %s",
             hash_value(to_email),

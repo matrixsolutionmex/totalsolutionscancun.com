@@ -156,12 +156,16 @@ def token_from_last_verification_email():
 
 class CapturingResendResponse:
     status = 200
+    body = b'{"id":"email-test-id"}'
 
     def __enter__(self):
         return self
 
     def __exit__(self, *_args):
         return None
+
+    def read(self):
+        return self.body
 
 
 def make_organization(session, slug="total-solutions-test", name="Total Solutions Test"):
