@@ -9,6 +9,7 @@ from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
 from app.database.connection import SessionLocal
+from app.models.organization import Organization
 from app.models.user import User
 from app.core.auth_security import validate_session_cookie
 
@@ -73,8 +74,45 @@ def verify_access_token(token: str) -> dict:
         ) from exc
 
 
-def user_can_access(user: User) -> bool:
-    return user.is_active and (not user.status or user.status == "ACTIVE")
+PENDING_ADMIN_STATUSES = {"PENDING", "PENDING_APPROVAL", "PENDING_ADMIN"}
+BLOCKED_USER_STATUSES = {"SUSPENDED", "INACTIVE", "ARCHIVED", "ANONYMIZED"}
+
+
+def normalize_user_status(status_value: str | None) -> str:
+    return (status_value or "ACTIVE").strip().upper() or "ACTIVE"
+
+
+def user_access_block_reason(db: Session, user: User | None) -> str | None:
+    if not user:
+        return "Usuario no autorizado"
+
+    status_value = normalize_user_status(user.status)
+    if not user.email_verified or status_value == "PENDING_EMAIL":
+        return "Correo pendiente de confirmación"
+    if status_value in PENDING_ADMIN_STATUSES:
+        return "Aprobación administrativa pendiente"
+    if not user.is_active or status_value in BLOCKED_USER_STATUSES:
+        return "Usuario suspendido o inactivo"
+    if status_value != "ACTIVE":
+        return "Usuario no autorizado"
+
+    if user.organization_id:
+        organization = db.query(Organization).filter(Organization.id == user.organization_id).first()
+        if not organization or (organization.status or "").strip().upper() != "ACTIVE":
+            return "Organización inactiva"
+
+    return None
+
+
+def user_can_access(user: User, db: Session | None = None) -> bool:
+    if db is None:
+        return (
+            user is not None
+            and bool(user.email_verified)
+            and bool(user.is_active)
+            and normalize_user_status(user.status) == "ACTIVE"
+        )
+    return user_access_block_reason(db, user) is None
 
 
 def get_current_user(
@@ -112,8 +150,9 @@ def get_current_user(
         )
 
     user = db.query(User).filter(User.id == user_id).first()
-    if not user or not user_can_access(user):
-        raise HTTPException(status_code=401, detail="Usuario inativo ou nao autorizado")
+    blocked_reason = user_access_block_reason(db, user)
+    if blocked_reason:
+        raise HTTPException(status_code=401, detail=blocked_reason)
     if payload and int(payload.get("session_version", -1)) != int(user.session_version or 0):
         raise HTTPException(status_code=401, detail="Sessao revogada")
     if payload and payload.get("organization_id") and int(payload["organization_id"]) != int(user.organization_id or 0):

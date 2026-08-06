@@ -31,7 +31,19 @@ class AuthResponse(BaseModel):
 
 class RegisterResponse(BaseModel):
     message: str
-    verification_url: str
+    masked_email: str | None = None
+    resend_after_seconds: int = 60
+
+
+class EmailVerificationResendRequest(BaseModel):
+    email: str
+    turnstile_token: str | None = None
+
+
+class EmailVerificationChangeRequest(BaseModel):
+    old_email: str
+    new_email: str
+    turnstile_token: str | None = None
 
 
 class ReactivationRequestCreate(BaseModel):
@@ -57,6 +69,7 @@ class PublicAuthConfig(BaseModel):
     turnstile_site_key: str | None = None
     turnstile_required: bool = False
     google_client_id: str | None = None
+    public_signup_enabled: bool = True
 
 
 class MfaVerifyRequest(BaseModel):

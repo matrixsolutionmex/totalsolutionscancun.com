@@ -11,7 +11,7 @@ from app.core.auth_security import revoke_sessions_for_user
 
 def normalize_user_status(status: str | None) -> str:
     value = (status or "").strip().upper()
-    if value in {"PENDING_EMAIL", "PENDING_APPROVAL"}:
+    if value in {"PENDING_EMAIL", "PENDING_APPROVAL", "PENDING_ADMIN"}:
         return "PENDING"
     return value or "ACTIVE"
 

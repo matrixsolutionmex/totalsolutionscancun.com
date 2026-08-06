@@ -2296,6 +2296,7 @@
             <option value="es">Español - México</option>
             <option value="en">English - UK/EUA</option>
             <option value="pt">Português - Brasil</option>
+            <option value="pt-PT">Português - Portugal</option>
           </select>
           <select id="loginTheme" title="Apariencia"></select>
           <input id="loginUser" placeholder="Usuario" data-i18n-placeholder="login_username_placeholder" autocomplete="off" autocapitalize="none" spellcheck="false">
@@ -2384,6 +2385,27 @@
         <button class="auth-switch" id="backToLoginButton" type="button">Volver al acceso</button>
         <div class="auth-status" id="registerStatus" aria-live="polite"></div>
       </form>
+      <section class="login-card hidden" id="emailVerificationForm" aria-live="polite">
+        <div class="brand-lockup compact" aria-label="Total Solutions">
+          <img class="brand-logo" src="/assets/assets/favicon.svg" alt="">
+          <div class="brand-wordmark">
+            <span>Total</span>
+            <span>Solutions</span>
+            <small>Correo seguro</small>
+          </div>
+        </div>
+        <h1 id="emailReviewTitle">Revisa tu correo</h1>
+        <div class="subtitle" id="emailReviewText">Enviamos un enlace de confirmación a tu correo electrónico. Debes confirmarlo antes de que un administrador pueda activar tu acceso.</div>
+        <div class="login-form">
+          <input id="emailReviewMasked" value="" readonly aria-label="Correo electrónico enmascarado">
+          <div class="turnstile-slot" id="resendVerificationTurnstile"></div>
+          <div class="turnstile-slot" id="changeVerificationTurnstile"></div>
+          <button id="resendVerificationButton" type="button">Reenviar correo</button>
+          <button class="auth-switch" id="changeVerificationEmailButton" type="button">Cambiar correo</button>
+          <button class="auth-switch" id="backToLoginFromEmailReviewButton" type="button">Volver al acceso</button>
+        </div>
+        <div class="auth-status" id="emailVerificationStatus" aria-live="polite"></div>
+      </section>
       <form class="login-card hidden" id="reactivationForm" autocomplete="off">
         <div class="brand-lockup compact" aria-label="Total Solutions">
           <img class="brand-logo" src="/assets/assets/favicon.svg" alt="">
@@ -3123,8 +3145,11 @@
       : window.location.origin;
     let accessToken = localStorage.getItem("totalsolutions_access_token") || "";
     let csrfToken = document.cookie.split("; ").find((row) => row.startsWith("ts_csrf="))?.split("=")[1] || "";
-    let authPublicConfig = { turnstile_required: false, turnstile_site_key: null, google_client_id: null };
+    let authPublicConfig = { turnstile_required: false, turnstile_site_key: null, google_client_id: null, public_signup_enabled: true };
     let turnstileWidgets = {};
+    let pendingVerificationEmail = "";
+    let resendVerificationTimer = null;
+    let resendVerificationSeconds = 0;
     let pendingMfaChallenge = "";
     let pendingMfaSetupRequired = false;
 
@@ -3155,7 +3180,7 @@
           authPublicConfig = await response.json();
         }
       } catch (_error) {
-        authPublicConfig = { turnstile_required: false, turnstile_site_key: null, google_client_id: null };
+        authPublicConfig = { turnstile_required: false, turnstile_site_key: null, google_client_id: null, public_signup_enabled: true };
       }
       updateGoogleProviderButton();
       updateAppleProviderButton();
@@ -3203,6 +3228,8 @@
       [
         ["login", "loginTurnstile"],
         ["register", "registerTurnstile"],
+        ["email_verification_resend", "resendVerificationTurnstile"],
+        ["email_verification_change", "changeVerificationTurnstile"],
         ["reactivation", "reactivationTurnstile"],
         ["password_recovery", "recoveryTurnstile"]
       ].forEach(([action, elementId]) => {
@@ -3252,18 +3279,25 @@
 
     function showLoginForm() {
       document.getElementById("registerForm").classList.add("hidden");
+      document.getElementById("emailVerificationForm").classList.add("hidden");
       document.getElementById("reactivationForm").classList.add("hidden");
       document.getElementById("recoveryForm").classList.add("hidden");
       document.getElementById("mfaForm").classList.add("hidden");
       document.getElementById("loginForm").classList.remove("hidden");
       setAuthStatus("registerStatus");
+      setAuthStatus("emailVerificationStatus");
       setAuthStatus("reactivationStatus");
       setAuthStatus("recoveryStatus");
       setAuthStatus("mfaStatus");
     }
 
     function showRegisterForm() {
+      if (authPublicConfig.public_signup_enabled === false) {
+        setAuthStatus("loginStatus", t("signupDisabled"), "error");
+        return;
+      }
       document.getElementById("loginForm").classList.add("hidden");
+      document.getElementById("emailVerificationForm").classList.add("hidden");
       document.getElementById("reactivationForm").classList.add("hidden");
       document.getElementById("recoveryForm").classList.add("hidden");
       document.getElementById("mfaForm").classList.add("hidden");
@@ -3274,6 +3308,7 @@
     function showReactivationForm() {
       document.getElementById("loginForm").classList.add("hidden");
       document.getElementById("registerForm").classList.add("hidden");
+      document.getElementById("emailVerificationForm").classList.add("hidden");
       document.getElementById("recoveryForm").classList.add("hidden");
       document.getElementById("mfaForm").classList.add("hidden");
       document.getElementById("reactivationForm").classList.remove("hidden");
@@ -3284,6 +3319,7 @@
     function showRecoveryForm() {
       document.getElementById("loginForm").classList.add("hidden");
       document.getElementById("registerForm").classList.add("hidden");
+      document.getElementById("emailVerificationForm").classList.add("hidden");
       document.getElementById("reactivationForm").classList.add("hidden");
       document.getElementById("mfaForm").classList.add("hidden");
       document.getElementById("recoveryForm").classList.remove("hidden");
@@ -3296,6 +3332,7 @@
       pendingMfaSetupRequired = Boolean(setupRequired);
       document.getElementById("loginForm").classList.add("hidden");
       document.getElementById("registerForm").classList.add("hidden");
+      document.getElementById("emailVerificationForm").classList.add("hidden");
       document.getElementById("reactivationForm").classList.add("hidden");
       document.getElementById("recoveryForm").classList.add("hidden");
       document.getElementById("mfaForm").classList.remove("hidden");
@@ -3306,6 +3343,50 @@
       if (setupRequired) {
         startMfaSetupFromChallenge().catch((error) => setAuthStatus("mfaStatus", error.message || "No fue posible iniciar MFA.", "error"));
       }
+    }
+
+    function startResendVerificationCountdown(seconds = 60) {
+      resendVerificationSeconds = Math.max(Number(seconds) || 60, 1);
+      const button = document.getElementById("resendVerificationButton");
+      if (resendVerificationTimer) {
+        clearInterval(resendVerificationTimer);
+      }
+      const tick = () => {
+        if (resendVerificationSeconds > 0) {
+          button.disabled = true;
+          button.textContent = `${t("resendEmail")} (${resendVerificationSeconds}s)`;
+          resendVerificationSeconds -= 1;
+          return;
+        }
+        button.disabled = false;
+        button.textContent = t("resendEmail");
+        clearInterval(resendVerificationTimer);
+        resendVerificationTimer = null;
+      };
+      tick();
+      resendVerificationTimer = setInterval(tick, 1000);
+    }
+
+    function showEmailVerificationForm({ email, maskedEmail, resendAfterSeconds = 60 } = {}) {
+      pendingVerificationEmail = email || pendingVerificationEmail;
+      document.getElementById("loginForm").classList.add("hidden");
+      document.getElementById("registerForm").classList.add("hidden");
+      document.getElementById("reactivationForm").classList.add("hidden");
+      document.getElementById("recoveryForm").classList.add("hidden");
+      document.getElementById("mfaForm").classList.add("hidden");
+      document.getElementById("emailVerificationForm").classList.remove("hidden");
+      document.getElementById("emailReviewMasked").value = maskedEmail || maskEmailForDisplay(pendingVerificationEmail);
+      setAuthStatus("emailVerificationStatus", t("emailReviewSent"), "success");
+      resetTurnstile("email_verification_resend");
+      resetTurnstile("email_verification_change");
+      startResendVerificationCountdown(resendAfterSeconds);
+    }
+
+    function maskEmailForDisplay(email) {
+      const [local = "", domain = ""] = String(email || "").split("@");
+      if (!domain) return "c***@***";
+      const prefix = local.slice(0, Math.min(2, local.length || 1));
+      return `${prefix}${"*".repeat(Math.max(3, local.length - prefix.length))}@${domain}`;
     }
     const stages = [
       "NOVO LEAD",
@@ -3452,8 +3533,18 @@
         registerButton: "Solicitar acceso",
         backToLogin: "Volver al acceso",
         passwordsMismatch: "As senhas não coincidem.",
-        registrationSuccess: "Cadastro recebido. Confirme seu e-mail e aguarde a aprovação do administrador.",
+        registrationSuccess: "Cadastro recebido. Revise seu e-mail para confirmar o acesso.",
         registrationError: "Não foi possível concluir o cadastro.",
+        signupDisabled: "Cadastro público temporariamente indisponível.",
+        emailReviewTitle: "Revise seu e-mail",
+        emailReviewText: "Enviamos um link de confirmação para seu e-mail. Você precisa confirmar antes que um administrador possa ativar seu acesso.",
+        emailReviewSent: "Link de confirmação enviado, se o e-mail estiver válido.",
+        resendEmail: "Reenviar e-mail",
+        changeEmail: "Alterar e-mail",
+        changeEmailPrompt: "Informe o e-mail correto para reenviar a confirmação.",
+        changeEmailSuccess: "Se a solicitação for válida, enviaremos um novo link para o e-mail informado.",
+        changeEmailError: "Não foi possível alterar o e-mail agora.",
+        resendError: "Não foi possível reenviar agora.",
         pendingUsersTitle: "Registros pendientes de aprobación",
         noPendingUsers: "Nenhum cadastro aguardando aprovação.",
         approve: "Aprovar",
@@ -3594,8 +3685,18 @@
         registerButton: "Request access",
         backToLogin: "Back to sign in",
         passwordsMismatch: "Passwords do not match.",
-        registrationSuccess: "Registration received. Verify your email and wait for administrator approval.",
+        registrationSuccess: "Registration received. Check your email to confirm access.",
         registrationError: "Registration could not be completed.",
+        signupDisabled: "Public signup is temporarily unavailable.",
+        emailReviewTitle: "Check your email",
+        emailReviewText: "We sent a confirmation link to your email address. You must confirm it before an administrator can activate your access.",
+        emailReviewSent: "Confirmation link sent if the email is valid.",
+        resendEmail: "Resend email",
+        changeEmail: "Change email",
+        changeEmailPrompt: "Enter the correct email address to resend confirmation.",
+        changeEmailSuccess: "If the request is valid, we will send a new link to the informed email.",
+        changeEmailError: "We could not change the email right now.",
+        resendError: "We could not resend it right now.",
         pendingUsersTitle: "Registrations awaiting approval",
         noPendingUsers: "No registrations awaiting approval.",
         approve: "Approve",
@@ -3744,8 +3845,18 @@
         registerButton: "Solicitar acceso",
         backToLogin: "Volver al acceso",
         passwordsMismatch: "Las contraseñas no coinciden.",
-        registrationSuccess: "Registro recibido. Confirma tu correo y espera la aprobación del administrador.",
+        registrationSuccess: "Registro recibido. Revisa tu correo para confirmar el acceso.",
         registrationError: "No fue posible completar el registro.",
+        signupDisabled: "Registro público temporalmente no disponible.",
+        emailReviewTitle: "Revisa tu correo",
+        emailReviewText: "Enviamos un enlace de confirmación a tu correo electrónico. Debes confirmarlo antes de que un administrador pueda activar tu acceso.",
+        emailReviewSent: "Enlace de confirmación enviado si el correo es válido.",
+        resendEmail: "Reenviar correo",
+        changeEmail: "Cambiar correo",
+        changeEmailPrompt: "Informa el correo correcto para reenviar la confirmación.",
+        changeEmailSuccess: "Si la solicitud es válida, enviaremos un nuevo enlace al correo informado.",
+        changeEmailError: "No fue posible cambiar el correo ahora.",
+        resendError: "No fue posible reenviar ahora.",
         pendingUsersTitle: "Registros pendientes de aprobación",
         noPendingUsers: "No hay registros pendientes de aprobación.",
         approve: "Aprobar",
@@ -3865,6 +3976,24 @@
           "PERDIDO": "Cancelado"
         }
       }
+    };
+
+    translations["pt-PT"] = {
+      ...translations.pt,
+      locale: "pt-PT",
+      passwordsMismatch: "As palavras-passe não coincidem.",
+      registrationSuccess: "Registo recebido. Consulte o seu e-mail para confirmar o acesso.",
+      registrationError: "Não foi possível concluir o registo.",
+      signupDisabled: "Registo público temporariamente indisponível.",
+      emailReviewTitle: "Consulte o seu e-mail",
+      emailReviewText: "Enviámos uma ligação de confirmação para o seu e-mail. Tem de confirmar antes de um administrador poder ativar o seu acesso.",
+      emailReviewSent: "Ligação de confirmação enviada, se o e-mail for válido.",
+      resendEmail: "Reenviar e-mail",
+      changeEmail: "Alterar e-mail",
+      changeEmailPrompt: "Indique o e-mail correto para reenviar a confirmação.",
+      changeEmailSuccess: "Se o pedido for válido, enviaremos uma nova ligação para o e-mail indicado.",
+      changeEmailError: "Não foi possível alterar o e-mail agora.",
+      backToLogin: "Voltar ao acesso"
     };
 
     const userCountries = {
@@ -4495,6 +4624,9 @@
 
     function normalizeLanguage(value) {
       const language = String(value || "").trim().toLowerCase();
+      if (language === "pt-pt" || language.startsWith("pt-pt")) {
+        return "pt-PT";
+      }
       if (language.startsWith("pt")) {
         return "pt";
       }
@@ -4516,7 +4648,7 @@
     function applyLanguage(language) {
       currentLanguage = normalizeLanguage(language);
       localStorage.setItem("totalsolutions_language", currentLanguage);
-      document.documentElement.lang = currentLanguage === "pt" ? "pt-BR" : currentLanguage === "es" ? "es-MX" : "en";
+      document.documentElement.lang = currentLanguage === "pt" ? "pt-BR" : currentLanguage === "pt-PT" ? "pt-PT" : currentLanguage === "es" ? "es-MX" : "en";
 
       const loginLanguage = document.getElementById("loginLanguage");
       if (loginLanguage) {
@@ -4530,6 +4662,11 @@
       setText("#registerSubtitle", t("registerSubtitle"));
       setText("#registerButton", t("registerButton"));
       setText("#backToLoginButton", t("backToLogin"));
+      setText("#emailReviewTitle", t("emailReviewTitle"));
+      setText("#emailReviewText", t("emailReviewText"));
+      setText("#resendVerificationButton", t("resendEmail"));
+      setText("#changeVerificationEmailButton", t("changeEmail"));
+      setText("#backToLoginFromEmailReviewButton", t("backToLogin"));
       setPlaceholder("#registerFullName", t("fullNamePlaceholder"));
       setPlaceholder("#registerEmail", t("emailPlaceholder"));
       setPlaceholder("#registerCompany", t("companyPlaceholder"));
@@ -6347,6 +6484,10 @@
 
     async function register(event) {
       event.preventDefault();
+      if (authPublicConfig.public_signup_enabled === false) {
+        setAuthStatus("registerStatus", t("signupDisabled"), "error");
+        return;
+      }
       const password = document.getElementById("registerPassword").value;
       const passwordConfirmation = document.getElementById("registerPasswordConfirm").value;
       setAuthStatus("registerStatus");
@@ -6377,22 +6518,70 @@
       }
 
       const data = await response.json();
-      const status = document.getElementById("registerStatus");
-      status.textContent = `${t("registrationSuccess")} `;
-      status.classList.remove("error");
-      status.classList.add("success");
-      if (data.verification_url) {
-        const verificationLink = document.createElement("a");
-        verificationLink.href = data.verification_url;
-        verificationLink.target = "_blank";
-        verificationLink.rel = "noopener";
-        verificationLink.textContent = currentLanguage === "en"
-          ? "Verify email"
-          : currentLanguage === "es" ? "Confirmar correo" : "Confirmar e-mail";
-        status.appendChild(verificationLink);
-      }
+      const registeredEmail = document.getElementById("registerEmail").value.trim();
       document.getElementById("registerForm").reset();
       resetTurnstile("register");
+      showEmailVerificationForm({
+        email: registeredEmail,
+        maskedEmail: data.masked_email,
+        resendAfterSeconds: data.resend_after_seconds || 60
+      });
+    }
+
+    async function resendVerificationEmail() {
+      if (!pendingVerificationEmail) {
+        showRegisterForm();
+        return;
+      }
+      setAuthStatus("emailVerificationStatus");
+      const response = await fetch(`${API_BASE}/auth/resend-verification`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: pendingVerificationEmail,
+          turnstile_token: turnstileToken("email_verification_resend")
+        })
+      });
+      resetTurnstile("email_verification_resend");
+      if (!response.ok) {
+        setAuthStatus("emailVerificationStatus", await responseMessage(response, t("resendError")), "error");
+        return;
+      }
+      const data = await response.json();
+      setAuthStatus("emailVerificationStatus", data.message || t("emailReviewSent"), "success");
+      document.getElementById("emailReviewMasked").value = data.masked_email || maskEmailForDisplay(pendingVerificationEmail);
+      startResendVerificationCountdown(data.resend_after_seconds || 60);
+    }
+
+    async function changeVerificationEmail() {
+      if (!pendingVerificationEmail) {
+        showRegisterForm();
+        return;
+      }
+      const newEmail = window.prompt(t("changeEmailPrompt"), pendingVerificationEmail);
+      if (!newEmail) return;
+      setAuthStatus("emailVerificationStatus");
+      const response = await fetch(`${API_BASE}/auth/change-verification-email`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          old_email: pendingVerificationEmail,
+          new_email: newEmail.trim(),
+          turnstile_token: turnstileToken("email_verification_change")
+        })
+      });
+      resetTurnstile("email_verification_change");
+      if (!response.ok) {
+        setAuthStatus("emailVerificationStatus", await responseMessage(response, t("changeEmailError")), "error");
+        return;
+      }
+      const data = await response.json();
+      pendingVerificationEmail = newEmail.trim();
+      document.getElementById("emailReviewMasked").value = data.masked_email || maskEmailForDisplay(pendingVerificationEmail);
+      setAuthStatus("emailVerificationStatus", data.message || t("changeEmailSuccess"), "success");
+      startResendVerificationCountdown(data.resend_after_seconds || 60);
     }
 
     async function requestReactivation(event) {
@@ -6543,7 +6732,7 @@
             return;
           }
           if (!data.access_token) {
-            setAuthStatus("loginStatus", data.message || "Cadastro recebido e aguardando aprovação.", "success");
+            setAuthStatus("loginStatus", data.message || "Registro recibido y pendiente de aprobación.", "success");
             return;
           }
           accessToken = data.access_token;
@@ -7113,31 +7302,41 @@
 
     function adminUserActionButtons(user) {
       const status = String(user.status || "").toUpperCase();
-      if (currentAdminUserTab === "PENDING" || ["PENDING", "PENDING_EMAIL", "PENDING_APPROVAL"].includes(status)) {
+      if (currentAdminUserTab === "PENDING" || ["PENDING", "PENDING_EMAIL", "PENDING_APPROVAL", "PENDING_ADMIN"].includes(status)) {
         return `
           <button class="lv-button-primary" data-approve-pending ${user.email_verified ? "" : "disabled"}>${escapeHtml(t("approve"))}</button>
-          <button class="lv-button-secondary" data-suspend-user>Suspender temporariamente</button>
+          <button class="lv-button-secondary" data-suspend-user>Suspender</button>
         `;
       }
       if (status === "ACTIVE") {
         return `
-          <button class="lv-button-secondary" data-suspend-user>Suspender temporariamente</button>
-          <button class="lv-button-secondary" data-archive-user>Arquivar usuário</button>
+          <button class="lv-button-secondary" data-suspend-user>Suspender</button>
+          <button class="lv-button-secondary" data-archive-user>Archivar usuario</button>
         `;
       }
       if (status === "SUSPENDED") {
         return `
-          <button class="lv-button-primary" data-reactivate-user>Reativar</button>
-          <button class="lv-button-secondary" data-archive-user>Arquivar usuário</button>
+          <button class="lv-button-primary" data-reactivate-user>Reactivar</button>
+          <button class="lv-button-secondary" data-archive-user>Archivar usuario</button>
         `;
       }
       if (status === "ARCHIVED") {
         return `
-          <button class="lv-button-primary" data-reactivate-user>Reativar</button>
+          <button class="lv-button-primary" data-reactivate-user>Reactivar</button>
           <button class="lv-button-secondary" data-anonymize-user>Anonimizar definitivamente</button>
         `;
       }
       return "";
+    }
+
+    function publicAccessState(user) {
+      const status = String(user.status || "").toUpperCase();
+      if (!user.email_verified || status === "PENDING_EMAIL") return "Correo pendiente";
+      if (status === "PENDING_APPROVAL" || status === "PENDING_ADMIN" || status === "PENDING") return "Aprobación pendiente";
+      if (status === "ACTIVE" && user.is_active) return "Acceso activo";
+      if (status === "SUSPENDED" || !user.is_active) return "Suspendido";
+      if (status === "ARCHIVED") return "Archivado";
+      return status || "Por revisar";
     }
 
     function renderPendingUsers(users) {
@@ -7153,15 +7352,13 @@
       }
 
       list.innerHTML = users.map((user) => {
-        const emailState = user.email_verified
-          ? (currentLanguage === "en" ? "Email verified" : currentLanguage === "es" ? "Correo confirmado" : "E-mail confirmado")
-          : (currentLanguage === "en" ? "Awaiting email" : currentLanguage === "es" ? "Aguardando correo" : "Aguardando e-mail");
+        const emailState = user.email_verified ? "Correo confirmado" : "Correo pendiente";
         return `
           <div class="pending-user-row" data-pending-user-id="${user.id}">
             <div>
               <strong>${escapeHtml(user.full_name || user.username)}</strong><br>
               <small>${escapeHtml(user.email || user.username)} · ${escapeHtml(user.company || "Sem empresa")}</small><br>
-              <small>${escapeHtml(emailState)} · ${escapeHtml(user.status)}</small>
+              <small>${escapeHtml(emailState)} · ${escapeHtml(publicAccessState(user))}</small>
             </div>
             <div class="pending-user-controls">
               <select class="lv-input" data-pending-role>
@@ -7714,6 +7911,9 @@
     document.getElementById("showReactivationButton").addEventListener("click", showReactivationForm);
     document.getElementById("showRecoveryButton").addEventListener("click", showRecoveryForm);
     document.getElementById("backToLoginButton").addEventListener("click", showLoginForm);
+    document.getElementById("resendVerificationButton").addEventListener("click", resendVerificationEmail);
+    document.getElementById("changeVerificationEmailButton").addEventListener("click", changeVerificationEmail);
+    document.getElementById("backToLoginFromEmailReviewButton").addEventListener("click", showLoginForm);
     document.getElementById("backToLoginFromReactivationButton").addEventListener("click", showLoginForm);
     document.getElementById("backToLoginFromRecoveryButton").addEventListener("click", showLoginForm);
     document.getElementById("backToLoginFromMfaButton").addEventListener("click", showLoginForm);

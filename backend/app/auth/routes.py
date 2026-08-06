@@ -1,14 +1,17 @@
 import logging
 import os
 import secrets
+import smtplib
 from datetime import datetime, timedelta
+from email.message import EmailMessage
+from urllib.parse import quote, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from app.auth.jwt_handler import create_access_token, get_current_user, get_db
+from app.auth.jwt_handler import create_access_token, get_current_user, get_db, user_access_block_reason
 from app.core.auth_security import (
     audit_auth_event,
     apply_public_rate_limits,
@@ -41,6 +44,8 @@ from app.models.user_lifecycle import UserReactivationRequest
 from app.schemas.auth_schema import (
     AuthLoginRequest,
     AuthResponse,
+    EmailVerificationChangeRequest,
+    EmailVerificationResendRequest,
     GoogleLoginRequest,
     MfaSetupConfirmRequest,
     MfaSetupConfirmResponse,
@@ -64,7 +69,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-PUBLIC_AUTH_MESSAGE = "Se as informacoes forem validas, voce recebera as proximas instrucoes."
+PUBLIC_AUTH_MESSAGE = "Si la información es válida, recibirás las próximas instrucciones."
+PUBLIC_REGISTER_MESSAGE = "Enviamos un enlace de confirmación a tu correo electrónico."
+EMAIL_VERIFICATION_TTL_MINUTES = 60
+EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS = 60
+EMAIL_CONFIRMED_REDIRECT_PATH = "/?email_confirmed=1"
+EMAIL_VERIFICATION_SECURITY_HEADERS = {
+    "Cache-Control": "no-store",
+    "Referrer-Policy": "no-referrer",
+}
 
 
 class _LocalRequest:
@@ -96,19 +109,137 @@ def public_config():
         turnstile_site_key=public_turnstile_site_key() or None,
         turnstile_required=turnstile_configured(),
         google_client_id=os.getenv("GOOGLE_CLIENT_ID", "").strip() or None,
+        public_signup_enabled=os.getenv("PUBLIC_SIGNUP_ENABLED", "true").strip().lower() != "false",
     )
 
 
 def normalized_email(value: str) -> str:
     email = value.strip().lower()
     if "@" not in email or email.startswith("@") or email.endswith("@"):
-        raise HTTPException(status_code=400, detail="Email invalido")
+        raise HTTPException(status_code=400, detail="Correo inválido")
     return email
+
+
+def mask_email(email: str) -> str:
+    local, _, domain = email.partition("@")
+    if not domain:
+        return "c***@***"
+    prefix = local[:2] if len(local) > 2 else local[:1]
+    return f"{prefix}{'*' * max(3, len(local) - len(prefix))}@{domain}"
+
+
+def email_delivery_missing_variables() -> list[str]:
+    missing = []
+    if not os.getenv("PUBLIC_BASE_URL", "").strip():
+        missing.append("PUBLIC_BASE_URL")
+    if not os.getenv("SMTP_HOST", "").strip():
+        missing.append("SMTP_HOST")
+    if not os.getenv("SMTP_PORT", "").strip():
+        missing.append("SMTP_PORT")
+    if not os.getenv("SMTP_USERNAME", "").strip():
+        missing.append("SMTP_USERNAME")
+    if not os.getenv("SMTP_PASSWORD", "").strip():
+        missing.append("SMTP_PASSWORD")
+    if not os.getenv("SMTP_FROM", "").strip():
+        missing.append("SMTP_FROM")
+    use_tls = os.getenv("SMTP_USE_TLS", "true").strip().lower() == "true"
+    use_ssl = os.getenv("SMTP_USE_SSL", "false").strip().lower() == "true"
+    if not use_tls and not use_ssl:
+        missing.append("SMTP_USE_TLS_OR_SSL")
+    if os.getenv("PUBLIC_BASE_URL", "").strip() and os.getenv("SMTP_FROM", "").strip() and not smtp_from_domain_is_authorized():
+        missing.append("SMTP_FROM_AUTHORIZED_DOMAIN")
+    return missing
+
+
+def smtp_from_domain_is_authorized() -> bool:
+    base_url = os.getenv("PUBLIC_BASE_URL", "").strip()
+    smtp_from = os.getenv("SMTP_FROM", "").strip()
+    if "@" not in smtp_from:
+        return False
+    app_host = urlparse(base_url).hostname or ""
+    sender_domain = smtp_from.rsplit("@", 1)[1].lower()
+    app_host = app_host.lower()
+    return bool(app_host and sender_domain and (app_host == sender_domain or app_host.endswith(f".{sender_domain}")))
+
+
+def email_verification_url(raw_token: str) -> str | None:
+    base_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if not base_url:
+        return None
+    return f"{base_url}/auth/verify-email?token={quote(raw_token, safe='')}"
+
+
+def send_verification_email(*, to_email: str, full_name: str | None, verification_url: str) -> bool:
+    smtp_host = os.getenv("SMTP_HOST", "").strip()
+    smtp_from = os.getenv("SMTP_FROM", "").strip()
+    missing = email_delivery_missing_variables()
+    if missing:
+        logger.warning("Email de verificacao pendente por configuracao SMTP incompleta: %s", ",".join(sorted(set(missing))))
+        return False
+
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_username = os.getenv("SMTP_USERNAME", "").strip()
+    smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
+    use_tls = os.getenv("SMTP_USE_TLS", "true").strip().lower() == "true"
+    use_ssl = os.getenv("SMTP_USE_SSL", "false").strip().lower() == "true"
+
+    message = EmailMessage()
+    message["From"] = smtp_from
+    message["To"] = to_email
+    message["Subject"] = "Confirma tu correo - Total Solutions"
+    greeting = (full_name or "Hola").strip()
+    message.set_content(
+        "\n".join(
+            [
+                f"{greeting},",
+                "",
+                "Confirma tu correo para continuar con la solicitud de acceso a Total Solutions.",
+                "El enlace vence en 60 minutos y solo puede usarse una vez.",
+                "",
+                verification_url,
+                "",
+                "Si no solicitaste este acceso, ignora este mensaje.",
+            ]
+        )
+    )
+
+    try:
+        smtp_factory = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
+        with smtp_factory(smtp_host, smtp_port, timeout=15) as smtp:
+            if use_tls:
+                smtp.starttls()
+            smtp.login(smtp_username, smtp_password)
+            smtp.send_message(message)
+        return True
+    except Exception as exc:  # noqa: BLE001 - cadastro nao deve ser revertido por falha SMTP.
+        logger.warning("Falha ao enviar email de verificacao para user_email_hash=%s: %s", hash_value(to_email), exc.__class__.__name__)
+        return False
+
+
+def issue_email_verification(db: Session, user: User) -> bool:
+    raw_token = secrets.token_urlsafe(48)
+    verification_url = email_verification_url(raw_token)
+    user.email_verification_token = None
+    user.email_verification_token_hash = hash_value(raw_token)
+    user.email_verification_expires_at = now_utc() + timedelta(minutes=EMAIL_VERIFICATION_TTL_MINUTES)
+    user.email_verification_sent_at = now_utc()
+    user.email_verification_used_at = None
+    if not verification_url:
+        return False
+    return send_verification_email(to_email=user.email, full_name=user.full_name, verification_url=verification_url)
+
+
+def generic_register_response(email: str) -> RegisterResponse:
+    return RegisterResponse(
+        message=PUBLIC_REGISTER_MESSAGE,
+        masked_email=mask_email(email),
+        resend_after_seconds=EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS,
+    )
 
 
 def public_status_label(status: str | None) -> str:
     value = (status or "").upper()
-    if value in {"PENDING_EMAIL", "PENDING_APPROVAL", "PENDING"}:
+    if value in {"PENDING_EMAIL", "PENDING_APPROVAL", "PENDING_ADMIN", "PENDING"}:
         return "PENDING"
     return value or "ACTIVE"
 
@@ -163,6 +294,8 @@ def create_reactivation_request_for_user(
 
 @router.post("/register", response_model=RegisterResponse, status_code=201)
 def register(payload: RegisterRequest, request: Request, db: Session = Depends(get_db)):
+    if os.getenv("PUBLIC_SIGNUP_ENABLED", "true").strip().lower() == "false":
+        raise HTTPException(status_code=403, detail="Registro temporalmente no disponible.")
     email = normalized_email(payload.email)
     organization = get_or_create_default_organization(db)
     apply_public_rate_limits(request, email, "register")
@@ -177,25 +310,17 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
     )
     if existing:
         status = public_status_label(existing.status)
-        if status == "ACTIVE":
-            raise HTTPException(status_code=409, detail="Conta ja existe. Use recuperacao de acesso ou entre em contato com o administrador.")
-        if status == "PENDING":
-            raise HTTPException(status_code=409, detail="Sua solicitacao ja esta aguardando analise.")
         if status in {"SUSPENDED", "ARCHIVED"}:
-            request_row = create_reactivation_request_for_user(
+            create_reactivation_request_for_user(
                 db,
                 user=existing,
                 email=email,
                 reason="Solicitacao criada a partir de novo cadastro com email existente.",
             )
-            db.commit()
-            return RegisterResponse(
-                message="Conta existente bloqueada. Solicitação de reativação enviada ao administrador.",
-                verification_url=f"reactivation-request:{request_row.id}",
-            )
-        raise HTTPException(status_code=409, detail="Email ja cadastrado")
+        audit_auth_event(db, request=request, event_type="REGISTER_REQUESTED", outcome="ACCEPTED_EXISTING", user=existing)
+        db.commit()
+        return generic_register_response(email)
 
-    token = secrets.token_urlsafe(32)
     user = User(
         organization_id=organization.id,
         username=email,
@@ -207,22 +332,118 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
         role="BROKER",
         plan=(payload.plan or "STARTER").upper(),
         email_verified=False,
-        email_verification_token=token,
+        email_verification_token=None,
         status="PENDING_EMAIL",
         is_active=False,
         registered_at=datetime.utcnow(),
     )
     db.add(user)
-    audit_auth_event(db, request=request, event_type="REGISTER_REQUESTED", outcome="PENDING", user=user)
-    db.commit()
-
-    base_url = os.getenv("PUBLIC_BASE_URL") or str(request.base_url).rstrip("/")
-    verification_url = f"{base_url}/auth/verify-email?token={token}"
-    logger.info("Verificacao de email Total Solutions para %s: %s", email, verification_url)
-    return RegisterResponse(
-        message="Cadastro recebido. Confirme o email para seguir para aprovacao.",
-        verification_url=verification_url,
+    db.flush()
+    email_sent = issue_email_verification(db, user)
+    audit_auth_event(
+        db,
+        request=request,
+        event_type="REGISTER_REQUESTED",
+        outcome="PENDING_EMAIL",
+        user=user,
+        detail={"email_sent": email_sent, "missing_email_variables": email_delivery_missing_variables()},
     )
+    db.commit()
+    if not email_sent:
+        logger.warning("Email de verificacao nao enviado para user_id=%s; configuracao SMTP/PUBLIC_BASE_URL incompleta ou indisponivel.", user.id)
+    return generic_register_response(email)
+
+
+@router.post("/resend-verification", response_model=RegisterResponse)
+def resend_verification(payload: EmailVerificationResendRequest, request: Request, db: Session = Depends(get_db)):
+    email = normalized_email(payload.email)
+    apply_public_rate_limits(request, email, "email_verification_resend")
+    verify_turnstile_or_403(db, request, token=payload.turnstile_token, expected_action="email_verification_resend")
+    user = (
+        db.query(User)
+        .filter(or_(func.lower(User.email) == email, func.lower(User.username) == email))
+        .first()
+    )
+    if not user or user.email_verified or user.status != "PENDING_EMAIL":
+        audit_auth_event(db, request=request, event_type="EMAIL_VERIFICATION_RESEND", outcome="ACCEPTED")
+        db.commit()
+        return generic_register_response(email)
+
+    rate_limit_or_429(f"email-verification-resend:{user.id}", limit=3, window_seconds=900)
+    now = now_utc()
+    sent_at = user.email_verification_sent_at
+    if sent_at and (now - sent_at).total_seconds() < EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS:
+        remaining = EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS - int((now - sent_at).total_seconds())
+        audit_auth_event(db, request=request, event_type="EMAIL_VERIFICATION_RESEND", outcome="COOLDOWN", user=user)
+        db.commit()
+        return RegisterResponse(message=PUBLIC_REGISTER_MESSAGE, masked_email=mask_email(email), resend_after_seconds=max(remaining, 1))
+
+    email_sent = issue_email_verification(db, user)
+    audit_auth_event(
+        db,
+        request=request,
+        event_type="EMAIL_VERIFICATION_RESEND",
+        outcome="SENT" if email_sent else "PENDING_CONFIG",
+        user=user,
+        detail={"email_sent": email_sent, "missing_email_variables": email_delivery_missing_variables()},
+    )
+    db.commit()
+    if not email_sent:
+        logger.warning("Reenvio de verificacao nao enviado para user_id=%s; configuracao SMTP/PUBLIC_BASE_URL incompleta ou indisponivel.", user.id)
+    return generic_register_response(email)
+
+
+@router.post("/change-verification-email", response_model=RegisterResponse)
+def change_verification_email(payload: EmailVerificationChangeRequest, request: Request, db: Session = Depends(get_db)):
+    old_email = normalized_email(payload.old_email)
+    new_email = normalized_email(payload.new_email)
+    apply_public_rate_limits(request, old_email, "email_verification_change")
+    apply_public_rate_limits(request, new_email, "email_verification_change")
+    verify_turnstile_or_403(db, request, token=payload.turnstile_token, expected_action="email_verification_change")
+
+    user = (
+        db.query(User)
+        .filter(or_(func.lower(User.email) == old_email, func.lower(User.username) == old_email))
+        .first()
+    )
+    if not user or user.email_verified or user.status != "PENDING_EMAIL":
+        audit_auth_event(db, request=request, event_type="EMAIL_VERIFICATION_EMAIL_CHANGED", outcome="ACCEPTED")
+        db.commit()
+        return generic_register_response(new_email)
+
+    existing_new_email = (
+        db.query(User)
+        .filter(or_(func.lower(User.email) == new_email, func.lower(User.username) == new_email), User.id != user.id)
+        .first()
+    )
+    if existing_new_email:
+        audit_auth_event(
+            db,
+            request=request,
+            event_type="EMAIL_VERIFICATION_EMAIL_CHANGED",
+            outcome="ACCEPTED_EXISTING",
+            user=user,
+        )
+        db.commit()
+        return generic_register_response(new_email)
+
+    user.email = new_email
+    user.username = new_email
+    user.email_verified = False
+    user.email_verification_token = None
+    email_sent = issue_email_verification(db, user)
+    audit_auth_event(
+        db,
+        request=request,
+        event_type="EMAIL_VERIFICATION_EMAIL_CHANGED",
+        outcome="SENT" if email_sent else "PENDING_CONFIG",
+        user=user,
+        detail={"email_sent": email_sent, "missing_email_variables": email_delivery_missing_variables()},
+    )
+    db.commit()
+    if not email_sent:
+        logger.warning("Alteracao de email pendente para user_id=%s; configuracao SMTP/PUBLIC_BASE_URL incompleta ou indisponivel.", user.id)
+    return generic_register_response(new_email)
 
 
 @router.post("/reactivation-request", response_model=ReactivationRequestResponse)
@@ -257,22 +478,70 @@ def request_reactivation(payload: ReactivationRequestCreate, request: Request, d
     )
 
 
-@router.get("/verify-email", response_class=HTMLResponse)
-def verify_email(token: str, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email_verification_token == token).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Link de verificacao invalido")
+def verification_html_response(content: str, *, status_code: int = 200) -> HTMLResponse:
+    return HTMLResponse(content, status_code=status_code, headers=EMAIL_VERIFICATION_SECURITY_HEADERS)
 
-    user.email_verified = True
-    user.email_verification_token = None
-    user.status = "PENDING_APPROVAL"
-    db.commit()
-    return HTMLResponse(
-        "<h1>Email confirmado</h1><p>Seu cadastro agora aguarda aprovacao do administrador Total Solutions.</p>"
+
+@router.get("/verify-email")
+def verify_email(token: str, db: Session = Depends(get_db)):
+    token_hash = hash_value(token)
+    user = (
+        db.query(User)
+        .filter(User.email_verification_token_hash == token_hash, User.email_verification_used_at.is_(None))
+        .first()
     )
+    now = now_utc()
+    if not user or not user.email_verification_expires_at or user.email_verification_expires_at < now:
+        return verification_html_response(
+            "<h1>El enlace no es válido o ha expirado.</h1><p>Enviar un nuevo enlace desde la pantalla de acceso.</p>",
+            status_code=400,
+        )
+
+    updated = (
+        db.query(User)
+        .filter(
+            User.id == user.id,
+            User.email_verification_token_hash == token_hash,
+            User.email_verification_used_at.is_(None),
+            User.email_verification_expires_at >= now,
+        )
+        .update(
+            {
+                User.email_verified: True,
+                User.email_verification_token: None,
+                User.email_verification_token_hash: None,
+                User.email_verification_used_at: now,
+                User.status: "PENDING_ADMIN" if user.status == "PENDING_EMAIL" else user.status,
+            },
+            synchronize_session=False,
+        )
+    )
+    if updated != 1:
+        db.rollback()
+        return verification_html_response(
+            "<h1>El enlace no es válido o ha expirado.</h1><p>Enviar un nuevo enlace desde la pantalla de acceso.</p>",
+            status_code=400,
+        )
+    db.commit()
+    response = RedirectResponse(url=EMAIL_CONFIRMED_REDIRECT_PATH, status_code=303)
+    for key, value in EMAIL_VERIFICATION_SECURITY_HEADERS.items():
+        response.headers[key] = value
+    return response
 
 
 def issue_authenticated_response(db: Session, request: Request | None, response: Response | None, user: User, *, event_type: str) -> AuthResponse:
+    blocked_reason = user_access_block_reason(db, user)
+    if blocked_reason:
+        audit_auth_event(
+            db,
+            request=safe_request(request),
+            event_type=event_type,
+            outcome="BLOCKED",
+            user=user,
+            detail={"status": user.status},
+        )
+        db.commit()
+        raise HTTPException(status_code=403, detail=blocked_reason)
     user.last_seen_at = datetime.utcnow()
     if not user.status:
         user.status = "ACTIVE"
@@ -283,21 +552,16 @@ def issue_authenticated_response(db: Session, request: Request | None, response:
     return AuthResponse(access_token=create_access_token(user), user=UserResponse.model_validate(user))
 
 
-def auth_status_gate(user: User) -> str | None:
-    if user.status == "PENDING_EMAIL":
-        return "Confirme seu email antes de entrar"
-    if user.status == "PENDING_APPROVAL" or user.status == "PENDING":
-        return "Cadastro recebido e aguardando aprovação"
-    if user.status == "SUSPENDED":
-        return "Usuario suspenso ou inativo"
-    if user.status in {"ARCHIVED", "ANONYMIZED"}:
-        return "Usuario nao autorizado"
-    if not user.is_active:
-        return "Usuario suspenso ou inativo"
-    return None
+def auth_status_gate(db: Session, user: User) -> str | None:
+    return user_access_block_reason(db, user)
 
 
 def mfa_gate_response(db: Session, request: Request | None, user: User, event_type: str) -> AuthResponse | None:
+    blocked_reason = user_access_block_reason(db, user)
+    if blocked_reason:
+        audit_auth_event(db, request=safe_request(request), event_type=event_type, outcome="BLOCKED", user=user, detail={"status": user.status})
+        db.commit()
+        raise HTTPException(status_code=403, detail=blocked_reason)
     if not mfa_required_for_user(user) and not user.mfa_enabled:
         return None
     if not user.mfa_enabled:
@@ -338,9 +602,9 @@ def login(
     if not user or not verify_password(payload.password, user.password_hash):
         audit_auth_event(db, request=request, event_type="PASSWORD_LOGIN", outcome="DENIED", user=user)
         db.commit()
-        raise HTTPException(status_code=401, detail="Usuario ou senha invalidos")
+        raise HTTPException(status_code=401, detail="Usuario o contraseña inválidos")
 
-    blocked_reason = auth_status_gate(user)
+    blocked_reason = auth_status_gate(db, user)
     if blocked_reason:
         audit_auth_event(db, request=request, event_type="PASSWORD_LOGIN", outcome="BLOCKED", user=user, detail={"status": user.status})
         db.commit()
@@ -362,6 +626,11 @@ def verify_mfa(payload: MfaVerifyRequest, request: Request, response: Response, 
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=401, detail="Desafio MFA invalido")
+    blocked_reason = auth_status_gate(db, user)
+    if blocked_reason:
+        audit_auth_event(db, request=request, event_type="MFA_VERIFY", outcome="BLOCKED", user=user, detail={"status": user.status})
+        db.commit()
+        raise HTTPException(status_code=403, detail=blocked_reason)
     rate_limit_or_429(f"mfa:{user.id}", limit=6, window_seconds=300)
     if not (verify_totp_code(user, payload.code) or consume_recovery_code(db, user, payload.code)):
         audit_auth_event(db, request=request, event_type="MFA_VERIFY", outcome="DENIED", user=user)
@@ -389,6 +658,11 @@ def start_mfa_setup_from_challenge(payload: MfaSetupChallengeStartRequest, db: S
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=401, detail="Desafio MFA invalido")
+    blocked_reason = auth_status_gate(db, user)
+    if blocked_reason:
+        audit_auth_event(db, request=safe_request(None), event_type="MFA_SETUP_START", outcome="BLOCKED", user=user, detail={"status": user.status})
+        db.commit()
+        raise HTTPException(status_code=403, detail=blocked_reason)
     if user.mfa_secret_encrypted and not user.mfa_enabled and not payload.reset_secret:
         secret = decrypt_secret(user.mfa_secret_encrypted)
     else:
@@ -426,6 +700,11 @@ def confirm_mfa_setup_from_challenge(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=401, detail="Desafio MFA invalido")
+    blocked_reason = auth_status_gate(db, user)
+    if blocked_reason:
+        audit_auth_event(db, request=request, event_type="MFA_ENABLED", outcome="BLOCKED", user=user, detail={"status": user.status})
+        db.commit()
+        raise HTTPException(status_code=403, detail=blocked_reason)
     if not verify_totp_code(user, payload.code):
         audit_auth_event(db, request=request, event_type="MFA_ENABLED", outcome="DENIED", user=user)
         db.commit()
@@ -443,7 +722,7 @@ def request_password_recovery(payload: PasswordRecoveryRequest, request: Request
     apply_public_rate_limits(request, email, "password_recovery")
     verify_turnstile_or_403(db, request, token=payload.turnstile_token, expected_action="password_recovery")
     user = db.query(User).filter(or_(func.lower(User.email) == email, func.lower(User.username) == email)).first()
-    if user and user.status == "ACTIVE":
+    if user and not user_access_block_reason(db, user):
         raw_token = secrets.token_urlsafe(48)
         db.add(
             PasswordResetToken(
@@ -516,7 +795,7 @@ def google_login(payload: GoogleLoginRequest, request: Request, response: Respon
             password_hash=hash_password(secrets.token_urlsafe(48)),
             role="BROKER",
             email_verified=True,
-            status="PENDING_APPROVAL",
+            status="PENDING_ADMIN",
             is_active=False,
             registered_at=datetime.utcnow(),
         )
@@ -534,12 +813,12 @@ def google_login(payload: GoogleLoginRequest, request: Request, response: Respon
         db.add(identity)
         audit_auth_event(db, request=request, event_type="GOOGLE_REGISTER", outcome="PENDING", user=user)
         db.commit()
-        return AuthResponse(message="Cadastro recebido e aguardando aprovação", user=UserResponse.model_validate(user))
+        return AuthResponse(message="Registro recibido y pendiente de aprobación.", user=UserResponse.model_validate(user))
 
     user = db.query(User).filter(User.id == identity.user_id).first()
     if not user:
         raise HTTPException(status_code=401, detail="Identidade Google invalida")
-    blocked_reason = auth_status_gate(user)
+    blocked_reason = auth_status_gate(db, user)
     if blocked_reason:
         audit_auth_event(db, request=request, event_type="GOOGLE_LOGIN", outcome="BLOCKED", user=user, detail={"status": user.status})
         db.commit()

@@ -24,6 +24,7 @@ from app.services.user_lifecycle_service import record_user_lifecycle_event, rev
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+PENDING_ADMIN_STATUSES = {"PENDING", "PENDING_APPROVAL", "PENDING_ADMIN"}
 
 
 def require_reason(reason: str) -> str:
@@ -105,7 +106,9 @@ def handle_user_clients(db: Session, user: User, action: str) -> int:
 
 def approve_pending_user(db: Session, user: User, actor: User, payload: UserApprovalRequest) -> User:
     if not user.email_verified:
-        raise HTTPException(status_code=400, detail="Email ainda nao confirmado")
+        raise HTTPException(status_code=400, detail="Correo pendiente de confirmación")
+    if (user.status or "").upper() not in PENDING_ADMIN_STATUSES:
+        raise HTTPException(status_code=400, detail="Usuario no está pendiente de aprobación administrativa")
     role, manager_id = validate_role_and_manager(db, actor, payload.role, payload.manager_id)
     previous_status = user.status
     user.role = role
@@ -144,7 +147,7 @@ def list_users_by_status(
     if status:
         normalized = status.strip().upper()
         if normalized == "PENDING":
-            query = query.filter(User.status.in_(["PENDING", "PENDING_EMAIL", "PENDING_APPROVAL"]))
+            query = query.filter(User.status.in_(["PENDING", "PENDING_EMAIL", "PENDING_APPROVAL", "PENDING_ADMIN"]))
         else:
             query = query.filter(User.status == normalized)
     return query.order_by(User.registered_at.desc(), User.id.desc()).all()
@@ -157,7 +160,7 @@ def pending_users(
 ):
     return (
         visible_user_query(db, actor)
-        .filter(User.status.in_(["PENDING", "PENDING_EMAIL", "PENDING_APPROVAL"]))
+        .filter(User.status.in_(["PENDING", "PENDING_EMAIL", "PENDING_APPROVAL", "PENDING_ADMIN"]))
         .order_by(User.registered_at.desc(), User.id.desc())
         .all()
     )
@@ -219,7 +222,7 @@ def reactivate_user(
     actor: User = Depends(require_admin_user),
 ):
     user = load_target_user(db, user_id, actor)
-    if user.status not in {"SUSPENDED", "ARCHIVED", "PENDING", "PENDING_APPROVAL"}:
+    if user.status not in {"SUSPENDED", "ARCHIVED", "PENDING", "PENDING_APPROVAL", "PENDING_ADMIN"}:
         raise HTTPException(status_code=400, detail="Usuario nao esta em estado de reativacao")
     role, manager_id = validate_role_and_manager(db, actor, payload.role, payload.manager_id)
     user.role = role
@@ -304,6 +307,10 @@ def anonymize_user(
     user.observacoes = None
     user.profile_photo_url = None
     user.email_verification_token = None
+    user.email_verification_token_hash = None
+    user.email_verification_expires_at = None
+    user.email_verification_sent_at = None
+    user.email_verification_used_at = None
     user.email_verified = False
     user.password_hash = hash_password(f"removed-{user.id}-{datetime.utcnow().timestamp()}")
     transition_user_status(

@@ -259,6 +259,10 @@ def create_database_tables():
         if engine.dialect.name == "postgresql":
             db.execute(text("ALTER TABLE users ALTER COLUMN email_verified SET DEFAULT FALSE"))
         add_column_if_missing(db, "users", "email_verification_token", "VARCHAR")
+        add_column_if_missing(db, "users", "email_verification_token_hash", "VARCHAR")
+        add_column_if_missing(db, "users", "email_verification_expires_at", "TIMESTAMP")
+        add_column_if_missing(db, "users", "email_verification_sent_at", "TIMESTAMP")
+        add_column_if_missing(db, "users", "email_verification_used_at", "TIMESTAMP")
         add_column_if_missing(db, "users", "status", "VARCHAR DEFAULT 'ACTIVE'")
         add_column_if_missing(db, "users", "status_reason", "VARCHAR")
         add_column_if_missing(db, "users", "status_changed_at", "TIMESTAMP")
@@ -295,7 +299,7 @@ def create_database_tables():
         db.execute(text("UPDATE password_reset_tokens SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
         db.execute(text("UPDATE mfa_recovery_codes SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
         db.execute(text("UPDATE auth_audit_events SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
-        db.execute(text("UPDATE users SET email_verified = TRUE WHERE email_verified IS NULL"))
+        migrate_legacy_email_verification(db)
         db.execute(text("UPDATE users SET status = 'ACTIVE' WHERE status IS NULL OR status = ''"))
         db.execute(text("UPDATE users SET session_version = 0 WHERE session_version IS NULL"))
         db.execute(text("UPDATE users SET mfa_enabled = FALSE WHERE mfa_enabled IS NULL"))
@@ -323,6 +327,7 @@ def create_database_tables():
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_users_status ON users (status)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_users_status_changed_at ON users (status_changed_at)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_users_verification_token ON users (email_verification_token)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_users_verification_token_hash ON users (email_verification_token_hash)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_user_lifecycle_events_user ON user_lifecycle_events (user_id, created_at)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_user_reactivation_requests_status ON user_reactivation_requests (status, created_at)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_user_identities_user ON user_identities (user_id)")
@@ -386,6 +391,42 @@ def create_database_tables():
         start_email_outbox_worker()
     finally:
         db.close()
+
+
+def migrate_legacy_email_verification(db):
+    legacy_active_verified = db.execute(
+        text(
+            """
+            UPDATE users
+            SET email_verified = TRUE
+            WHERE email_verified IS NULL
+              AND is_active IS TRUE
+              AND COALESCE(NULLIF(status, ''), 'ACTIVE') = 'ACTIVE'
+            """
+        )
+    ).rowcount
+    legacy_non_active_pending = db.execute(
+        text(
+            """
+            UPDATE users
+            SET email_verified = FALSE
+            WHERE email_verified IS NULL
+              AND NOT (
+                is_active IS TRUE
+                AND COALESCE(NULLIF(status, ''), 'ACTIVE') = 'ACTIVE'
+              )
+            """
+        )
+    ).rowcount
+    raw_tokens_cleared = db.execute(
+        text("UPDATE users SET email_verification_token = NULL WHERE email_verification_token IS NOT NULL")
+    ).rowcount
+    startup_log(
+        "Migracao de verificacao de email: "
+        f"legacy_active_verified={legacy_active_verified or 0}; "
+        f"legacy_pending_preserved={legacy_non_active_pending or 0}; "
+        f"raw_tokens_cleared={raw_tokens_cleared or 0}."
+    )
 
 
 @app.get("/")

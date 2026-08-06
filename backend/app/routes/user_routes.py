@@ -10,6 +10,7 @@ from app.auth.jwt_handler import (
     get_db,
     require_admin_user as require_admin_actor,
     require_root_user as require_root_actor,
+    user_access_block_reason,
 )
 from app.core.security import hash_password, verify_password
 from app.core.storage import PROFILE_PHOTOS_DIR, delete_profile_photo
@@ -77,8 +78,9 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     if not user or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Usuario ou senha invalidos")
 
-    if not user.is_active or (user.status and user.status != "ACTIVE"):
-        raise HTTPException(status_code=403, detail="Usuario inativo")
+    blocked_reason = user_access_block_reason(db, user)
+    if blocked_reason:
+        raise HTTPException(status_code=403, detail=blocked_reason)
 
     user.last_seen_at = datetime.utcnow()
     db.commit()

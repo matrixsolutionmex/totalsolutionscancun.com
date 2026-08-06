@@ -1,26 +1,35 @@
+from datetime import timedelta
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import create_engine
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 from starlette.requests import Request
 from starlette.responses import Response
 from sqlalchemy.pool import StaticPool
 
+from app.auth import routes as auth_routes
 from app.auth.jwt_handler import get_current_user, verify_access_token
 from app.auth.routes import (
+    confirm_mfa_setup_from_challenge,
     google_login,
     login,
     request_password_recovery,
+    change_verification_email,
     register,
     request_reactivation,
+    resend_verification,
     reset_password,
     start_mfa_setup_from_challenge,
     verify_email,
+    verify_mfa,
 )
-from app.core.auth_security import hotp, totp_counter, verify_mfa_challenge_token
+from app.core import auth_security
+from app.core.auth_security import hash_value, hotp, totp_counter, verify_mfa_challenge_token
 from app.core.security import hash_password
 from app.database.connection import Base
 from app.models.auth_security import AuthAuditEvent, MfaRecoveryCode, PasswordResetToken, UserIdentity, UserSession
@@ -32,15 +41,27 @@ from app.models.user_lifecycle import UserLifecycleEvent, UserReactivationReques
 from app.routes.admin_routes import anonymize_user, approve_user, archive_user, reactivate_user, suspend_user
 from app.schemas.auth_schema import (
     AuthLoginRequest,
+    EmailVerificationChangeRequest,
     GoogleLoginRequest,
     MfaSetupChallengeStartRequest,
+    MfaSetupChallengeConfirmRequest,
+    MfaVerifyRequest,
     PasswordRecoveryRequest,
     PasswordResetRequest,
     ReactivationRequestCreate,
+    EmailVerificationResendRequest,
     RegisterRequest,
     UserApprovalRequest,
 )
+from app.main import migrate_legacy_email_verification
 from app.schemas.user_schema import UserAnonymizeRequest, UserArchiveRequest, UserLifecycleRequest, UserReactivateRequest
+
+
+@pytest.fixture(autouse=True)
+def clear_auth_rate_limits():
+    auth_security._rate_buckets.clear()
+    yield
+    auth_security._rate_buckets.clear()
 
 
 def create_test_session():
@@ -87,6 +108,52 @@ def make_request(path="/auth/login"):
     )
 
 
+class CapturingSMTP:
+    sent_messages = []
+    fail_send = False
+
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def starttls(self):
+        return None
+
+    def login(self, *_args, **_kwargs):
+        return None
+
+    def send_message(self, message):
+        if self.fail_send:
+            raise RuntimeError("smtp-down")
+        self.sent_messages.append(message)
+
+
+def configure_smtp_capture(monkeypatch, *, fail=False):
+    CapturingSMTP.sent_messages = []
+    CapturingSMTP.fail_send = fail
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://totalsolutionscancun.com")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("SMTP_PORT", "587")
+    monkeypatch.setenv("SMTP_USERNAME", "smtp-user")
+    monkeypatch.setenv("SMTP_PASSWORD", "smtp-password")
+    monkeypatch.setenv("SMTP_USE_TLS", "true")
+    monkeypatch.setenv("SMTP_FROM", "no-reply@totalsolutionscancun.com")
+    monkeypatch.setattr(auth_routes.smtplib, "SMTP", CapturingSMTP)
+
+
+def token_from_last_verification_email():
+    assert CapturingSMTP.sent_messages
+    body = CapturingSMTP.sent_messages[-1].get_content()
+    link = next(line.strip() for line in body.splitlines() if "/auth/verify-email?token=" in line)
+    parsed = urlparse(link)
+    return parse_qs(parsed.query)["token"][0]
+
+
 def make_organization(session, slug="total-solutions-test", name="Total Solutions Test"):
     organization = Organization(name=name, slug=slug)
     session.add(organization)
@@ -126,6 +193,7 @@ def make_user(
 
 def test_public_registration_requires_verification_and_root_approval(monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    configure_smtp_capture(monkeypatch)
     session = create_test_session()
 
     root = User(
@@ -164,15 +232,38 @@ def test_public_registration_requires_verification_and_root_approval(monkeypatch
         request,
         session,
     )
-    token = parse_qs(urlparse(registration.verification_url).query)["token"][0]
+    assert "token" not in registration.model_dump_json()
+    assert "verify-email" not in registration.model_dump_json()
+    assert registration.masked_email == "br****@example.com"
+    token = token_from_last_verification_email()
     pending = session.query(User).filter(User.email == "broker@example.com").one()
     assert pending.status == "PENDING_EMAIL"
     assert pending.is_active is False
+    assert pending.email_verification_token is None
+    assert pending.email_verification_token_hash == hash_value(token)
+    assert pending.email_verification_token_hash != token
+    assert pending.email_verification_expires_at is not None
 
-    verify_email(token, session)
+    with pytest.raises(HTTPException) as blocked_login:
+        login(AuthLoginRequest(email="broker@example.com", password="broker-password"), make_request(), Response(), session)
+    assert blocked_login.value.status_code == 403
+
+    response = verify_email(token, session)
+    assert response.status_code == 303
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert response.headers["location"] == "/?email_confirmed=1"
     session.refresh(pending)
     assert pending.email_verified is True
-    assert pending.status == "PENDING_APPROVAL"
+    assert pending.status == "PENDING_ADMIN"
+    assert pending.email_verification_token_hash is None
+
+    reused = verify_email(token, session)
+    assert reused.status_code == 400
+
+    with pytest.raises(HTTPException) as blocked_pending_approval:
+        login(AuthLoginRequest(email="broker@example.com", password="broker-password"), make_request(), Response(), session)
+    assert blocked_pending_approval.value.status_code == 403
 
     approved = approve_user(
         pending.id,
@@ -195,6 +286,266 @@ def test_public_registration_requires_verification_and_root_approval(monkeypatch
     assert authenticated.user.role == "BROKER"
 
     session.close()
+
+
+def test_email_verification_resend_invalidates_old_token_and_expiration(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    configure_smtp_capture(monkeypatch)
+    session = create_test_session()
+    registration = register(
+        RegisterRequest(
+            full_name="Expira Teste",
+            email="expira@example.com",
+            password="broker-password",
+        ),
+        make_request("/auth/register"),
+        session,
+    )
+    assert "token" not in registration.model_dump_json()
+    first_token = token_from_last_verification_email()
+    pending = session.query(User).filter(User.email == "expira@example.com").one()
+    pending.email_verification_expires_at = auth_routes.now_utc() - timedelta(seconds=1)
+    pending.email_verification_sent_at = auth_routes.now_utc() - timedelta(seconds=90)
+    session.commit()
+
+    expired = verify_email(first_token, session)
+    assert expired.status_code == 400
+
+    resend = resend_verification(
+        EmailVerificationResendRequest(email="expira@example.com"),
+        make_request("/auth/resend-verification"),
+        session,
+    )
+    assert resend.masked_email == "ex****@example.com"
+    second_token = token_from_last_verification_email()
+    assert second_token != first_token
+    assert verify_email(first_token, session).status_code == 400
+    assert verify_email(second_token, session).status_code == 303
+    session.refresh(pending)
+    assert pending.email_verified is True
+    assert pending.status == "PENDING_ADMIN"
+
+    session.close()
+
+
+def test_raw_legacy_verification_token_is_not_accepted(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    session = create_test_session()
+    user = make_user(session, "legacy-token-user", email="legacy-token@example.com", status="PENDING_EMAIL", is_active=False)
+    user.email_verified = False
+    user.email_verification_token = "raw-token-from-old-flow"
+    user.email_verification_token_hash = None
+    user.email_verification_expires_at = auth_routes.now_utc() + timedelta(minutes=10)
+    session.commit()
+
+    response = verify_email("raw-token-from-old-flow", session)
+
+    assert response.status_code == 400
+    session.refresh(user)
+    assert user.email_verified is False
+    assert user.status == "PENDING_EMAIL"
+    session.close()
+
+
+def test_change_verification_email_invalidates_old_token_and_prevents_takeover(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    configure_smtp_capture(monkeypatch)
+    session = create_test_session()
+    register(
+        RegisterRequest(
+            full_name="Change Email",
+            email="wrong@example.com",
+            password="broker-password",
+        ),
+        make_request("/auth/register"),
+        session,
+    )
+    first_token = token_from_last_verification_email()
+    make_user(session, "existing-email-owner", email="existing@example.com")
+
+    duplicate_response = change_verification_email(
+        EmailVerificationChangeRequest(old_email="wrong@example.com", new_email="existing@example.com"),
+        make_request("/auth/change-verification-email"),
+        session,
+    )
+    pending = session.query(User).filter(User.email == "wrong@example.com").one()
+    assert duplicate_response.masked_email == "ex******@example.com"
+    assert pending.email == "wrong@example.com"
+    assert verify_email(first_token, session).status_code == 303
+
+    register(
+        RegisterRequest(
+            full_name="Change Email Dois",
+            email="typo@example.com",
+            password="broker-password",
+        ),
+        make_request("/auth/register"),
+        session,
+    )
+    old_token = token_from_last_verification_email()
+    change_response = change_verification_email(
+        EmailVerificationChangeRequest(old_email="typo@example.com", new_email="correct@example.com"),
+        make_request("/auth/change-verification-email"),
+        session,
+    )
+    assert change_response.masked_email == "co*****@example.com"
+    changed = session.query(User).filter(User.email == "correct@example.com").one()
+    assert changed.username == "correct@example.com"
+    assert changed.email_verified is False
+    new_token = token_from_last_verification_email()
+    assert old_token != new_token
+    assert verify_email(old_token, session).status_code == 400
+    assert verify_email(new_token, session).status_code == 303
+    session.refresh(changed)
+    assert changed.status == "PENDING_ADMIN"
+    session.close()
+
+
+def test_smtp_configuration_requires_authenticated_secure_transport(monkeypatch, caplog):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    CapturingSMTP.sent_messages = []
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://totalsolutionscancun.com")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("SMTP_PORT", "587")
+    monkeypatch.setenv("SMTP_FROM", "no-reply@totalsolutionscancun.com")
+    monkeypatch.delenv("SMTP_USERNAME", raising=False)
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
+    session = create_test_session()
+
+    with caplog.at_level("WARNING"):
+        register(
+            RegisterRequest(
+                full_name="Missing SMTP",
+                email="missing-smtp@example.com",
+                password="broker-password",
+            ),
+            make_request("/auth/register"),
+            session,
+        )
+
+    pending = session.query(User).filter(User.email == "missing-smtp@example.com").one()
+    assert pending.email_verified is False
+    assert pending.status == "PENDING_EMAIL"
+    assert CapturingSMTP.sent_messages == []
+    assert "SMTP_USERNAME" in caplog.text
+    assert "SMTP_PASSWORD" in caplog.text
+    assert "/auth/verify-email?token=" not in caplog.text
+    session.close()
+
+
+def test_legacy_email_migration_only_verifies_active_approved_users():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    session = sessionmaker(bind=engine)()
+    session.execute(
+        text(
+            """
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY,
+                email_verified BOOLEAN,
+                is_active BOOLEAN,
+                status VARCHAR,
+                email_verification_token VARCHAR
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO users (id, email_verified, is_active, status, email_verification_token)
+            VALUES
+              (1, NULL, TRUE, 'ACTIVE', 'raw-active'),
+              (2, NULL, FALSE, 'PENDING_EMAIL', 'raw-pending'),
+              (3, NULL, FALSE, 'SUSPENDED', 'raw-suspended'),
+              (4, NULL, FALSE, 'INACTIVE', 'raw-inactive')
+            """
+        )
+    )
+    migrate_legacy_email_verification(session)
+    migrate_legacy_email_verification(session)
+    rows = {
+        row.id: row.email_verified
+        for row in session.execute(text("SELECT id, email_verified FROM users ORDER BY id")).fetchall()
+    }
+    tokens = [row.email_verification_token for row in session.execute(text("SELECT email_verification_token FROM users")).fetchall()]
+    assert rows == {1: 1, 2: 0, 3: 0, 4: 0}
+    assert tokens == [None, None, None, None]
+    session.close()
+
+
+def test_smtp_failure_never_confirms_account_or_logs_token(monkeypatch, caplog):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    configure_smtp_capture(monkeypatch, fail=True)
+    session = create_test_session()
+    with caplog.at_level("WARNING"):
+        registration = register(
+            RegisterRequest(
+                full_name="SMTP Falha",
+                email="smtp-falha@example.com",
+                password="broker-password",
+            ),
+            make_request("/auth/register"),
+            session,
+        )
+    assert "token" not in registration.model_dump_json()
+    assert "verify-email" not in registration.model_dump_json()
+    assert CapturingSMTP.sent_messages == []
+    pending = session.query(User).filter(User.email == "smtp-falha@example.com").one()
+    assert pending.email_verified is False
+    assert pending.status == "PENDING_EMAIL"
+    assert pending.email_verification_token is None
+    assert pending.email_verification_token_hash is not None
+    assert "/auth/verify-email?token=" not in caplog.text
+    assert pending.email_verification_token_hash not in caplog.text
+    session.close()
+
+
+def test_invalid_turnstile_blocks_registration_in_backend(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("AUTH_SECURITY_TEST_MODE", "true")
+    monkeypatch.setenv("TURNSTILE_SECRET_KEY", "test-secret")
+    session = create_test_session()
+    with pytest.raises(HTTPException) as blocked:
+        register(
+            RegisterRequest(
+                full_name="Turnstile Teste",
+                email="turnstile@example.com",
+                password="broker-password",
+                turnstile_token="invalid",
+            ),
+            make_request("/auth/register"),
+            session,
+        )
+    assert blocked.value.status_code == 403
+    assert session.query(User).filter(User.email == "turnstile@example.com").count() == 0
+    session.close()
+
+
+def test_admin_cannot_approve_user_with_unconfirmed_email(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    session = create_test_session()
+    root = make_user(session, "root-unconfirmed-approve", "ROOT")
+    pending = make_user(session, "pending-unconfirmed", "BROKER", status="PENDING_EMAIL", is_active=False)
+    pending.email_verified = False
+    session.commit()
+
+    with pytest.raises(HTTPException) as blocked:
+        approve_user(
+            pending.id,
+            UserApprovalRequest(role="BROKER", plan="STARTER", plan_max_leads=100),
+            session,
+            root,
+        )
+    assert blocked.value.status_code == 400
+    assert blocked.value.detail == "Correo pendiente de confirmación"
+    session.close()
+
+
+def test_registration_frontend_does_not_embed_verification_token_or_url():
+    html = Path(__file__).parents[2].joinpath("frontend", "index.html").read_text(encoding="utf-8")
+    assert "data.verification_url" not in html
+    assert "verification_url" not in html
+    assert "/auth/verify-email?token=" not in html
 
 
 def test_user_activation_notifies_other_root_in_same_organization(monkeypatch):
@@ -451,7 +802,8 @@ def test_anonymized_email_can_register_again_as_pending(monkeypatch):
         session,
     )
 
-    assert "Cadastro recebido" in registration.message
+    assert "enlace de confirmación" in registration.message
+    assert "token" not in registration.model_dump_json()
     new_user = session.query(User).filter(User.email == "removed@example.com").one()
     assert new_user.id != technician.id
     assert new_user.status == "PENDING_EMAIL"
@@ -591,10 +943,169 @@ def test_google_login_never_auto_links_existing_email(monkeypatch):
     response = google_login(GoogleLoginRequest(id_token=__import__("json").dumps(google_payload)), make_request("/auth/google"), Response(), session)
     assert response.access_token is None
     pending = session.query(User).filter(User.email == "new-google@example.com").one()
-    assert pending.status == "PENDING_APPROVAL"
+    assert pending.status == "PENDING_ADMIN"
     assert pending.is_active is False
     assert session.query(UserIdentity).filter_by(user_id=pending.id, provider="google").count() == 1
     assert existing.status == "ACTIVE"
+    session.close()
+
+
+def test_pending_admin_login_does_not_issue_token_or_cookie(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    session = create_test_session()
+    pending = make_user(
+        session,
+        "pending-admin-gate",
+        "BROKER",
+        status="PENDING_ADMIN",
+        is_active=False,
+        email="pending-admin-gate@example.com",
+    )
+    response = Response()
+
+    with pytest.raises(HTTPException) as blocked:
+        login(AuthLoginRequest(email=pending.email, password="user-password"), make_request(), response, session)
+
+    assert blocked.value.status_code == 403
+    assert blocked.value.detail == "Aprobación administrativa pendiente"
+    assert not [header for header in response.raw_headers if header[0].lower() == b"set-cookie"]
+    session.close()
+
+
+def test_active_status_without_email_confirmation_is_blocked(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    session = create_test_session()
+    user = make_user(session, "active-unverified-gate", "BROKER", email="active-unverified@example.com")
+    user.email_verified = False
+    session.commit()
+    response = Response()
+
+    with pytest.raises(HTTPException) as blocked:
+        login(AuthLoginRequest(email=user.email, password="user-password"), make_request(), response, session)
+
+    assert blocked.value.status_code == 403
+    assert blocked.value.detail == "Correo pendiente de confirmación"
+    assert not [header for header in response.raw_headers if header[0].lower() == b"set-cookie"]
+    session.close()
+
+
+def test_legacy_active_user_with_blank_status_still_logs_in(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    session = create_test_session()
+    user = make_user(session, "legacy-active-gate", "BROKER", email="legacy-active@example.com")
+    user.status = ""
+    session.commit()
+
+    authenticated = login(AuthLoginRequest(email=user.email, password="user-password"), make_request(), Response(), session)
+
+    assert authenticated.access_token
+    session.refresh(user)
+    assert user.status == "ACTIVE"
+    session.close()
+
+
+def test_inactive_organization_blocks_login_and_existing_token(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    session = create_test_session()
+    organization = make_organization(session, "org-inactive-auth", "Organizacion Inactiva")
+    user = make_user(session, "org-active-user", "BROKER", organization_id=organization.id)
+
+    authenticated = login(AuthLoginRequest(email=user.email, password="user-password"), make_request(), Response(), session)
+    organization.status = "SUSPENDED"
+    session.commit()
+
+    with pytest.raises(HTTPException) as blocked_login:
+        login(AuthLoginRequest(email=user.email, password="user-password"), make_request(), Response(), session)
+    assert blocked_login.value.status_code == 403
+    assert blocked_login.value.detail == "Organización inactiva"
+
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=authenticated.access_token)
+    with pytest.raises(HTTPException) as blocked_api:
+        get_current_user(make_request(), credentials=credentials, db=session)
+    assert blocked_api.value.status_code == 401
+    assert blocked_api.value.detail == "Organización inactiva"
+    session.close()
+
+
+def test_mfa_challenge_cannot_bypass_status_change(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("AUTH_SECURITY_TEST_MODE", "true")
+    session = create_test_session()
+    root = make_user(session, "root-mfa-gate", "ROOT", email="root-mfa-gate@example.com")
+
+    first_step = login(AuthLoginRequest(email=root.email, password="user-password"), make_request(), Response(), session)
+    assert first_step.mfa_setup_required is True
+
+    setup = start_mfa_setup_from_challenge(
+        MfaSetupChallengeStartRequest(challenge_token=first_step.mfa_challenge_token),
+        session,
+    )
+    root.status = "PENDING_ADMIN"
+    root.is_active = False
+    session.commit()
+    code = hotp(setup.secret, totp_counter())
+
+    with pytest.raises(HTTPException) as blocked_confirm:
+        confirm_mfa_setup_from_challenge(
+            MfaSetupChallengeConfirmRequest(challenge_token=first_step.mfa_challenge_token, code=code),
+            make_request("/auth/mfa/setup/confirm-challenge"),
+            Response(),
+            session,
+        )
+
+    assert blocked_confirm.value.status_code == 403
+    assert blocked_confirm.value.detail == "Aprobación administrativa pendiente"
+    session.close()
+
+
+def test_mfa_verify_cannot_bypass_suspended_user(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("AUTH_SECURITY_TEST_MODE", "true")
+    session = create_test_session()
+    root = make_user(session, "root-mfa-verify-gate", "ROOT", email="root-mfa-verify-gate@example.com")
+    first_step = login(AuthLoginRequest(email=root.email, password="user-password"), make_request(), Response(), session)
+    setup = start_mfa_setup_from_challenge(
+        MfaSetupChallengeStartRequest(challenge_token=first_step.mfa_challenge_token),
+        session,
+    )
+    root.mfa_secret_encrypted = auth_routes.encrypt_secret(setup.secret)
+    root.mfa_enabled = True
+    root.status = "SUSPENDED"
+    root.is_active = False
+    session.commit()
+
+    with pytest.raises(HTTPException) as blocked:
+        verify_mfa(
+            MfaVerifyRequest(challenge_token=first_step.mfa_challenge_token, code=hotp(setup.secret, totp_counter())),
+            make_request("/auth/mfa/verify"),
+            Response(),
+            session,
+        )
+
+    assert blocked.value.status_code == 403
+    assert blocked.value.detail == "Usuario suspendido o inactivo"
+    session.close()
+
+
+def test_public_signup_can_be_disabled_at_backend(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("PUBLIC_SIGNUP_ENABLED", "false")
+    session = create_test_session()
+
+    with pytest.raises(HTTPException) as blocked:
+        register(
+            RegisterRequest(
+                full_name="Signup Disabled",
+                email="signup-disabled@example.com",
+                password="broker-password",
+            ),
+            make_request("/auth/register"),
+            session,
+        )
+
+    assert blocked.value.status_code == 403
+    assert session.query(User).filter(User.email == "signup-disabled@example.com").count() == 0
+    assert auth_routes.public_config().public_signup_enabled is False
     session.close()
 
 
