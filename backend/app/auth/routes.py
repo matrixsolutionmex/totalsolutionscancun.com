@@ -216,7 +216,9 @@ def send_verification_email_with_resend_api(*, to_email: str, full_name: str | N
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
             "Content-Type": "application/json",
+            "User-Agent": "TotalSolutionsCRM/1.0 (+https://totalsolutionscancun.com)",
         },
         method="POST",
     )

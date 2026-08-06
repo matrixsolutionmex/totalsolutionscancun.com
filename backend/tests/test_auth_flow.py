@@ -560,7 +560,9 @@ def test_resend_api_is_used_for_verification_email(monkeypatch):
         captured["url"] = request.full_url
         captured["timeout"] = timeout
         captured["authorization"] = request.headers["Authorization"]
+        captured["accept"] = request.headers["Accept"]
         captured["content_type"] = request.headers["Content-type"]
+        captured["user_agent"] = request.headers["User-agent"]
         captured["payload"] = request.data.decode("utf-8")
         return CapturingResendResponse()
 
@@ -588,7 +590,9 @@ def test_resend_api_is_used_for_verification_email(monkeypatch):
     assert captured["url"] == "https://api.resend.com/emails"
     assert captured["timeout"] == 15
     assert captured["authorization"] == "Bearer re_test_api_key"
+    assert captured["accept"] == "application/json"
     assert captured["content_type"] == "application/json"
+    assert captured["user_agent"].startswith("TotalSolutionsCRM/1.0")
     assert "secret-token" in captured["payload"]
     assert "qa@example.com" in captured["payload"]
 
