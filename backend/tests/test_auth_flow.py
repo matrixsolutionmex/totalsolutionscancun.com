@@ -343,6 +343,77 @@ def test_email_verification_resend_invalidates_old_token_and_expiration(monkeypa
     session.close()
 
 
+def test_register_existing_pending_email_resends_without_exposing_token(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    configure_smtp_capture(monkeypatch)
+    session = create_test_session()
+    registration = register(
+        RegisterRequest(
+            full_name="Pendente Existente",
+            email="pendente-existente@example.com",
+            password="broker-password",
+        ),
+        make_request("/auth/register"),
+        session,
+    )
+    first_token = token_from_last_verification_email()
+    user = session.query(User).filter(User.email == "pendente-existente@example.com").one()
+    user.email_verification_sent_at = auth_routes.now_utc() - timedelta(seconds=90)
+    session.commit()
+
+    repeated = register(
+        RegisterRequest(
+            full_name="Pendente Existente",
+            email="pendente-existente@example.com",
+            password="broker-password",
+        ),
+        make_request("/auth/register"),
+        session,
+    )
+
+    assert repeated.email_delivery_status == "accepted"
+    assert "token" not in repeated.model_dump_json()
+    assert "verify-email" not in repeated.model_dump_json()
+    assert registration.masked_email == repeated.masked_email
+    second_token = token_from_last_verification_email()
+    assert second_token != first_token
+    assert verify_email(first_token, session).status_code == 400
+    assert verify_email(second_token, session).status_code == 303
+    session.close()
+
+
+def test_register_existing_active_email_does_not_resend_or_log_address(monkeypatch, caplog):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    configure_smtp_capture(monkeypatch)
+    session = create_test_session()
+    make_user(
+        session,
+        "existing-active-register",
+        "BROKER",
+        email="existing-active-register@example.com",
+        status="ACTIVE",
+        is_active=True,
+    )
+    CapturingSMTP.sent_messages = []
+
+    with caplog.at_level("INFO"):
+        response = register(
+            RegisterRequest(
+                full_name="Existing Active",
+                email="existing-active-register@example.com",
+                password="broker-password",
+            ),
+            make_request("/auth/register"),
+            session,
+        )
+
+    assert response.email_delivery_status == "accepted"
+    assert CapturingSMTP.sent_messages == []
+    assert "Cadastro existente aceito sem reenvio" in caplog.text
+    assert "existing-active-register@example.com" not in caplog.text
+    session.close()
+
+
 def test_email_verification_resend_reports_unavailable_when_provider_fails(monkeypatch, caplog):
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
     configure_smtp_capture(monkeypatch)

@@ -424,6 +424,42 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
                 email=email,
                 reason="Solicitacao criada a partir de novo cadastro com email existente.",
             )
+        if existing.status == "PENDING_EMAIL" and not existing.email_verified:
+            rate_limit_or_429(f"email-verification-resend:{existing.id}", limit=3, window_seconds=900)
+            now = now_utc()
+            sent_at = existing.email_verification_sent_at
+            if sent_at and (now - sent_at).total_seconds() < EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS:
+                remaining = EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS - int((now - sent_at).total_seconds())
+                audit_auth_event(db, request=request, event_type="REGISTER_REQUESTED", outcome="COOLDOWN_EXISTING_PENDING_EMAIL", user=existing)
+                db.commit()
+                return generic_register_response(
+                    email,
+                    email_delivery_status="cooldown",
+                    resend_after_seconds=max(remaining, 1),
+                )
+            email_sent = issue_email_verification(db, existing)
+            audit_auth_event(
+                db,
+                request=request,
+                event_type="REGISTER_REQUESTED",
+                outcome="RESENT_EXISTING_PENDING_EMAIL" if email_sent else "PENDING_CONFIG_EXISTING_PENDING_EMAIL",
+                user=existing,
+                detail={"email_sent": email_sent, "missing_email_variables": email_delivery_missing_variables()},
+            )
+            db.commit()
+            if not email_sent:
+                logger.warning("Cadastro existente pendente sem reenvio para user_id=%s; configuracao SMTP/PUBLIC_BASE_URL incompleta ou indisponivel.", existing.id)
+            return generic_register_response(
+                email,
+                message=PUBLIC_REGISTER_MESSAGE if email_sent else PUBLIC_EMAIL_DELIVERY_UNAVAILABLE_MESSAGE,
+                email_delivery_status="accepted" if email_sent else "unavailable",
+            )
+        logger.info(
+            "Cadastro existente aceito sem reenvio: user_id=%s,status=%s,email_verified=%s",
+            existing.id,
+            public_status_label(existing.status),
+            bool(existing.email_verified),
+        )
         audit_auth_event(db, request=request, event_type="REGISTER_REQUESTED", outcome="ACCEPTED_EXISTING", user=existing)
         db.commit()
         return generic_register_response(email)
@@ -477,6 +513,13 @@ def resend_verification(payload: EmailVerificationResendRequest, request: Reques
         .first()
     )
     if not user or user.email_verified or user.status != "PENDING_EMAIL":
+        logger.info(
+            "Reenvio de verificacao aceito sem envio: user_found=%s,status=%s,email_verified=%s,user_email_hash=%s",
+            bool(user),
+            public_status_label(user.status) if user else "NONE",
+            bool(user.email_verified) if user else False,
+            hash_value(email),
+        )
         audit_auth_event(db, request=request, event_type="EMAIL_VERIFICATION_RESEND", outcome="ACCEPTED")
         db.commit()
         return generic_register_response(email)
