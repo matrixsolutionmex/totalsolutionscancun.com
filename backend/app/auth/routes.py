@@ -1,9 +1,12 @@
 import logging
+import json
 import os
 import secrets
 import smtplib
 from datetime import datetime, timedelta
 from email.message import EmailMessage
+from urllib import error as urlerror
+from urllib import request as urlrequest
 from urllib.parse import quote, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -169,6 +172,60 @@ def email_verification_url(raw_token: str) -> str | None:
     return f"{base_url}/auth/verify-email?token={quote(raw_token, safe='')}"
 
 
+def resend_api_key() -> str:
+    explicit_key = os.getenv("RESEND_API_KEY", "").strip()
+    if explicit_key:
+        return explicit_key
+    if os.getenv("SMTP_HOST", "").strip().lower() == "smtp.resend.com":
+        return os.getenv("SMTP_PASSWORD", "").strip()
+    return ""
+
+
+def send_verification_email_with_resend_api(*, to_email: str, full_name: str | None, verification_url: str) -> bool:
+    api_key = resend_api_key()
+    smtp_from = os.getenv("SMTP_FROM", "").strip()
+    if not api_key or not smtp_from:
+        return False
+
+    greeting = (full_name or "Hola").strip()
+    payload = {
+        "from": smtp_from,
+        "to": [to_email],
+        "subject": "Confirma tu correo - Total Solutions",
+        "text": "\n".join(
+            [
+                f"{greeting},",
+                "",
+                "Confirma tu correo para continuar con la solicitud de acceso a Total Solutions.",
+                "El enlace vence en 60 minutos y solo puede usarse una vez.",
+                "",
+                verification_url,
+                "",
+                "Si no solicitaste este acceso, ignora este mensaje.",
+            ]
+        ),
+    }
+    request = urlrequest.Request(
+        "https://api.resend.com/emails",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlrequest.urlopen(request, timeout=15) as response:
+            return 200 <= response.status < 300
+    except (urlerror.HTTPError, urlerror.URLError, TimeoutError) as exc:
+        logger.warning(
+            "Falha ao enviar email de verificacao via Resend API para user_email_hash=%s: %s",
+            hash_value(to_email),
+            exc.__class__.__name__,
+        )
+        return False
+
+
 def send_verification_email(*, to_email: str, full_name: str | None, verification_url: str) -> bool:
     smtp_host = os.getenv("SMTP_HOST", "").strip()
     smtp_from = os.getenv("SMTP_FROM", "").strip()
@@ -176,6 +233,13 @@ def send_verification_email(*, to_email: str, full_name: str | None, verificatio
     if missing:
         logger.warning("Email de verificacao pendente por configuracao SMTP incompleta: %s", ",".join(sorted(set(missing))))
         return False
+
+    if resend_api_key():
+        return send_verification_email_with_resend_api(
+            to_email=to_email,
+            full_name=full_name,
+            verification_url=verification_url,
+        )
 
     smtp_port = int(os.getenv("SMTP_PORT", "587"))
     smtp_username = os.getenv("SMTP_USERNAME", "").strip()

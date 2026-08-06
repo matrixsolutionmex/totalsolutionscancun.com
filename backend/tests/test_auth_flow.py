@@ -154,6 +154,16 @@ def token_from_last_verification_email():
     return parse_qs(parsed.query)["token"][0]
 
 
+class CapturingResendResponse:
+    status = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+
 def make_organization(session, slug="total-solutions-test", name="Total Solutions Test"):
     organization = Organization(name=name, slug=slug)
     session.add(organization)
@@ -431,6 +441,46 @@ def test_smtp_configuration_requires_authenticated_secure_transport(monkeypatch,
     assert "SMTP_PASSWORD" in caplog.text
     assert "/auth/verify-email?token=" not in caplog.text
     session.close()
+
+
+def test_resend_api_is_used_for_verification_email(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["timeout"] = timeout
+        captured["authorization"] = request.headers["Authorization"]
+        captured["content_type"] = request.headers["Content-type"]
+        captured["payload"] = request.data.decode("utf-8")
+        return CapturingResendResponse()
+
+    def smtp_should_not_run(*_args, **_kwargs):
+        raise AssertionError("SMTP should not be used for Resend delivery")
+
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://totalsolutionscancun.com")
+    monkeypatch.setenv("SMTP_HOST", "smtp.resend.com")
+    monkeypatch.setenv("SMTP_PORT", "465")
+    monkeypatch.setenv("SMTP_USERNAME", "resend")
+    monkeypatch.setenv("SMTP_PASSWORD", "re_test_api_key")
+    monkeypatch.setenv("SMTP_FROM", "no-reply@totalsolutionscancun.com")
+    monkeypatch.setenv("SMTP_USE_SSL", "true")
+    monkeypatch.setenv("SMTP_USE_TLS", "false")
+    monkeypatch.setattr(auth_routes.urlrequest, "urlopen", fake_urlopen)
+    monkeypatch.setattr(auth_routes.smtplib, "SMTP_SSL", smtp_should_not_run)
+
+    sent = auth_routes.send_verification_email(
+        to_email="qa@example.com",
+        full_name="QA",
+        verification_url="https://totalsolutionscancun.com/auth/verify-email?token=secret-token",
+    )
+
+    assert sent is True
+    assert captured["url"] == "https://api.resend.com/emails"
+    assert captured["timeout"] == 15
+    assert captured["authorization"] == "Bearer re_test_api_key"
+    assert captured["content_type"] == "application/json"
+    assert "secret-token" in captured["payload"]
+    assert "qa@example.com" in captured["payload"]
 
 
 def test_legacy_email_migration_only_verifies_active_approved_users():
