@@ -67,6 +67,8 @@ class ServiceOrderResponse(BaseModel):
     order_number: str | None = None
     lead_id: int
     property_id: str | None = None
+    property_record_id: int | None = None
+    service_request_id: int | None = None
     status: str
     warranty_days: int
     opened_at: datetime | None = None

@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import secrets
@@ -11,10 +12,11 @@ from uuid import uuid4
 
 import httpx
 from fastapi import HTTPException, Request, Response
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password, verify_password
-from app.models.auth_security import AuthAuditEvent, MfaRecoveryCode, UserSession
+from app.models.auth_security import AuthAuditEvent, AuthRateLimit, MfaRecoveryCode, UserSession
 from app.models.user import User
 
 try:
@@ -34,7 +36,7 @@ except ImportError:  # pragma: no cover
 AUTH_COOKIE_NAME = "ts_session"
 CSRF_COOKIE_NAME = "ts_csrf"
 MFA_CHALLENGE_TTL_SECONDS = 300
-_rate_buckets: dict[str, list[float]] = {}
+RATE_LIMIT_CLEANUP_AFTER_SECONDS = 86400
 
 
 def now_utc() -> datetime:
@@ -48,13 +50,66 @@ def hash_value(value: str | None) -> str | None:
     return hashlib.sha256(f"{pepper}:{value}".encode("utf-8")).hexdigest()
 
 
+def scoped_hmac_value(purpose: str, value: str | None) -> str | None:
+    if not value:
+        return None
+    pepper = os.getenv("AUTH_AUDIT_PEPPER", os.getenv("JWT_SECRET_KEY", "dev-pepper"))
+    message = f"{purpose}:{value}".encode("utf-8")
+    return hmac.new(pepper.encode("utf-8"), message, hashlib.sha256).hexdigest()
+
+
+def _trusted_proxy_networks() -> list[ipaddress._BaseNetwork]:
+    configured = os.getenv("TRUSTED_PROXY_CIDRS", "").strip()
+    networks: list[ipaddress._BaseNetwork] = []
+    for raw_network in configured.split(","):
+        raw_network = raw_network.strip()
+        if not raw_network:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(raw_network, strict=False))
+        except ValueError:
+            continue
+    return networks
+
+
+def _is_trusted_proxy_host(host: str) -> bool:
+    if not host:
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    if ip.is_loopback:
+        return True
+    return any(ip in network for network in _trusted_proxy_networks())
+
+
+def _first_valid_forwarded_ip(header_value: str) -> str:
+    for candidate in header_value.split(","):
+        candidate = candidate.strip()
+        if not candidate:
+            continue
+        try:
+            ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+        return candidate
+    return ""
+
+
 def request_ip(request: Request | None) -> str:
     if not request:
         return ""
-    forwarded = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else ""
+    connection_host = request.client.host if request.client else ""
+    trust_proxy_headers = os.getenv("TRUST_PROXY_HEADERS", "false").strip().lower() == "true"
+    if trust_proxy_headers and _is_trusted_proxy_host(connection_host):
+        cf_ip = _first_valid_forwarded_ip(request.headers.get("cf-connecting-ip", ""))
+        if cf_ip:
+            return cf_ip
+        forwarded_ip = _first_valid_forwarded_ip(request.headers.get("x-forwarded-for", ""))
+        if forwarded_ip:
+            return forwarded_ip
+    return connection_host
 
 
 def request_user_agent(request: Request | None) -> str:
@@ -91,27 +146,92 @@ def audit_auth_event(
     return event
 
 
-def rate_limit_or_429(key: str, *, limit: int, window_seconds: int, progressive: bool = True) -> None:
-    now = time.time()
-    bucket = [stamp for stamp in _rate_buckets.get(key, []) if now - stamp < window_seconds]
-    if len(bucket) >= limit:
-        retry_after = min(window_seconds, int(window_seconds - (now - bucket[0])) + 1)
+def _rate_limit_message() -> str:
+    return "Muitas tentativas. Aguarde alguns minutos e tente novamente."
+
+
+def _rate_limit_key_hash(scope: str, key: str) -> str:
+    normalized_key = (key or "anonymous").strip().lower()
+    return scoped_hmac_value(f"auth-rate-limit:{scope}", normalized_key) or "unknown"
+
+
+def cleanup_expired_rate_limits(db: Session) -> int:
+    cutoff = now_utc() - timedelta(seconds=RATE_LIMIT_CLEANUP_AFTER_SECONDS)
+    deleted = db.query(AuthRateLimit).filter(AuthRateLimit.updated_at < cutoff).delete(synchronize_session=False)
+    return int(deleted or 0)
+
+
+def clear_rate_limit(db: Session, scope: str, key: str) -> int:
+    key_hash = _rate_limit_key_hash(scope, key)
+    deleted = (
+        db.query(AuthRateLimit)
+        .filter(AuthRateLimit.scope == scope, AuthRateLimit.key_hash == key_hash)
+        .delete(synchronize_session=False)
+    )
+    return int(deleted or 0)
+
+
+def rate_limit_or_429(
+    db: Session,
+    scope: str,
+    key: str,
+    *,
+    limit: int,
+    window_seconds: int,
+    progressive: bool = True,
+) -> None:
+    now = now_utc()
+    key_hash = _rate_limit_key_hash(scope, key)
+
+    if secrets.randbelow(100) == 0:
+        cleanup_expired_rate_limits(db)
+
+    row = (
+        db.query(AuthRateLimit)
+        .filter(AuthRateLimit.scope == scope, AuthRateLimit.key_hash == key_hash)
+        .with_for_update()
+        .first()
+    )
+    if row is None:
+        row = AuthRateLimit(scope=scope, key_hash=key_hash, window_start=now, attempts=0, updated_at=now)
+        db.add(row)
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            row = (
+                db.query(AuthRateLimit)
+                .filter(AuthRateLimit.scope == scope, AuthRateLimit.key_hash == key_hash)
+                .with_for_update()
+                .one()
+            )
+
+    if row.blocked_until and row.blocked_until > now:
+        retry_after = max(1, int((row.blocked_until - now).total_seconds()) + 1)
+        raise HTTPException(status_code=429, detail=_rate_limit_message(), headers={"Retry-After": str(retry_after)})
+
+    if (now - row.window_start).total_seconds() >= window_seconds:
+        row.window_start = now
+        row.attempts = 0
+        row.blocked_until = None
+
+    next_attempts = int(row.attempts or 0) + 1
+    row.attempts = next_attempts
+    row.updated_at = now
+
+    if next_attempts > limit:
+        retry_after = max(1, int(window_seconds - (now - row.window_start).total_seconds()) + 1)
         if progressive:
-            retry_after = min(window_seconds * 2, retry_after + (len(bucket) - limit + 1) * 5)
-        raise HTTPException(
-            status_code=429,
-            detail="Muitas tentativas. Aguarde alguns minutos e tente novamente.",
-            headers={"Retry-After": str(max(retry_after, 1))},
-        )
-    bucket.append(now)
-    _rate_buckets[key] = bucket
+            retry_after = min(window_seconds * 2, retry_after + (next_attempts - limit) * 5)
+        row.blocked_until = now + timedelta(seconds=retry_after)
+        raise HTTPException(status_code=429, detail=_rate_limit_message(), headers={"Retry-After": str(retry_after)})
 
 
-def apply_public_rate_limits(request: Request, identity: str, action: str) -> None:
-    ip_hash = hash_value(request_ip(request)) or "unknown"
-    identity_hash = hash_value(identity.strip().lower()) or "anonymous"
-    rate_limit_or_429(f"ip:{action}:{ip_hash}", limit=20, window_seconds=300)
-    rate_limit_or_429(f"id:{action}:{identity_hash}", limit=8, window_seconds=900)
+def apply_public_rate_limits(db: Session, request: Request, identity: str, action: str) -> None:
+    ip_value = request_ip(request) or "unknown"
+    identity_value = identity.strip().lower() or "anonymous"
+    rate_limit_or_429(db, f"ip:{action}", ip_value, limit=20, window_seconds=300)
+    rate_limit_or_429(db, f"id:{action}", identity_value, limit=8, window_seconds=900)
 
 
 def turnstile_configured() -> bool:

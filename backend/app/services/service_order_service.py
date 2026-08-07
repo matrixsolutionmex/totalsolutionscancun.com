@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 
 from app.models.lead import Lead
 from app.models.service_order import ServiceOrder
+from app.models.service_property import ServiceProperty
+from app.models.service_request import ServiceRequest
 from app.models.user import User
 
 
@@ -39,12 +41,28 @@ def supervisor_id_for_responsible(db: Session, responsible_user_id: int | None, 
     return actor.id if actor and actor.role == "GERENTE" else None
 
 
-def ensure_service_order(db: Session, lead: Lead, *, actor: User | None = None) -> ServiceOrder:
-    service_order = db.query(ServiceOrder).filter(ServiceOrder.lead_id == lead.id).first()
+def ensure_service_order(
+    db: Session,
+    lead: Lead,
+    *,
+    actor: User | None = None,
+    service_request: ServiceRequest | None = None,
+    property_record: ServiceProperty | None = None,
+    force_new: bool = False,
+) -> ServiceOrder:
+    if service_request and service_request.id:
+        service_order = db.query(ServiceOrder).filter(ServiceOrder.service_request_id == service_request.id).first()
+        if service_order:
+            sync_service_order_from_lead(db, service_order, lead, actor=actor)
+            return service_order
+
+    service_order = None
+    if not force_new:
+        service_order = db.query(ServiceOrder).filter(ServiceOrder.lead_id == lead.id).order_by(ServiceOrder.id.desc()).first()
+
     if service_order:
         service_order.organization_id = lead.organization_id or service_order.organization_id
         sync_service_order_from_lead(db, service_order, lead, actor=actor)
-        lead.service_order = service_order
         return service_order
 
     opened_at = lead.created_at or datetime.utcnow()
@@ -52,6 +70,8 @@ def ensure_service_order(db: Session, lead: Lead, *, actor: User | None = None) 
         organization_id=lead.organization_id or (actor.organization_id if actor else None),
         lead_id=lead.id,
         property_id=lead.property_id,
+        property_record_id=property_record.id if property_record else None,
+        service_request_id=service_request.id if service_request else None,
         status=OS_STATUS_BY_PIPELINE.get(lead.pipeline or "", "ABERTA"),
         warranty_days=90,
         opened_at=opened_at,
@@ -63,7 +83,6 @@ def ensure_service_order(db: Session, lead: Lead, *, actor: User | None = None) 
     db.add(service_order)
     db.flush()
     service_order.order_number = service_order_number(service_order, opened_at=opened_at)
-    lead.service_order = service_order
     return service_order
 
 
@@ -75,6 +94,10 @@ def sync_service_order_from_lead(
     actor: User | None = None,
 ) -> ServiceOrder:
     service_order.property_id = lead.property_id
+    if not service_order.property_record_id:
+        request = getattr(service_order, "service_request", None)
+        if request and request.property_id:
+            service_order.property_record_id = request.property_id
     service_order.organization_id = lead.organization_id or service_order.organization_id or (actor.organization_id if actor else None)
     service_order.status = OS_STATUS_BY_PIPELINE.get(lead.pipeline or "", service_order.status or "ABERTA")
     service_order.scheduled_at = lead.proximo_contacto

@@ -1,4 +1,5 @@
 from datetime import timedelta
+import json
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -32,7 +33,7 @@ from app.core import auth_security
 from app.core.auth_security import hash_value, hotp, totp_counter, verify_mfa_challenge_token
 from app.core.security import hash_password
 from app.database.connection import Base
-from app.models.auth_security import AuthAuditEvent, MfaRecoveryCode, PasswordResetToken, UserIdentity, UserSession
+from app.models.auth_security import AuthAuditEvent, AuthRateLimit, MfaRecoveryCode, PasswordResetToken, UserIdentity, UserSession
 from app.models.lead import Lead
 from app.models.notification import EmailOutbox, Notification, NotificationPreference, WebPushSubscription
 from app.models.organization import Organization
@@ -58,10 +59,10 @@ from app.schemas.user_schema import UserAnonymizeRequest, UserArchiveRequest, Us
 
 
 @pytest.fixture(autouse=True)
-def clear_auth_rate_limits():
-    auth_security._rate_buckets.clear()
+def clear_auth_security_env(monkeypatch):
+    monkeypatch.delenv("TRUST_PROXY_HEADERS", raising=False)
+    monkeypatch.delenv("TRUSTED_PROXY_CIDRS", raising=False)
     yield
-    auth_security._rate_buckets.clear()
 
 
 def create_test_session():
@@ -87,12 +88,16 @@ def create_test_session():
             PasswordResetToken.__table__,
             MfaRecoveryCode.__table__,
             AuthAuditEvent.__table__,
+            AuthRateLimit.__table__,
         ],
     )
     return sessionmaker(bind=engine)()
 
 
-def make_request(path="/auth/login"):
+def make_request(path="/auth/login", *, client_host="127.0.0.1", headers=None):
+    raw_headers = [(b"user-agent", b"pytest")]
+    for key, value in (headers or {}).items():
+        raw_headers.append((key.lower().encode("latin-1"), value.encode("latin-1")))
     return Request(
         {
             "type": "http",
@@ -102,8 +107,8 @@ def make_request(path="/auth/login"):
             "path": path,
             "root_path": "",
             "query_string": b"",
-            "headers": [(b"user-agent", b"pytest")],
-            "client": ("127.0.0.1", 12345),
+            "headers": raw_headers,
+            "client": (client_host, 12345),
         }
     )
 
@@ -148,10 +153,24 @@ def configure_smtp_capture(monkeypatch, *, fail=False):
 
 def token_from_last_verification_email():
     assert CapturingSMTP.sent_messages
-    body = CapturingSMTP.sent_messages[-1].get_content()
+    body = verification_email_plain_body(CapturingSMTP.sent_messages[-1])
     link = next(line.strip() for line in body.splitlines() if "/auth/verify-email?token=" in line)
     parsed = urlparse(link)
     return parse_qs(parsed.query)["token"][0]
+
+
+def verification_email_plain_body(message):
+    if not message.is_multipart():
+        return message.get_content()
+    plain_part = message.get_body(preferencelist=("plain",))
+    assert plain_part is not None
+    return plain_part.get_content()
+
+
+def verification_email_html_body(message):
+    html_part = message.get_body(preferencelist=("html",))
+    assert html_part is not None
+    return html_part.get_content()
 
 
 class CapturingResendResponse:
@@ -250,6 +269,14 @@ def test_public_registration_requires_verification_and_root_approval(monkeypatch
     assert "token" not in registration.model_dump_json()
     assert "verify-email" not in registration.model_dump_json()
     assert registration.masked_email == "br****@example.com"
+    assert CapturingSMTP.sent_messages
+    message = CapturingSMTP.sent_messages[-1]
+    assert message.is_multipart()
+    html_body = verification_email_html_body(message)
+    assert "Confirmar correo" in html_body
+    assert "CORREO SEGURO" in html_body
+    assert "https://totalsolutionscancun.com/assets/total-solutions-logo.svg" in html_body
+    assert 'href="https://totalsolutionscancun.com/auth/verify-email?token=' in html_body
     token = token_from_last_verification_email()
     pending = session.query(User).filter(User.email == "broker@example.com").one()
     assert pending.status == "PENDING_EMAIL"
@@ -595,6 +622,13 @@ def test_resend_api_is_used_for_verification_email(monkeypatch):
     assert captured["user_agent"].startswith("TotalSolutionsCRM/1.0")
     assert "secret-token" in captured["payload"]
     assert "qa@example.com" in captured["payload"]
+    payload = json.loads(captured["payload"])
+    assert payload["text"].count("secret-token") == 1
+    assert "html" in payload
+    assert "Confirmar correo" in payload["html"]
+    assert "CORREO SEGURO" in payload["html"]
+    assert "https://totalsolutionscancun.com/assets/total-solutions-logo.svg" in payload["html"]
+    assert 'href="https://totalsolutionscancun.com/auth/verify-email?token=secret-token"' in payload["html"]
 
 
 @pytest.mark.parametrize("status_code", [400, 401, 403, 422, 429, 500])
@@ -1168,6 +1202,185 @@ def test_turnstile_required_and_rate_limit_are_enforced(monkeypatch):
         )
     assert limited.value.status_code == 429
     assert session.query(AuthAuditEvent).filter(AuthAuditEvent.event_type.like("TURNSTILE%")).count() >= 1
+    session.close()
+
+
+def test_persistent_rate_limit_by_identity_has_retry_after_and_survives_sessions(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("AUTH_SECURITY_TEST_MODE", "true")
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(
+        bind=engine,
+        tables=[
+            User.__table__,
+            AuthAuditEvent.__table__,
+            AuthRateLimit.__table__,
+            UserSession.__table__,
+        ],
+    )
+    SessionForTest = sessionmaker(bind=engine)
+    session = SessionForTest()
+    make_user(session, "persist-rate", email="persist-rate@example.com")
+
+    for _ in range(8):
+        with pytest.raises(HTTPException) as denied:
+            login(
+                AuthLoginRequest(email="persist-rate@example.com", password="wrong", turnstile_token="test:login"),
+                make_request(),
+                Response(),
+                session,
+            )
+        assert denied.value.status_code == 401
+
+    assert session.query(AuthRateLimit).filter(AuthRateLimit.scope == "id:login").count() == 1
+    session.close()
+
+    second_session = SessionForTest()
+    with pytest.raises(HTTPException) as limited:
+        login(
+            AuthLoginRequest(email="persist-rate@example.com", password="wrong", turnstile_token="test:login"),
+            make_request(),
+            Response(),
+            second_session,
+        )
+    assert limited.value.status_code == 429
+    assert int(limited.value.headers["Retry-After"]) > 0
+    assert second_session.query(AuthRateLimit).filter(AuthRateLimit.scope == "id:login").one().attempts == 9
+    second_session.close()
+
+
+def test_rate_limit_table_is_shared_by_multiple_sessions(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine, tables=[AuthRateLimit.__table__])
+    SessionForTest = sessionmaker(bind=engine)
+    first = SessionForTest()
+    second = SessionForTest()
+
+    for _ in range(2):
+        auth_security.rate_limit_or_429(first, "id:login", "shared@example.com", limit=3, window_seconds=900)
+        first.commit()
+    auth_security.rate_limit_or_429(second, "id:login", "shared@example.com", limit=3, window_seconds=900)
+    second.commit()
+
+    with pytest.raises(HTTPException) as limited:
+        auth_security.rate_limit_or_429(second, "id:login", "shared@example.com", limit=3, window_seconds=900)
+    assert limited.value.status_code == 429
+    assert int(limited.value.headers["Retry-After"]) > 0
+    assert second.query(AuthRateLimit).filter(AuthRateLimit.scope == "id:login").one().attempts == 4
+    first.close()
+    second.close()
+
+
+def test_rate_limit_expires_and_cleanup_removes_old_rows(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    session = create_test_session()
+    auth_security.rate_limit_or_429(session, "id:login", "expire@example.com", limit=1, window_seconds=1)
+    session.commit()
+
+    row = session.query(AuthRateLimit).one()
+    row.window_start = auth_security.now_utc() - timedelta(seconds=5)
+    row.updated_at = auth_security.now_utc() - timedelta(seconds=auth_security.RATE_LIMIT_CLEANUP_AFTER_SECONDS + 10)
+    session.commit()
+
+    auth_security.rate_limit_or_429(session, "id:login", "expire@example.com", limit=1, window_seconds=1)
+    session.commit()
+    refreshed = session.query(AuthRateLimit).one()
+    assert refreshed.attempts == 1
+    assert refreshed.blocked_until is None
+
+    refreshed.updated_at = auth_security.now_utc() - timedelta(seconds=auth_security.RATE_LIMIT_CLEANUP_AFTER_SECONDS + 10)
+    session.commit()
+    assert auth_security.cleanup_expired_rate_limits(session) == 1
+    session.commit()
+    assert session.query(AuthRateLimit).count() == 0
+    session.close()
+
+
+def test_valid_login_clears_identity_counter_but_keeps_ip_history(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("AUTH_SECURITY_TEST_MODE", "true")
+    session = create_test_session()
+    user = make_user(session, "clear-rate", email="clear-rate@example.com")
+
+    for _ in range(3):
+        with pytest.raises(HTTPException):
+            login(
+                AuthLoginRequest(email=user.email, password="wrong", turnstile_token="test:login"),
+                make_request(),
+                Response(),
+                session,
+            )
+
+    assert session.query(AuthRateLimit).filter(AuthRateLimit.scope == "id:login").count() == 1
+    assert session.query(AuthRateLimit).filter(AuthRateLimit.scope == "ip:login").count() == 1
+
+    authenticated = login(
+        AuthLoginRequest(email=user.email, password="user-password", turnstile_token="test:login"),
+        make_request(),
+        Response(),
+        session,
+    )
+    assert authenticated.access_token
+    assert session.query(AuthRateLimit).filter(AuthRateLimit.scope == "id:login").count() == 0
+    assert session.query(AuthRateLimit).filter(AuthRateLimit.scope == "ip:login").count() == 1
+    session.close()
+
+
+def test_ip_limit_does_not_trust_forged_proxy_headers_by_default(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("AUTH_SECURITY_TEST_MODE", "true")
+    session = create_test_session()
+    make_user(session, "forged-ip", email="forged-ip@example.com")
+
+    for index in range(8):
+        with pytest.raises(HTTPException):
+            login(
+                AuthLoginRequest(email=f"missing-{index}@example.com", password="wrong", turnstile_token="test:login"),
+                make_request(
+                    client_host="203.0.113.10",
+                    headers={"x-forwarded-for": f"198.51.100.{index}"},
+                ),
+                Response(),
+                session,
+            )
+
+    ip_rows = session.query(AuthRateLimit).filter(AuthRateLimit.scope == "ip:login").all()
+    assert len(ip_rows) == 1
+    assert ip_rows[0].attempts == 8
+    session.close()
+
+
+def test_proxy_headers_are_used_only_from_trusted_proxy(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("TRUST_PROXY_HEADERS", "true")
+    monkeypatch.setenv("TRUSTED_PROXY_CIDRS", "10.0.0.0/8")
+    untrusted = make_request(client_host="203.0.113.20", headers={"cf-connecting-ip": "198.51.100.55"})
+    trusted = make_request(client_host="10.1.2.3", headers={"cf-connecting-ip": "198.51.100.55"})
+
+    assert auth_security.request_ip(untrusted) == "203.0.113.20"
+    assert auth_security.request_ip(trusted) == "198.51.100.55"
+
+
+def test_rate_limit_hashes_do_not_store_email_or_ip(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    session = create_test_session()
+    auth_security.rate_limit_or_429(session, "id:login", "private@example.com", limit=8, window_seconds=900)
+    auth_security.rate_limit_or_429(session, "ip:login", "203.0.113.99", limit=20, window_seconds=300)
+    session.commit()
+
+    stored = "\n".join(row.key_hash for row in session.query(AuthRateLimit).all())
+    assert "private@example.com" not in stored
+    assert "203.0.113.99" not in stored
+    assert all(len(row.key_hash) == 64 for row in session.query(AuthRateLimit).all())
     session.close()
 
 

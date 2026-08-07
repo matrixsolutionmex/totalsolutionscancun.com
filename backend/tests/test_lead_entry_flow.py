@@ -21,6 +21,8 @@ from app.models.lead_event import LeadEvent
 from app.models.notification import EmailOutbox, Notification, NotificationPreference, WebPushSubscription
 from app.models.organization import Organization
 from app.models.service_order import ServiceOrder
+from app.models.service_property import ServiceProperty
+from app.models.service_request import ServiceRequest, ServiceRequestMedia
 from app.models.user import User
 from app.routes.integration_routes import create_integration_lead, require_integration_token
 from app.routes.lead_document_routes import (
@@ -42,8 +44,17 @@ from app.routes.notification_routes import (
     register_web_push_subscription,
     unread_notification_count,
 )
+from app.routes.service_request_routes import (
+    AssignUserPayload,
+    TriagePayload,
+    assign_service_order_supervisor,
+    assign_service_order_technician,
+    list_sales_service_requests,
+    triage_service_request,
+)
 from app.schemas.lead_schema import IntegrationLeadCreate, LeadAssignUpdate, LeadCreate, LeadPipelineUpdate, LeadUpdate
 from app.schemas.notification_schema import WebPushDeactivateRequest, WebPushKeys, WebPushSubscriptionCreate
+from app.services.customer_portal_service import create_customer_request_and_order, service_request_public_status
 from app.services.import_service import import_lead_records
 from app.services.notification_service import notification_push_payload, notify_client_created
 
@@ -61,6 +72,9 @@ def db():
             Organization.__table__,
             User.__table__,
             Lead.__table__,
+            ServiceProperty.__table__,
+            ServiceRequest.__table__,
+            ServiceRequestMedia.__table__,
             ServiceOrder.__table__,
             LeadEvent.__table__,
             LeadDocument.__table__,
@@ -790,6 +804,38 @@ def make_upload_file(filename: str, content: bytes = b"fake file", content_type:
     return UploadFile(filename=filename, file=BytesIO(content), headers={"content-type": content_type})
 
 
+class FakePortalUpload:
+    def __init__(self, filename: str, content_type: str, content: bytes = b"portal file"):
+        self.filename = filename
+        self.content_type = content_type
+        self.file = BytesIO(content)
+
+
+def make_portal_payload(**overrides):
+    payload = {
+        "requester_name": "Cliente Portal",
+        "requester_phone": "+52 998 000 0101",
+        "requester_email": "cliente.portal@example.com",
+        "property_type": "Hotel",
+        "service_category": "Hidraulica",
+        "problem_description": "Fuga en cocina",
+        "urgency": "NORMAL",
+        "address_line1": "Av. Tulum 100",
+        "district": "Centro",
+        "locality": "Cancun",
+        "administrative_area": "Quintana Roo",
+        "country_code": "MX",
+        "postal_code": "77500",
+        "google_maps_url": "https://maps.google.com/?q=cancun",
+        "consent_privacy": True,
+        "consent_images": True,
+        "idempotency_key": "portal-key-1",
+        "public_language": "es-MX",
+    }
+    payload.update(overrides)
+    return payload
+
+
 def test_technician_creates_client_assigned_to_self_and_edits_operational_fields(db):
     technician = make_user(db, "tecnico-campo", "BROKER")
 
@@ -926,3 +972,193 @@ def test_technician_uploads_documents_but_cannot_delete_directly(db, tmp_path, m
     )
     assert approved["status"] == "APROVADA"
     assert db.query(LeadDocument).filter(LeadDocument.id == uploaded[0]["id"]).first() is None
+
+
+def test_customer_portal_creates_request_property_and_service_order(db, tmp_path, monkeypatch):
+    import app.services.customer_portal_service as portal_service
+
+    monkeypatch.setattr(portal_service, "UPLOADS_DIR", tmp_path)
+    org = make_organization(db, "portal-org", "Portal Org")
+
+    service_request = create_customer_request_and_order(
+        db,
+        make_portal_payload(idempotency_key="portal-create-1"),
+        files=[FakePortalUpload("fachada.jpg", "image/jpeg", b"imagen")],
+    )
+    db.commit()
+    db.refresh(service_request)
+
+    assert service_request.status == "SALES_QUEUE"
+    assert service_request.organization_id == org.id
+    assert service_request.lead is not None
+    assert service_request.property_record is not None
+    assert service_request.property_record.property_code == f"TS-PROP-{service_request.property_record.id:06d}"
+    assert service_request.service_order is not None
+    assert service_request.service_order.order_number == "TS-2026-000001"
+    assert service_request.service_order.service_request_id == service_request.id
+    assert service_request.service_order.property_record_id == service_request.property_id
+    assert service_request.service_order.lead_id == service_request.lead_id
+    assert service_request.media[0].original_filename == "fachada.jpg"
+    assert (tmp_path / service_request.media[0].storage_path).exists()
+
+
+def test_customer_portal_allows_multiple_orders_for_same_client(db):
+    make_organization(db, "portal-multi-org", "Portal Multi Org")
+    first = create_customer_request_and_order(
+        db,
+        make_portal_payload(
+            idempotency_key="multi-1",
+            requester_email="multi@example.com",
+            requester_phone="+52 998 000 0201",
+            problem_description="Primer servicio",
+        ),
+    )
+    second = create_customer_request_and_order(
+        db,
+        make_portal_payload(
+            idempotency_key="multi-2",
+            requester_email="multi@example.com",
+            requester_phone="+52 998 000 0201",
+            problem_description="Segundo servicio",
+        ),
+    )
+    db.commit()
+    db.refresh(first)
+    db.refresh(second)
+
+    assert first.lead_id == second.lead_id
+    assert first.id != second.id
+    assert first.service_order.id != second.service_order.id
+    assert first.service_order.order_number == "TS-2026-000001"
+    assert second.service_order.order_number == "TS-2026-000002"
+    assert db.query(ServiceOrder).filter(ServiceOrder.lead_id == first.lead_id).count() == 2
+
+
+def test_customer_portal_is_idempotent_per_request_key(db):
+    make_organization(db, "portal-dedupe-org", "Portal Dedupe Org")
+    payload = make_portal_payload(idempotency_key="dedupe-1")
+
+    first = create_customer_request_and_order(db, payload)
+    second = create_customer_request_and_order(db, payload)
+    db.commit()
+
+    assert first.id == second.id
+    assert db.query(ServiceRequest).count() == 1
+    assert db.query(ServiceOrder).count() == 1
+
+
+def test_customer_portal_rejects_invalid_upload(db):
+    make_organization(db, "portal-invalid-upload", "Portal Invalid Upload")
+
+    with pytest.raises(HTTPException) as blocked:
+        create_customer_request_and_order(
+            db,
+            make_portal_payload(idempotency_key="invalid-upload-1"),
+            files=[FakePortalUpload("malware.exe", "application/x-msdownload", b"x")],
+        )
+
+    assert blocked.value.status_code == 400
+    assert db.query(ServiceRequest).count() == 0
+
+
+def test_customer_portal_requires_description_or_media(db):
+    make_organization(db, "portal-missing-body", "Portal Missing Body")
+
+    with pytest.raises(HTTPException) as blocked:
+        create_customer_request_and_order(
+            db,
+            make_portal_payload(idempotency_key="missing-body-1", problem_description=""),
+        )
+
+    assert blocked.value.status_code == 400
+    assert db.query(ServiceRequest).count() == 0
+
+
+def test_public_request_status_does_not_expose_private_customer_data(db):
+    make_organization(db, "portal-public-safe", "Portal Public Safe")
+    service_request = create_customer_request_and_order(
+        db,
+        make_portal_payload(
+            idempotency_key="public-safe-1",
+            requester_name="Cliente Confidencial",
+            requester_email="confidencial@example.com",
+            requester_phone="+52 998 555 0101",
+            address_line1="Direccion Privada 123",
+        ),
+    )
+    db.commit()
+
+    status = service_request_public_status(service_request)
+    serialized = json.dumps(status, default=str, ensure_ascii=False)
+
+    assert status["tracking_token"] == service_request.tracking_token
+    assert status["order_number"] == "TS-2026-000001"
+    assert status["tracking_url"].endswith(f"/acompanhar/{service_request.tracking_token}")
+    assert "requester_email" not in status
+    assert "requester_phone" not in status
+    assert "client_name" not in status
+    assert "address" not in status
+    assert "Cliente Confidencial" not in serialized
+    assert "confidencial@example.com" not in serialized
+    assert "9985550101" not in serialized
+    assert "Direccion Privada" not in serialized
+
+
+def test_sales_queue_triage_and_assignments_are_org_scoped(db):
+    org_a = make_organization(db, "portal-sales-a", "Portal Sales A")
+    org_b = make_organization(db, "portal-sales-b", "Portal Sales B")
+    admin = make_user(db, "admin-sales", "ROOT", organization_id=org_a.id)
+    supervisor = make_user(db, "supervisor-sales", "GERENTE", organization_id=org_a.id)
+    technician = make_user(db, "tecnico-sales", "BROKER", organization_id=org_a.id)
+    other_admin = make_user(db, "admin-sales-b", "ROOT", organization_id=org_b.id)
+    other_technician = make_user(db, "tecnico-sales-b", "BROKER", organization_id=org_b.id)
+    service_request = create_customer_request_and_order(
+        db,
+        make_portal_payload(idempotency_key="sales-queue-1"),
+        actor=admin,
+    )
+    db.commit()
+    db.refresh(service_request)
+
+    visible = list_sales_service_requests(db=db, actor=admin)
+    hidden = list_sales_service_requests(db=db, actor=other_admin)
+    assert len(visible) == 1
+    assert visible[0]["id"] == service_request.id
+    assert visible[0]["order_number"] == service_request.service_order.order_number
+    assert visible[0]["client_name"] == "Cliente Portal"
+    assert hidden == []
+
+    triaged = triage_service_request(
+        service_request.id,
+        TriagePayload(status="TRIAGED", supervisor_user_id=supervisor.id),
+        db=db,
+        actor=admin,
+    )
+    assert triaged["status"] == "TRIAGED"
+    db.refresh(service_request)
+    order_id = service_request.service_order.id
+
+    supervisor_result = assign_service_order_supervisor(
+        order_id,
+        AssignUserPayload(user_id=supervisor.id),
+        db=db,
+        actor=admin,
+    )
+    assert supervisor_result["supervisor_user_id"] == supervisor.id
+
+    technician_result = assign_service_order_technician(
+        order_id,
+        AssignUserPayload(user_id=technician.id),
+        db=db,
+        actor=admin,
+    )
+    assert technician_result["responsible_user_id"] == technician.id
+
+    with pytest.raises(HTTPException) as blocked:
+        assign_service_order_technician(
+            order_id,
+            AssignUserPayload(user_id=other_technician.id),
+            db=db,
+            actor=admin,
+        )
+    assert blocked.value.status_code == 400

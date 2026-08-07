@@ -57,4 +57,8 @@ class Lead(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=True)
     assigned_to_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
-    service_order = relationship("ServiceOrder", back_populates="lead", uselist=False)
+    service_orders = relationship("ServiceOrder", back_populates="lead", order_by="ServiceOrder.id")
+
+    @property
+    def service_order(self):
+        return self.service_orders[-1] if self.service_orders else None

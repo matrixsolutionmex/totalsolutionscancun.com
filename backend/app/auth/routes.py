@@ -1,4 +1,5 @@
 import logging
+import html
 import json
 import os
 import secrets
@@ -18,6 +19,7 @@ from app.auth.jwt_handler import create_access_token, get_current_user, get_db, 
 from app.core.auth_security import (
     audit_auth_event,
     apply_public_rate_limits,
+    clear_rate_limit,
     clear_session_cookies,
     consume_recovery_code,
     create_mfa_challenge_token,
@@ -29,6 +31,7 @@ from app.core.auth_security import (
     otpauth_url,
     public_turnstile_site_key,
     rate_limit_or_429,
+    request_ip,
     revoke_sessions_for_user,
     turnstile_configured,
     validate_google_id_token_or_401,
@@ -182,6 +185,93 @@ def resend_api_key() -> str:
     return ""
 
 
+def verification_email_text(*, full_name: str | None, verification_url: str) -> str:
+    greeting = (full_name or "Hola").strip()
+    return "\n".join(
+        [
+            f"{greeting},",
+            "",
+            "Confirma tu correo para continuar con la solicitud de acceso a Total Solutions.",
+            "El enlace vence en 60 minutos y solo puede usarse una vez.",
+            "",
+            verification_url,
+            "",
+            "Si no solicitaste este acceso, ignora este mensaje.",
+        ]
+    )
+
+
+def verification_email_html(*, full_name: str | None, verification_url: str) -> str:
+    base_url = os.getenv("PUBLIC_BASE_URL", "https://totalsolutionscancun.com").strip().rstrip("/")
+    logo_url = f"{base_url}/assets/total-solutions-logo.svg"
+    escaped_name = html.escape((full_name or "Hola").strip())
+    escaped_url = html.escape(verification_url, quote=True)
+    escaped_logo_url = html.escape(logo_url, quote=True)
+    return f"""<!doctype html>
+<html lang="es-MX">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Confirma tu correo - Total Solutions</title>
+  </head>
+  <body style="margin:0;background:#e8f9f1;font-family:Inter,Arial,Helvetica,sans-serif;color:#1f2937;">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
+      Confirma tu correo para continuar con tu acceso a Total Solutions.
+    </div>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#e8f9f1;margin:0;padding:32px 12px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#07111e;border-radius:24px;overflow:hidden;box-shadow:0 24px 70px rgba(15,23,42,.24);">
+            <tr>
+              <td style="padding:34px 34px 20px;background:linear-gradient(135deg,#07111e 0%,#0f172a 52%,#0b2a22 100%);">
+                <img src="{escaped_logo_url}" alt="Total Solutions" width="260" style="display:block;max-width:260px;width:100%;height:auto;margin:0 0 28px;">
+                <div style="display:inline-block;padding:8px 14px;border:1px solid rgba(34,197,94,.45);border-radius:999px;color:#7cff55;background:rgba(34,197,94,.12);font-size:13px;font-weight:800;letter-spacing:.02em;">
+                  CORREO SEGURO
+                </div>
+                <h1 style="margin:22px 0 10px;color:#ffffff;font-size:34px;line-height:1.08;font-weight:900;letter-spacing:0;">
+                  Confirma tu correo
+                </h1>
+                <p style="margin:0;color:#cbd5e1;font-size:17px;line-height:1.55;font-weight:600;">
+                  Hola {escaped_name}, completa este paso para continuar con tu solicitud de acceso a Total Solutions.
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:0 34px 34px;background:#07111e;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#0b1624;border:1px solid rgba(34,197,94,.24);border-radius:18px;">
+                  <tr>
+                    <td style="padding:26px;">
+                      <p style="margin:0 0 18px;color:#dbeafe;font-size:16px;line-height:1.6;">
+                        El enlace vence en <strong style="color:#ffffff;">60 minutos</strong> y solo puede usarse una vez.
+                      </p>
+                      <a href="{escaped_url}" style="display:block;text-align:center;text-decoration:none;background:linear-gradient(90deg,#4cff32,#22c55e);color:#06110d;font-size:17px;font-weight:900;border-radius:14px;padding:17px 22px;box-shadow:0 12px 30px rgba(34,197,94,.32);">
+                        Confirmar correo
+                      </a>
+                      <p style="margin:22px 0 0;color:#94a3b8;font-size:13px;line-height:1.6;">
+                        Si el botón no funciona, copia y pega este enlace en tu navegador:
+                      </p>
+                      <p style="margin:8px 0 0;word-break:break-all;color:#86efac;font-size:12px;line-height:1.55;">
+                        {escaped_url}
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+                <p style="margin:22px 0 0;color:#94a3b8;font-size:13px;line-height:1.6;text-align:center;">
+                  Si no solicitaste este acceso, ignora este mensaje. Tu cuenta no será activada sin aprobación administrativa.
+                </p>
+              </td>
+            </tr>
+          </table>
+          <p style="margin:18px 0 0;color:#64748b;font-size:12px;line-height:1.5;">
+            Total Solutions Cancún | Mantenimiento profesional
+          </p>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>"""
+
+
 def send_verification_email_with_resend_api(*, to_email: str, full_name: str | None, verification_url: str) -> bool:
     api_key = resend_api_key()
     smtp_from = os.getenv("SMTP_FROM", "").strip()
@@ -193,23 +283,12 @@ def send_verification_email_with_resend_api(*, to_email: str, full_name: str | N
         )
         return False
 
-    greeting = (full_name or "Hola").strip()
     payload = {
         "from": smtp_from,
         "to": [to_email],
         "subject": "Confirma tu correo - Total Solutions",
-        "text": "\n".join(
-            [
-                f"{greeting},",
-                "",
-                "Confirma tu correo para continuar con la solicitud de acceso a Total Solutions.",
-                "El enlace vence en 60 minutos y solo puede usarse una vez.",
-                "",
-                verification_url,
-                "",
-                "Si no solicitaste este acceso, ignora este mensaje.",
-            ]
-        ),
+        "text": verification_email_text(full_name=full_name, verification_url=verification_url),
+        "html": verification_email_html(full_name=full_name, verification_url=verification_url),
     }
     request = urlrequest.Request(
         "https://api.resend.com/emails",
@@ -289,21 +368,8 @@ def send_verification_email(*, to_email: str, full_name: str | None, verificatio
     message["From"] = smtp_from
     message["To"] = to_email
     message["Subject"] = "Confirma tu correo - Total Solutions"
-    greeting = (full_name or "Hola").strip()
-    message.set_content(
-        "\n".join(
-            [
-                f"{greeting},",
-                "",
-                "Confirma tu correo para continuar con la solicitud de acceso a Total Solutions.",
-                "El enlace vence en 60 minutos y solo puede usarse una vez.",
-                "",
-                verification_url,
-                "",
-                "Si no solicitaste este acceso, ignora este mensaje.",
-            ]
-        )
-    )
+    message.set_content(verification_email_text(full_name=full_name, verification_url=verification_url))
+    message.add_alternative(verification_email_html(full_name=full_name, verification_url=verification_url), subtype="html")
 
     try:
         smtp_factory = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
@@ -407,7 +473,7 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
         raise HTTPException(status_code=403, detail="Registro temporalmente no disponible.")
     email = normalized_email(payload.email)
     organization = get_or_create_default_organization(db)
-    apply_public_rate_limits(request, email, "register")
+    apply_public_rate_limits(db, request, email, "register")
     verify_turnstile_or_403(db, request, token=payload.turnstile_token, expected_action="register")
     if len(payload.password) < 8:
         raise HTTPException(status_code=400, detail="A senha deve ter pelo menos 8 caracteres")
@@ -427,7 +493,7 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
                 reason="Solicitacao criada a partir de novo cadastro com email existente.",
             )
         if existing.status == "PENDING_EMAIL" and not existing.email_verified:
-            rate_limit_or_429(f"email-verification-resend:{existing.id}", limit=3, window_seconds=900)
+            rate_limit_or_429(db, "email-verification-resend", str(existing.id), limit=3, window_seconds=900)
             now = now_utc()
             sent_at = existing.email_verification_sent_at
             if sent_at and (now - sent_at).total_seconds() < EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS:
@@ -507,7 +573,7 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
 def resend_verification(payload: EmailVerificationResendRequest, request: Request, db: Session = Depends(get_db)):
     email = normalized_email(payload.email)
     logger.info("Solicitacao de reenvio de verificacao recebida: user_email_hash=%s", hash_value(email))
-    apply_public_rate_limits(request, email, "email_verification_resend")
+    apply_public_rate_limits(db, request, email, "email_verification_resend")
     verify_turnstile_or_403(db, request, token=payload.turnstile_token, expected_action="email_verification_resend")
     user = (
         db.query(User)
@@ -526,7 +592,7 @@ def resend_verification(payload: EmailVerificationResendRequest, request: Reques
         db.commit()
         return generic_register_response(email)
 
-    rate_limit_or_429(f"email-verification-resend:{user.id}", limit=3, window_seconds=900)
+    rate_limit_or_429(db, "email-verification-resend", str(user.id), limit=3, window_seconds=900)
     now = now_utc()
     sent_at = user.email_verification_sent_at
     if sent_at and (now - sent_at).total_seconds() < EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS:
@@ -562,8 +628,8 @@ def resend_verification(payload: EmailVerificationResendRequest, request: Reques
 def change_verification_email(payload: EmailVerificationChangeRequest, request: Request, db: Session = Depends(get_db)):
     old_email = normalized_email(payload.old_email)
     new_email = normalized_email(payload.new_email)
-    apply_public_rate_limits(request, old_email, "email_verification_change")
-    apply_public_rate_limits(request, new_email, "email_verification_change")
+    apply_public_rate_limits(db, request, old_email, "email_verification_change")
+    apply_public_rate_limits(db, request, new_email, "email_verification_change")
     verify_turnstile_or_403(db, request, token=payload.turnstile_token, expected_action="email_verification_change")
 
     user = (
@@ -618,7 +684,7 @@ def change_verification_email(payload: EmailVerificationChangeRequest, request: 
 @router.post("/reactivation-request", response_model=ReactivationRequestResponse)
 def request_reactivation(payload: ReactivationRequestCreate, request: Request, db: Session = Depends(get_db)):
     email = normalized_email(payload.email)
-    apply_public_rate_limits(request, email, "reactivation")
+    apply_public_rate_limits(db, request, email, "reactivation")
     verify_turnstile_or_403(db, request, token=payload.turnstile_token, expected_action="reactivation")
     user = (
         db.query(User)
@@ -761,7 +827,7 @@ def login(
     identifier = payload.email.strip().lower()
     request = safe_request(request)
     response = safe_response(response)
-    apply_public_rate_limits(request, identifier, "login")
+    apply_public_rate_limits(db, request, identifier, "login")
     verify_turnstile_or_403(db, request, token=payload.turnstile_token, expected_action="login")
     user = (
         db.query(User)
@@ -782,6 +848,8 @@ def login(
     if password_needs_upgrade(user.password_hash):
         user.password_hash = hash_password(payload.password)
 
+    clear_rate_limit(db, "id:login", identifier)
+
     mfa_response = mfa_gate_response(db, request, user, "PASSWORD_LOGIN")
     if mfa_response:
         return mfa_response
@@ -800,7 +868,7 @@ def verify_mfa(payload: MfaVerifyRequest, request: Request, response: Response, 
         audit_auth_event(db, request=request, event_type="MFA_VERIFY", outcome="BLOCKED", user=user, detail={"status": user.status})
         db.commit()
         raise HTTPException(status_code=403, detail=blocked_reason)
-    rate_limit_or_429(f"mfa:{user.id}", limit=6, window_seconds=300)
+    rate_limit_or_429(db, "mfa", str(user.id), limit=6, window_seconds=300)
     if not (verify_totp_code(user, payload.code) or consume_recovery_code(db, user, payload.code)):
         audit_auth_event(db, request=request, event_type="MFA_VERIFY", outcome="DENIED", user=user)
         db.commit()
@@ -888,7 +956,7 @@ def confirm_mfa_setup_from_challenge(
 @router.post("/password-recovery/request", response_model=ReactivationRequestResponse)
 def request_password_recovery(payload: PasswordRecoveryRequest, request: Request, db: Session = Depends(get_db)):
     email = normalized_email(payload.email)
-    apply_public_rate_limits(request, email, "password_recovery")
+    apply_public_rate_limits(db, request, email, "password_recovery")
     verify_turnstile_or_403(db, request, token=payload.turnstile_token, expected_action="password_recovery")
     user = db.query(User).filter(or_(func.lower(User.email) == email, func.lower(User.username) == email)).first()
     if user and not user_access_block_reason(db, user):
@@ -899,7 +967,7 @@ def request_password_recovery(payload: PasswordRecoveryRequest, request: Request
                 user_id=user.id,
                 token_hash=hash_value(raw_token),
                 expires_at=datetime.utcnow() + timedelta(minutes=30),
-                requested_ip_hash=hash_value(request.client.host if request.client else ""),
+                requested_ip_hash=hash_value(request_ip(request)),
                 requested_user_agent=request.headers.get("user-agent", "")[:1000],
             )
         )

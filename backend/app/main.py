@@ -16,7 +16,7 @@ from app.core.organization import get_or_create_default_organization
 from app.core.storage import UPLOADS_DIR
 from app.auth.routes import router as auth_router
 from app.database.connection import Base, SessionLocal, engine
-from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, deletion_request, notification, user_lifecycle, auth_security, organization
+from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, deletion_request, notification, user_lifecycle, auth_security, organization, service_property, service_request
 from app.models.lead import Lead
 from app.models.service_order import ServiceOrder
 from app.models.user import User
@@ -26,6 +26,8 @@ from app.routes.admin_routes import router as admin_router
 from app.routes.lead_routes import router as lead_router
 from app.routes.lead_document_routes import router as lead_document_router
 from app.routes.notification_routes import router as notification_router
+from app.routes.public_service_request_routes import router as public_service_request_router
+from app.routes.service_request_routes import router as service_request_router
 from app.routes.support_routes import router as support_router
 from app.routes.user_routes import router as user_router
 from app.routes.contract_routes import router as contract_router
@@ -77,6 +79,8 @@ app.include_router(integration_router)
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(contract_router)
+app.include_router(public_service_request_router)
+app.include_router(service_request_router)
 
 frontend_dir = Path(__file__).resolve().parents[2] / "frontend"
 if frontend_dir.exists():
@@ -91,7 +95,8 @@ app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
-    if request.url.path in {"/", "/sw.js"}:
+    no_store_paths = {"/", "/sw.js", "/solicitar-servico"}
+    if request.url.path in no_store_paths or request.url.path.startswith("/acompanhar/"):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
@@ -99,7 +104,7 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("X-Frame-Options", "DENY")
-    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault("Permissions-Policy", "camera=(self), microphone=(self), geolocation=(self)")
     response.headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; "
@@ -210,6 +215,10 @@ def create_database_tables():
             "password_reset_tokens",
             "mfa_recovery_codes",
             "auth_audit_events",
+            "auth_rate_limits",
+            "properties",
+            "service_requests",
+            "service_request_media",
         ):
             add_column_if_missing(db, table_name, "organization_id", "INTEGER")
 
@@ -278,9 +287,14 @@ def create_database_tables():
         add_column_if_missing(db, "users", "plan_max_brokers", "INTEGER DEFAULT 1")
         add_column_if_missing(db, "users", "plan_max_leads", "INTEGER DEFAULT 100")
         add_column_if_missing(db, "users", "registered_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        add_column_if_missing(db, "service_orders", "property_record_id", "INTEGER")
+        add_column_if_missing(db, "service_orders", "service_request_id", "INTEGER")
         db.execute(text("UPDATE users SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
         db.execute(text("UPDATE leads SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
         db.execute(text("UPDATE service_orders SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE properties SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE service_requests SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE service_request_media SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
         db.execute(text("UPDATE lead_documents SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
         db.execute(text("UPDATE lead_events SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
         db.execute(text("UPDATE deletion_requests SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
@@ -299,6 +313,7 @@ def create_database_tables():
         db.execute(text("UPDATE password_reset_tokens SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
         db.execute(text("UPDATE mfa_recovery_codes SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
         db.execute(text("UPDATE auth_audit_events SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
+        db.execute(text("UPDATE auth_rate_limits SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})
         migrate_legacy_email_verification(db)
         db.execute(text("UPDATE users SET status = 'ACTIVE' WHERE status IS NULL OR status = ''"))
         db.execute(text("UPDATE users SET session_version = 0 WHERE session_version IS NULL"))
@@ -319,6 +334,15 @@ def create_database_tables():
         db.commit()
 
         startup_log("Criando indices operacionais.")
+        try:
+            if engine.dialect.name == "postgresql":
+                db.execute(text("ALTER TABLE service_orders DROP CONSTRAINT IF EXISTS service_orders_lead_id_key"))
+            db.execute(text("DROP INDEX IF EXISTS uq_service_orders_lead_id"))
+            db.commit()
+        except SQLAlchemyError as exc:
+            db.rollback()
+            logger.warning("Nao foi possivel remover indice unico legado de service_orders.lead_id: %s", exc)
+
         ensure_index(
             db,
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email_lower ON users (LOWER(email)) WHERE email IS NOT NULL AND email <> ''",
@@ -333,6 +357,8 @@ def create_database_tables():
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_user_identities_user ON user_identities (user_id)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_user_sessions_user_active ON user_sessions (user_id, revoked_at, expires_at)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_auth_audit_events_user ON auth_audit_events (user_id, created_at)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_auth_rate_limits_scope_key ON auth_rate_limits (scope, key_hash)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_auth_rate_limits_expiry ON auth_rate_limits (blocked_until, updated_at)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens (user_id, expires_at)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_mfa_recovery_codes_user ON mfa_recovery_codes (user_id, used_at)")
 
@@ -361,10 +387,16 @@ def create_database_tables():
         ensure_index(db, "CREATE UNIQUE INDEX IF NOT EXISTS uq_leads_property_id ON leads (property_id)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_leads_tipo_imovel ON leads (tipo_imovel)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_leads_tipo_servico ON leads (tipo_servico)")
-        ensure_index(db, "CREATE UNIQUE INDEX IF NOT EXISTS uq_service_orders_lead_id ON service_orders (lead_id)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_service_orders_lead_id ON service_orders (lead_id)")
         ensure_index(db, "CREATE UNIQUE INDEX IF NOT EXISTS uq_service_orders_order_number ON service_orders (order_number)")
+        ensure_index(db, "CREATE UNIQUE INDEX IF NOT EXISTS uq_service_orders_service_request_id ON service_orders (service_request_id) WHERE service_request_id IS NOT NULL")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_service_orders_status ON service_orders (status)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_service_orders_property_id ON service_orders (property_id)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_service_orders_property_record_id ON service_orders (property_record_id)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_service_requests_status ON service_requests (status)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_service_requests_idempotency ON service_requests (organization_id, source, idempotency_key)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_service_request_media_request ON service_request_media (service_request_id)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_properties_lead ON properties (lead_id)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_web_push_subscriptions_user_active ON web_push_subscriptions (user_id, active)")
         ensure_index(
             db,
@@ -448,6 +480,38 @@ def home():
         "sistema": "Total Solutions CRM",
         "mensagem": "CRM iniciado com sucesso"
     }
+
+
+@app.get("/solicitar-servico", include_in_schema=False)
+def service_portal():
+    frontend_index = frontend_dir / "index.html"
+    if frontend_index.exists():
+        return FileResponse(
+            frontend_index,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+                "CDN-Cache-Control": "no-store",
+            },
+        )
+    return {"status": "portal-not-found"}
+
+
+@app.get("/acompanhar/{tracking_token}", include_in_schema=False)
+def service_request_tracking(tracking_token: str):
+    frontend_index = frontend_dir / "index.html"
+    if frontend_index.exists():
+        return FileResponse(
+            frontend_index,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+                "CDN-Cache-Control": "no-store",
+            },
+        )
+    return {"status": "tracking-not-found", "tracking_token": tracking_token}
 
 
 @app.get("/sw.js", include_in_schema=False)

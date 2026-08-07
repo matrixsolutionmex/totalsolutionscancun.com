@@ -79,3 +79,18 @@ class AuthAuditEvent(Base):
     correlation_id = Column(String, nullable=False, index=True)
     detail = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class AuthRateLimit(Base):
+    __tablename__ = "auth_rate_limits"
+    __table_args__ = (
+        UniqueConstraint("scope", "key_hash", name="uq_auth_rate_limit_scope_key"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    scope = Column(String(80), nullable=False, index=True)
+    key_hash = Column(String(128), nullable=False, index=True)
+    window_start = Column(DateTime, nullable=False, index=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    blocked_until = Column(DateTime, nullable=True, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)

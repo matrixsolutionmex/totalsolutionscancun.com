@@ -13,8 +13,10 @@ class ServiceOrder(Base):
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
     order_number = Column(String, unique=True, index=True, nullable=True)
 
-    lead_id = Column(Integer, ForeignKey("leads.id"), unique=True, nullable=False)
+    lead_id = Column(Integer, ForeignKey("leads.id"), index=True, nullable=False)
     property_id = Column(String, index=True, nullable=True)
+    property_record_id = Column(Integer, ForeignKey("properties.id"), nullable=True, index=True)
+    service_request_id = Column(Integer, ForeignKey("service_requests.id"), unique=True, nullable=True, index=True)
 
     status = Column(String, default="ABERTA", nullable=False)
     warranty_days = Column(Integer, default=90, nullable=False)
@@ -33,4 +35,6 @@ class ServiceOrder(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=True)
 
-    lead = relationship("Lead", back_populates="service_order")
+    lead = relationship("Lead", back_populates="service_orders")
+    property_record = relationship("ServiceProperty", back_populates="service_orders")
+    service_request = relationship("ServiceRequest", back_populates="service_order")
