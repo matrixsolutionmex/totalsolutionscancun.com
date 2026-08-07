@@ -166,7 +166,7 @@ def clear_rate_limit(db: Session, scope: str, key: str) -> int:
     deleted = (
         db.query(AuthRateLimit)
         .filter(AuthRateLimit.scope == scope, AuthRateLimit.key_hash == key_hash)
-        .delete(synchronize_session=False)
+        .delete(synchronize_session="fetch")
     )
     return int(deleted or 0)
 

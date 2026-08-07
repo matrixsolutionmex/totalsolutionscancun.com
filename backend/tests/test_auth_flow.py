@@ -1335,6 +1335,36 @@ def test_valid_login_clears_identity_counter_but_keeps_ip_history(monkeypatch):
     session.close()
 
 
+def test_valid_login_after_failed_attempts_can_return_mfa_setup(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("AUTH_SECURITY_TEST_MODE", "true")
+    monkeypatch.setenv("MFA_REQUIRED_FOR_ALL", "true")
+    session = create_test_session()
+    user = make_user(session, "clear-rate-mfa", email="clear-rate-mfa@example.com")
+
+    for _ in range(3):
+        with pytest.raises(HTTPException):
+            login(
+                AuthLoginRequest(email=user.email, password="wrong", turnstile_token="test:login"),
+                make_request(),
+                Response(),
+                session,
+            )
+
+    authenticated = login(
+        AuthLoginRequest(email=user.email, password="user-password", turnstile_token="test:login"),
+        make_request(),
+        Response(),
+        session,
+    )
+
+    assert authenticated.mfa_required is True
+    assert authenticated.mfa_setup_required is True
+    assert session.query(AuthRateLimit).filter(AuthRateLimit.scope == "id:login").count() == 0
+    assert session.query(AuthRateLimit).filter(AuthRateLimit.scope == "ip:login").count() == 1
+    session.close()
+
+
 def test_ip_limit_does_not_trust_forged_proxy_headers_by_default(monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
     monkeypatch.setenv("AUTH_SECURITY_TEST_MODE", "true")
