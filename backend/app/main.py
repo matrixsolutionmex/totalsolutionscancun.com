@@ -180,20 +180,32 @@ def start_email_outbox_worker():
     threading.Thread(target=worker, name="email-outbox-worker", daemon=True).start()
 
 
+def env_secret(name: str, default: str = "") -> str:
+    value = os.getenv(name)
+    if value is None:
+        value = default
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1].strip()
+    return value
+
+
 def ensure_root_user(db, default_organization_id):
-    root_username = os.getenv("ROOT_USERNAME", "root").strip() or "root"
-    root_password = os.getenv(
+    root_username = env_secret("ROOT_USERNAME", "root") or "root"
+    root_password = env_secret(
         "ROOT_PASSWORD",
         "" if os.getenv("ENVIRONMENT", "").lower() == "production" else "12345m*",
-    ).strip()
-    root_full_name = os.getenv("ROOT_FULL_NAME", "Administrador Total Solutions").strip()
-    root_email = os.getenv("ROOT_EMAIL", "").strip().lower()
+    )
+    root_full_name = env_secret("ROOT_FULL_NAME", "Administrador Total Solutions")
+    root_email = env_secret("ROOT_EMAIL", "").lower()
     if not root_email and "@" in root_username:
         root_email = root_username.lower()
 
     root_user = db.query(User).filter(User.username == root_username).first()
     if not root_user and root_email:
         root_user = db.query(User).filter(User.email == root_email).first()
+    if not root_user:
+        root_user = db.query(User).filter(User.role == "ROOT").order_by(User.id.asc()).first()
 
     if not root_user:
         if not root_password:
