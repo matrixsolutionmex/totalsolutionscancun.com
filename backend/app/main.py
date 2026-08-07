@@ -180,6 +180,76 @@ def start_email_outbox_worker():
     threading.Thread(target=worker, name="email-outbox-worker", daemon=True).start()
 
 
+def ensure_root_user(db, default_organization_id):
+    root_username = os.getenv("ROOT_USERNAME", "root").strip() or "root"
+    root_password = os.getenv(
+        "ROOT_PASSWORD",
+        "" if os.getenv("ENVIRONMENT", "").lower() == "production" else "12345m*",
+    ).strip()
+    root_full_name = os.getenv("ROOT_FULL_NAME", "Administrador Total Solutions").strip()
+    root_email = os.getenv("ROOT_EMAIL", "").strip().lower()
+    if not root_email and "@" in root_username:
+        root_email = root_username.lower()
+
+    root_user = db.query(User).filter(User.username == root_username).first()
+    if not root_user and root_email:
+        root_user = db.query(User).filter(User.email == root_email).first()
+
+    if not root_user:
+        if not root_password:
+            startup_log("Usuario ROOT nao encontrado e ROOT_PASSWORD nao configurado.")
+            return
+        startup_log("Criando usuario ROOT a partir de variaveis seguras.")
+        root_user = User(
+            organization_id=default_organization_id,
+            username=root_username,
+            email=root_email or None,
+            password_hash=hash_password(root_password),
+            role="ROOT",
+            full_name=root_full_name or "Administrador Total Solutions",
+            is_active=True,
+            email_verified=True,
+            status="ACTIVE",
+            plan="ENTERPRISE",
+        )
+        db.add(root_user)
+        db.commit()
+        return
+
+    changed = False
+    if root_user.username != root_username:
+        root_user.username = root_username
+        changed = True
+    if root_email and root_user.email != root_email:
+        root_user.email = root_email
+        changed = True
+    if root_password:
+        root_user.password_hash = hash_password(root_password)
+        changed = True
+    if root_full_name and root_user.full_name != root_full_name:
+        root_user.full_name = root_full_name
+        changed = True
+    if root_user.organization_id is None:
+        root_user.organization_id = default_organization_id
+        changed = True
+
+    root_defaults = {
+        "role": "ROOT",
+        "is_active": True,
+        "email_verified": True,
+        "status": "ACTIVE",
+        "plan": "ENTERPRISE",
+    }
+    for attr, expected in root_defaults.items():
+        if getattr(root_user, attr) != expected:
+            setattr(root_user, attr, expected)
+            changed = True
+
+    if changed:
+        startup_log("Sincronizando usuario ROOT a partir de variaveis seguras.")
+        db.commit()
+
+
 @app.on_event("startup")
 def create_database_tables():
     startup_log("Iniciando preparacao do banco de dados.")
@@ -404,21 +474,7 @@ def create_database_tables():
             label="uq_leads_external_source_id",
         )
 
-        if db.query(User).count() == 0:
-            startup_log("Criando usuario ROOT inicial de producao.")
-            root_user = User(
-                organization_id=default_organization_id,
-                username=os.getenv("ROOT_USERNAME", "root"),
-                password_hash=hash_password(os.getenv("ROOT_PASSWORD", "12345m*")),
-                role="ROOT",
-                full_name=os.getenv("ROOT_FULL_NAME", "Administrador Total Solutions"),
-                is_active=True,
-                email_verified=True,
-                status="ACTIVE",
-                plan="ENTERPRISE",
-            )
-            db.add(root_user)
-            db.commit()
+        ensure_root_user(db, default_organization_id)
         startup_log("Preparacao do banco de dados concluida.")
         start_email_outbox_worker()
     finally:
