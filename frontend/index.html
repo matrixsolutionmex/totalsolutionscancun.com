@@ -676,17 +676,31 @@
       align-items: center;
       gap: 8px;
       border-radius: 999px;
-      background: #114f52;
+      background: linear-gradient(135deg, #4afe35, #22c55e);
       color: #fff;
-      border: 0;
-      padding: 0 18px;
+      border: 1px solid rgba(122, 201, 67, 0.7);
+      padding: 0 16px 0 8px;
       font-weight: 800;
       cursor: pointer;
       white-space: nowrap;
+      box-shadow: 0 12px 30px rgba(34, 197, 94, 0.28);
+      transition: transform 200ms ease, box-shadow 200ms ease, filter 200ms ease;
     }
 
     .support-button:hover {
-      background: #0f3f42;
+      transform: translateY(-1px);
+      filter: saturate(1.06);
+      box-shadow: 0 16px 36px rgba(34, 197, 94, 0.36);
+    }
+
+    .support-button-avatar {
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      object-fit: cover;
+      object-position: 50% 18%;
+      border: 2px solid rgba(255, 255, 255, 0.86);
+      box-shadow: 0 0 0 2px rgba(7, 27, 53, 0.18);
     }
 
     .user-pill {
@@ -1722,13 +1736,15 @@
       right: 24px;
       bottom: 24px;
       z-index: 45;
-      width: min(420px, calc(100vw - 32px));
+      width: min(460px, calc(100vw - 32px));
+      max-height: calc(100vh - 120px);
       display: none;
       overflow: hidden;
-      border: 1px solid #cbd5e1;
+      border: 1px solid rgba(34, 197, 94, 0.42);
       border-radius: 8px;
-      background: #fff;
-      box-shadow: 0 28px 70px rgba(15, 23, 42, 0.26);
+      background: linear-gradient(180deg, #0D1724 0%, #08111D 100%);
+      color: #f8fbff;
+      box-shadow: 0 32px 88px rgba(0, 0, 0, 0.42);
     }
 
     .support-widget.open {
@@ -2032,18 +2048,53 @@
     }
 
     .support-header {
-      min-height: 64px;
+      min-height: 86px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 18px;
-      padding: 0 18px;
-      background: #114f52;
+      padding: 16px 18px;
+      background:
+        linear-gradient(135deg, rgba(34, 197, 94, 0.16), transparent 42%),
+        linear-gradient(180deg, #10243a, #0b1726);
       color: #fff;
     }
 
-    .support-header strong {
+    .support-agent {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .support-agent-avatar {
+      width: 54px;
+      height: 54px;
+      flex: 0 0 auto;
+      border-radius: 16px;
+      object-fit: cover;
+      object-position: 50% 16%;
+      border: 1px solid rgba(122, 201, 67, 0.72);
+      box-shadow: 0 0 22px rgba(34, 197, 94, 0.28);
+    }
+
+    .support-agent-text {
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+    }
+
+    .support-agent-text strong {
       font-size: 18px;
+      line-height: 1.15;
+    }
+
+    .support-agent-text span {
+      color: #7ac943;
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
     }
 
     .support-header button {
@@ -2060,29 +2111,81 @@
     .support-body {
       display: grid;
       gap: 16px;
+      max-height: calc(100vh - 206px);
+      overflow-y: auto;
       padding: 22px;
     }
 
+    .support-agent-card {
+      display: grid;
+      grid-template-columns: 92px 1fr;
+      gap: 16px;
+      align-items: center;
+      padding: 14px;
+      border: 1px solid rgba(34, 197, 94, 0.32);
+      border-radius: 8px;
+      background:
+        linear-gradient(135deg, rgba(34, 197, 94, 0.14), rgba(14, 165, 233, 0.08)),
+        rgba(255, 255, 255, 0.04);
+    }
+
+    .support-agent-card img {
+      width: 92px;
+      height: 116px;
+      border-radius: 8px;
+      object-fit: cover;
+      object-position: 50% 8%;
+      border: 1px solid rgba(122, 201, 67, 0.5);
+    }
+
+    .support-agent-card div {
+      display: grid;
+      gap: 5px;
+    }
+
+    .support-agent-card strong {
+      color: #f8fbff;
+      font-size: 15px;
+      font-weight: 900;
+      letter-spacing: 0.4px;
+    }
+
+    .support-agent-card span {
+      color: #7ac943;
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .support-agent-card p {
+      margin: 0;
+      color: rgba(226, 232, 240, 0.82);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
     .support-message {
-      background: #f1f5f9;
+      background: rgba(34, 197, 94, 0.1);
+      border: 1px solid rgba(34, 197, 94, 0.2);
       border-radius: 18px 18px 18px 4px;
       padding: 14px 16px;
-      color: #1e293b;
+      color: rgba(248, 251, 255, 0.9);
       line-height: 1.45;
     }
 
     .support-form {
       display: grid;
       gap: 10px;
-      border: 1px solid #e2e8f0;
+      border: 1px solid rgba(148, 163, 184, 0.24);
       border-radius: 8px;
       padding: 16px;
+      background: rgba(255, 255, 255, 0.035);
     }
 
     .support-form label {
       display: grid;
       gap: 6px;
-      color: #334155;
+      color: rgba(226, 232, 240, 0.88);
       font-weight: 800;
       font-size: 13px;
     }
@@ -2091,11 +2194,16 @@
     .support-form textarea {
       width: 100%;
       min-height: 42px;
-      border: 1px solid #bdc9dc;
+      border: 1px solid rgba(148, 163, 184, 0.38);
       border-radius: 4px;
+      background: rgba(2, 8, 18, 0.74);
       padding: 10px 12px;
-      color: #162846;
+      color: #f8fbff;
       font: inherit;
+    }
+
+    .support-form select option {
+      color: #0f172a;
     }
 
     .support-form textarea {
@@ -2108,7 +2216,7 @@
       justify-content: space-between;
       align-items: center;
       gap: 12px;
-      color: var(--muted);
+      color: rgba(226, 232, 240, 0.72);
       font-size: 13px;
       font-weight: 700;
     }
@@ -2117,12 +2225,13 @@
       min-height: 42px;
       border-radius: 999px;
       padding: 0 22px;
-      background: #059669;
+      background: linear-gradient(135deg, #4afe35, #22c55e);
+      color: #06111c;
     }
 
     .support-status {
       min-height: 18px;
-      color: #047857;
+      color: #4ade80;
       font-weight: 800;
       font-size: 13px;
     }
@@ -2196,6 +2305,27 @@
         left: max(12px, env(safe-area-inset-left));
         width: auto;
         max-height: calc(100vh - 88px - env(safe-area-inset-bottom));
+      }
+
+      .support-widget {
+        right: max(12px, env(safe-area-inset-right));
+        bottom: max(12px, env(safe-area-inset-bottom));
+        left: max(12px, env(safe-area-inset-left));
+        width: auto;
+        max-height: calc(100vh - 92px - env(safe-area-inset-bottom));
+      }
+
+      .support-body {
+        max-height: calc(100vh - 192px - env(safe-area-inset-bottom));
+      }
+
+      .support-agent-card {
+        grid-template-columns: 74px 1fr;
+      }
+
+      .support-agent-card img {
+        width: 74px;
+        height: 94px;
       }
 
       .nav {
@@ -2492,7 +2622,10 @@
         <span class="notification-badge" id="notificationBadge">0</span>
       </button>
     </div>
-    <button class="support-button" id="supportButton" type="button">Soporte</button>
+    <button class="support-button" id="supportButton" type="button">
+      <img class="support-button-avatar" src="/static/images/pablo-yepez-ai-supervisor.jpg" alt="" aria-hidden="true">
+      <span id="supportButtonLabel">Pablo IA</span>
+    </button>
     <select id="appTheme" class="theme-select" title="Apariencia"></select>
         <div class="session-profile">
           <div class="profile-avatar profile-avatar-small" aria-hidden="true">
@@ -3101,10 +3234,24 @@
 
   <aside class="support-widget" id="supportWidget" aria-label="Soporte Total Solutions">
     <div class="support-header">
-      <strong id="supportTitle">Soporte Total Solutions</strong>
+      <div class="support-agent">
+        <img class="support-agent-avatar" src="/static/images/pablo-yepez-ai-supervisor.jpg" alt="Pablo Yepez IA">
+        <div class="support-agent-text">
+          <strong id="supportTitle">Pablo Yepez IA</strong>
+          <span id="supportSubtitle">Técnico Supervisor Geral</span>
+        </div>
+      </div>
       <button id="closeSupportButton" type="button" aria-label="Cerrar suporte">×</button>
     </div>
     <div class="support-body">
+      <div class="support-agent-card">
+        <img src="/static/images/pablo-yepez-ai-supervisor.jpg" alt="Pablo Yepez, Técnico Supervisor Geral">
+        <div>
+          <strong id="supportAgentName">PABLO YEPEZ IA</strong>
+          <span id="supportAgentRole">Técnico Supervisor Geral da Total Solutions</span>
+          <p id="supportAgentBio">Supervisor técnico virtual para orientar chamados, priorizar incidentes e acompanhar a operação.</p>
+        </div>
+      </div>
       <div class="support-message" id="supportIntro">Describe lo ocurrido y el módulo relacionado. La solicitud queda registrada para seguimiento.</div>
       <form class="support-form" id="supportForm">
         <label>
@@ -3586,9 +3733,13 @@
         themeClassic: "Clássico claro",
         themePremium: "Premium dark",
         nav: ["Servicios", "Clientes", "Agenda", "Reportes", "Soporte", "Documentos", "Equipo"],
-        supportButton: "Soporte",
-        supportTitle: "Soporte Total Solutions",
-        supportIntro: "Describe lo ocurrido y el módulo relacionado. La solicitud queda registrada para seguimiento.",
+        supportButton: "Pablo IA",
+        supportTitle: "Pablo Yepez IA",
+        supportSubtitle: "Técnico Supervisor Geral",
+        supportAgentName: "PABLO YEPEZ IA",
+        supportAgentRole: "Técnico Supervisor Geral da Total Solutions",
+        supportAgentBio: "Supervisor técnico virtual para orientar chamados, priorizar incidentes e acompanhar a operação.",
+        supportIntro: "Sou Pablo Yepez IA. Descreva o que aconteceu e o módulo relacionado. Vou registrar a solicitação para acompanhamento técnico.",
         supportModuleLabel: "Módulo",
         supportPriorityLabel: "Prioridad",
         supportMessageLabel: "Mensaje",
@@ -3740,9 +3891,13 @@
         themeClassic: "Classic light",
         themePremium: "Premium dark",
         nav: ["Servicios", "Clientes", "Agenda", "Reportes", "Soporte", "Documentos", "Equipo"],
-        supportButton: "Soporte",
-        supportTitle: "Soporte Total Solutions",
-        supportIntro: "Describe lo ocurrido y el módulo relacionado. La solicitud queda registrada para seguimiento.",
+        supportButton: "Pablo AI",
+        supportTitle: "Pablo Yepez AI",
+        supportSubtitle: "General Technical Supervisor",
+        supportAgentName: "PABLO YEPEZ AI",
+        supportAgentRole: "General Technical Supervisor at Total Solutions",
+        supportAgentBio: "Virtual technical supervisor for guiding tickets, prioritizing incidents and supporting the operation.",
+        supportIntro: "I am Pablo Yepez AI. Describe what happened and the related module. I will register the request for technical follow-up.",
         supportModuleLabel: "Module",
         supportPriorityLabel: "Priority",
         supportMessageLabel: "Message",
@@ -3902,9 +4057,13 @@
         themeClassic: "Clásico claro",
         themePremium: "Premium dark",
         nav: ["Servicios", "Clientes", "Agenda", "Reportes", "Soporte", "Documentos", "Equipo"],
-        supportButton: "Soporte",
-        supportTitle: "Soporte Total Solutions",
-        supportIntro: "Describe lo ocurrido y el módulo relacionado. La solicitud queda registrada para seguimiento.",
+        supportButton: "Pablo IA",
+        supportTitle: "Pablo Yepez IA",
+        supportSubtitle: "Técnico Supervisor General",
+        supportAgentName: "PABLO YEPEZ IA",
+        supportAgentRole: "Técnico Supervisor General de Total Solutions",
+        supportAgentBio: "Supervisor técnico virtual para orientar solicitudes, priorizar incidentes y acompañar la operación.",
+        supportIntro: "Soy Pablo Yepez IA. Describe lo ocurrido y el módulo relacionado. Registraré la solicitud para seguimiento técnico.",
         supportModuleLabel: "Módulo",
         supportPriorityLabel: "Prioridad",
         supportMessageLabel: "Mensaje",
@@ -4720,8 +4879,12 @@
         element.textContent = t("menu")[element.dataset.menuKey] || element.textContent;
       });
       setText("#logoutButton", t("logout"));
-      setText("#supportButton", t("supportButton"));
+      setText("#supportButtonLabel", t("supportButton"));
       setText("#supportTitle", t("supportTitle"));
+      setText("#supportSubtitle", t("supportSubtitle"));
+      setText("#supportAgentName", t("supportAgentName"));
+      setText("#supportAgentRole", t("supportAgentRole"));
+      setText("#supportAgentBio", t("supportAgentBio"));
       setText("#supportIntro", t("supportIntro"));
       setText("#supportModuleLabel", t("supportModuleLabel"));
       setText("#supportPriorityLabel", t("supportPriorityLabel"));
