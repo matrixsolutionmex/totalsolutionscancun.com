@@ -1000,6 +1000,16 @@ def test_customer_portal_creates_request_property_and_service_order(db, tmp_path
     assert service_request.service_order.lead_id == service_request.lead_id
     assert service_request.media[0].original_filename == "fachada.jpg"
     assert (tmp_path / service_request.media[0].storage_path).exists()
+    portal_documents = db.query(LeadDocument).filter(LeadDocument.lead_id == service_request.lead_id).all()
+    assert len(portal_documents) == 1
+    portal_document = portal_documents[0]
+    assert portal_document.organization_id == org.id
+    assert portal_document.uploaded_by_user_id is None
+    assert portal_document.document_type == "ANTES_SERVICIO"
+    assert portal_document.file_name == "fachada.jpg"
+    assert portal_document.file_path == f"/uploads/{service_request.media[0].storage_path}"
+    assert portal_document.file_mime == "image/jpeg"
+    assert portal_document.file_size == len(b"imagen")
 
 
 def test_customer_portal_allows_multiple_orders_for_same_client(db):

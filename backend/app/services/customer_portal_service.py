@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.storage import UPLOADS_DIR
 from app.models.lead import Lead
+from app.models.lead_document import LeadDocument
 from app.models.lead_event import LeadEvent
 from app.models.organization import Organization
 from app.models.service_property import ServiceProperty
@@ -89,6 +90,15 @@ def _read_upload(upload) -> bytes:
     return content
 
 
+def _lead_document_type_for_portal_media(content_type: str | None) -> str:
+    mime = (content_type or "").lower()
+    if mime.startswith("image/"):
+        return "ANTES_SERVICIO"
+    if mime.startswith("video/"):
+        return "VIDEO"
+    return "OTROS"
+
+
 def _persist_media(db: Session, request: ServiceRequest, uploads: list[Any] | None):
     uploads = [upload for upload in (uploads or []) if getattr(upload, "filename", None)]
     if not uploads:
@@ -114,6 +124,19 @@ def _persist_media(db: Session, request: ServiceRequest, uploads: list[Any] | No
             size_bytes=len(content),
         )
         db.add(record)
+        if request.lead_id:
+            db.add(
+                LeadDocument(
+                    organization_id=request.organization_id,
+                    lead_id=request.lead_id,
+                    uploaded_by_user_id=None,
+                    document_type=_lead_document_type_for_portal_media(upload.content_type),
+                    file_name=original,
+                    file_path=f"/uploads/{relative_path}",
+                    file_mime=upload.content_type,
+                    file_size=len(content),
+                )
+            )
         records.append(record)
     return records
 
