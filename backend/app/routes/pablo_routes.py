@@ -99,6 +99,10 @@ def build_context(db: Session, actor: User) -> dict:
         ServiceOrder.completed_at.is_(None),
     ).count()
 
+    visit_scheduled_clients = lead_query.filter(
+        Lead.pipeline == "TENTATIVA DE CONTATO"
+    ).count()
+
     return {
         "actor": {
             "id": actor.id,
@@ -110,7 +114,8 @@ def build_context(db: Session, actor: User) -> dict:
             "visible_clients": lead_query.count(),
             "open_tickets": open_tickets,
             "unread_notifications": unread_notifications,
-            "scheduled_services": scheduled_orders,
+            "visit_scheduled_clients": visit_scheduled_clients,
+            "scheduled_service_orders": scheduled_orders,
         },
     }
 
@@ -137,22 +142,25 @@ def build_reply(intent: str, context: dict) -> str:
 
     if intent == "services":
         return (
-            f"Encontrei {summary['scheduled_services']} serviços agendados "
-            "ainda não concluídos dentro do seu escopo."
+            f"Existem {summary['visit_scheduled_clients']} clientes na etapa Visita agendada. "
+            f"Desses, {summary['scheduled_service_orders']} possuem ordem de serviço com "
+            "agendamento registrado e ainda não concluído."
         )
 
     if intent == "agenda":
         return (
-            f"Há {summary['scheduled_services']} serviços com agendamento "
-            "pendente de conclusão."
+            f"Há {summary['visit_scheduled_clients']} clientes na etapa Visita agendada "
+            f"e {summary['scheduled_service_orders']} ordens de serviço com agendamento "
+            "registrado ainda não concluídas."
         )
 
     return (
         "Estou conectado à sua operação. "
         f"No seu escopo existem {summary['visible_clients']} clientes, "
         f"{summary['open_tickets']} chamados ativos, "
-        f"{summary['unread_notifications']} notificações não lidas e "
-        f"{summary['scheduled_services']} serviços agendados."
+        f"{summary['unread_notifications']} notificações não lidas, "
+        f"{summary['visit_scheduled_clients']} clientes em Visita agendada e "
+        f"{summary['scheduled_service_orders']} ordens de serviço com agendamento."
     )
 
 
