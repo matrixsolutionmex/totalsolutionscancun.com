@@ -6,6 +6,8 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.auth.jwt_handler import get_db, require_admin_user, require_root_user
+from app.auth.routes import create_email_verification_link, issue_email_verification
+from app.core.auth_security import audit_auth_event
 from app.core.security import hash_password
 from app.models.lead import Lead
 from app.models.user import User
