@@ -2215,6 +2215,186 @@
       line-height: 1.45;
     }
 
+
+    /* Pablo Yepez IA V2 */
+    .pablo-v2-home {
+      display: grid;
+      gap: 14px;
+    }
+
+    .pablo-v2-status {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 10px 12px;
+      border: 1px solid rgba(34, 197, 94, 0.24);
+      border-radius: 8px;
+      background: rgba(34, 197, 94, 0.07);
+      color: rgba(226, 232, 240, 0.9);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .pablo-v2-status-dot {
+      width: 9px;
+      height: 9px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: #62ff3f;
+      box-shadow: 0 0 12px rgba(98, 255, 63, 0.72);
+    }
+
+    .pablo-v2-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 9px;
+    }
+
+    .pablo-v2-action {
+      min-height: 66px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 4px;
+      padding: 11px 13px;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.035);
+      color: #f8fbff;
+      text-align: left;
+      cursor: pointer;
+      transition: 180ms ease;
+    }
+
+    .pablo-v2-action:hover {
+      border-color: rgba(98, 255, 63, 0.55);
+      background: rgba(98, 255, 63, 0.08);
+      transform: translateY(-1px);
+    }
+
+    .pablo-v2-action strong {
+      font-size: 13px;
+      color: #f8fbff;
+    }
+
+    .pablo-v2-action span {
+      color: rgba(203, 213, 225, 0.7);
+      font-size: 11px;
+      line-height: 1.3;
+    }
+
+    .pablo-v2-chat {
+      display: grid;
+      gap: 10px;
+      padding-top: 2px;
+    }
+
+    .pablo-v2-chat-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: rgba(226, 232, 240, 0.72);
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: 0.7px;
+      text-transform: uppercase;
+    }
+
+    .pablo-v2-messages {
+      display: grid;
+      gap: 9px;
+      max-height: 190px;
+      overflow-y: auto;
+      padding-right: 3px;
+    }
+
+    .pablo-v2-bubble {
+      width: fit-content;
+      max-width: 88%;
+      padding: 11px 13px;
+      border-radius: 14px;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .pablo-v2-bubble.ai {
+      justify-self: start;
+      border: 1px solid rgba(34, 197, 94, 0.2);
+      border-radius: 14px 14px 14px 4px;
+      background: rgba(34, 197, 94, 0.09);
+      color: rgba(248, 251, 255, 0.92);
+    }
+
+    .pablo-v2-bubble.user {
+      justify-self: end;
+      border-radius: 14px 14px 4px 14px;
+      background: rgba(14, 165, 233, 0.16);
+      color: #f8fbff;
+    }
+
+    .pablo-v2-composer {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: end;
+    }
+
+    .pablo-v2-composer textarea {
+      width: 100%;
+      min-height: 48px;
+      max-height: 120px;
+      resize: vertical;
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.05);
+      color: #f8fbff;
+      padding: 12px;
+      font: inherit;
+      outline: none;
+    }
+
+    .pablo-v2-composer textarea:focus {
+      border-color: rgba(98, 255, 63, 0.65);
+      box-shadow: 0 0 0 3px rgba(98, 255, 63, 0.08);
+    }
+
+    .pablo-v2-composer button {
+      min-width: 54px;
+      min-height: 48px;
+      padding: 0 14px;
+      border-radius: 8px;
+    }
+
+    .pablo-v2-ticket-panel {
+      display: none;
+    }
+
+    .pablo-v2-ticket-panel.open {
+      display: block;
+    }
+
+    .pablo-v2-back {
+      min-height: 34px;
+      padding: 0 10px;
+      margin-bottom: 9px;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      background: transparent;
+      color: rgba(226, 232, 240, 0.85);
+      font-size: 12px;
+    }
+
+    @media (max-width: 520px) {
+      .pablo-v2-actions {
+        grid-template-columns: 1fr;
+      }
+
+      .pablo-v2-messages {
+        max-height: 150px;
+      }
+    }
+
     .support-form {
       display: grid;
       gap: 10px;
@@ -3831,37 +4011,108 @@
           <p id="supportAgentBio">Supervisor técnico virtual para orientar chamados, priorizar incidentes e acompanhar a operação.</p>
         </div>
       </div>
-      <div class="support-message" id="supportIntro">Describe lo ocurrido y el módulo relacionado. La solicitud queda registrada para seguimiento.</div>
-      <form class="support-form" id="supportForm">
-        <label>
-          <span id="supportModuleLabel">Módulo</span>
-          <select id="supportModule">
-            <option value="login">Acceso/Login</option>
-            <option value="leads">Clientes</option>
-            <option value="kanban">Control/Kanban</option>
-            <option value="usuarios">Equipo</option>
-            <option value="distribuicao">Asignación</option>
-            <option value="relatorios">Reportes</option>
-          </select>
-        </label>
-        <label>
-          <span id="supportPriorityLabel">Prioridad</span>
-          <select id="supportPriority">
-            <option value="normal">Normal</option>
-            <option value="alta">Alta</option>
-            <option value="critica">Crítica</option>
-          </select>
-        </label>
-        <label>
-          <span id="supportMessageLabel">Mensaje</span>
-          <textarea id="supportMessage" placeholder="Ex.: não consigo mover o cliente a la siguiente etapa"></textarea>
-        </label>
-        <div class="support-status" id="supportStatus"></div>
-        <div class="support-actions">
-          <span id="supportCount">0 tickets locales</span>
-          <button type="submit" id="sendSupportButton">Enviar</button>
+
+      <div class="pablo-v2-home" id="pabloV2Home">
+        <div class="pablo-v2-status">
+          <span class="pablo-v2-status-dot"></span>
+          <span>Pablo está conectado à operação</span>
         </div>
-      </form>
+
+        <div class="pablo-v2-actions">
+          <button class="pablo-v2-action" type="button" data-pablo-action="diagnose">
+            <strong>⚡ Diagnosticar problema</strong>
+            <span>Descreva o que aconteceu e Pablo organiza o atendimento.</span>
+          </button>
+
+          <button class="pablo-v2-action" type="button" data-pablo-action="ticket">
+            <strong>🎫 Abrir chamado</strong>
+            <span>Registre um incidente técnico com módulo e prioridade.</span>
+          </button>
+
+          <button class="pablo-v2-action" type="button" data-pablo-action="tickets">
+            <strong>📋 Meus chamados</strong>
+            <span>Consulte os tickets já registrados.</span>
+          </button>
+
+          <button class="pablo-v2-action" type="button" data-pablo-action="services">
+            <strong>🛠 Meus serviços</strong>
+            <span>Veja clientes e serviços associados à sua operação.</span>
+          </button>
+
+          <button class="pablo-v2-action" type="button" data-pablo-action="notifications">
+            <strong>🔔 Pendências</strong>
+            <span>Consulte notificações e assuntos que exigem atenção.</span>
+          </button>
+
+          <button class="pablo-v2-action" type="button" data-pablo-action="agenda">
+            <strong>📅 Agenda</strong>
+            <span>Consulte próximos contatos e compromissos operacionais.</span>
+          </button>
+        </div>
+
+        <div class="pablo-v2-chat">
+          <div class="pablo-v2-chat-title">
+            <span>Assistente operacional</span>
+            <span>V2</span>
+          </div>
+
+          <div class="pablo-v2-messages" id="pabloV2Messages">
+            <div class="pablo-v2-bubble ai">
+              Estou conectado ao Total Solutions. Posso ajudar com clientes, serviços, chamados, notificações e operação.
+            </div>
+          </div>
+
+          <form class="pablo-v2-composer" id="pabloV2Composer">
+            <textarea
+              id="pabloV2Input"
+              placeholder="Pergunte ou peça algo ao Pablo..."
+              aria-label="Mensagem para Pablo IA"
+            ></textarea>
+            <button type="submit" aria-label="Enviar mensagem para Pablo">➤</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="pablo-v2-ticket-panel" id="pabloV2TicketPanel">
+        <button class="pablo-v2-back" id="pabloV2BackButton" type="button">← Voltar ao Pablo IA</button>
+
+        <div class="support-message" id="supportIntro">Describe lo ocurrido y el módulo relacionado. La solicitud queda registrada para seguimiento.</div>
+
+        <form class="support-form" id="supportForm">
+          <label>
+            <span id="supportModuleLabel">Módulo</span>
+            <select id="supportModule">
+              <option value="login">Acceso/Login</option>
+              <option value="leads">Clientes</option>
+              <option value="kanban">Control/Kanban</option>
+              <option value="usuarios">Equipo</option>
+              <option value="distribuicao">Asignación</option>
+              <option value="relatorios">Reportes</option>
+            </select>
+          </label>
+
+          <label>
+            <span id="supportPriorityLabel">Prioridad</span>
+            <select id="supportPriority">
+              <option value="normal">Normal</option>
+              <option value="alta">Alta</option>
+              <option value="critica">Crítica</option>
+            </select>
+          </label>
+
+          <label>
+            <span id="supportMessageLabel">Mensaje</span>
+            <textarea id="supportMessage" placeholder="Ex.: não consigo mover o cliente a la siguiente etapa"></textarea>
+          </label>
+
+          <div class="support-status" id="supportStatus"></div>
+
+          <div class="support-actions">
+            <span id="supportCount">0 tickets locales</span>
+            <button type="submit" id="sendSupportButton">Enviar</button>
+          </div>
+        </form>
+      </div>
     </div>
   </aside>
 
@@ -7895,7 +8146,191 @@
 
     function openSupport() {
       document.getElementById("supportWidget").classList.add("open");
+      showPabloV2Home();
       refreshSupportCount();
+    }
+
+
+    function showPabloV2Home() {
+      const home = document.getElementById("pabloV2Home");
+      const ticketPanel = document.getElementById("pabloV2TicketPanel");
+
+      if (home) home.style.display = "grid";
+      if (ticketPanel) ticketPanel.classList.remove("open");
+    }
+
+
+    function showPabloV2TicketPanel() {
+      const home = document.getElementById("pabloV2Home");
+      const ticketPanel = document.getElementById("pabloV2TicketPanel");
+
+      if (home) home.style.display = "none";
+      if (ticketPanel) ticketPanel.classList.add("open");
+    }
+
+
+    function addPabloV2Message(message, sender = "ai") {
+      const messages = document.getElementById("pabloV2Messages");
+      if (!messages || !message) return;
+
+      const bubble = document.createElement("div");
+      bubble.className = `pablo-v2-bubble ${sender}`;
+      bubble.textContent = message;
+
+      messages.appendChild(bubble);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+
+    function pabloV2UnreadNotifications() {
+      if (!Array.isArray(cachedNotifications)) return [];
+      return cachedNotifications.filter((notification) => !notification.read_at);
+    }
+
+
+    async function handlePabloV2Action(action) {
+      switch (action) {
+        case "diagnose": {
+          const input = document.getElementById("pabloV2Input");
+          addPabloV2Message(
+            "Descreva o problema com o máximo de detalhes. Diga o que tentou fazer, o que aconteceu e, se houver, a mensagem de erro.",
+            "ai"
+          );
+          input?.focus();
+          break;
+        }
+
+        case "ticket":
+          showPabloV2TicketPanel();
+          break;
+
+        case "tickets":
+          showPabloV2TicketPanel();
+          addPabloV2Message(
+            "A área de chamado foi aberta. Você pode registrar um novo incidente aqui. A consulta individual de chamados será conectada na próxima camada.",
+            "ai"
+          );
+          break;
+
+        case "services":
+          closeSupport();
+          showView("vendas");
+          break;
+
+        case "notifications": {
+          await loadNotifications({ announce: false }).catch(() => {});
+          const unread = pabloV2UnreadNotifications();
+
+          if (!unread.length) {
+            addPabloV2Message(
+              "Não encontrei notificações pendentes neste momento.",
+              "ai"
+            );
+            break;
+          }
+
+          const preview = unread
+            .slice(0, 3)
+            .map((notification) => {
+              const title = notification.title || "Notificação";
+              const message = notification.message || "";
+              return `${title}${message ? ": " + message : ""}`;
+            })
+            .join("\n\n");
+
+          addPabloV2Message(
+            `Você tem ${unread.length} notificação${unread.length === 1 ? "" : "ões"} pendente${unread.length === 1 ? "" : "s"}.\n\n${preview}`,
+            "ai"
+          );
+          break;
+        }
+
+        case "agenda":
+          closeSupport();
+          showView("atendimento");
+          break;
+
+        default:
+          break;
+      }
+    }
+
+
+    function handlePabloV2Composer(event) {
+      event.preventDefault();
+
+      const input = document.getElementById("pabloV2Input");
+      const message = input?.value?.trim();
+
+      if (!message) return;
+
+      addPabloV2Message(message, "user");
+      input.value = "";
+
+      const normalized = message
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+
+      if (
+        normalized.includes("chamado") ||
+        normalized.includes("ticket") ||
+        normalized.includes("suporte")
+      ) {
+        addPabloV2Message(
+          "Posso registrar isso como chamado técnico. Vou abrir o formulário para você informar módulo, prioridade e detalhes.",
+          "ai"
+        );
+
+        setTimeout(() => {
+          showPabloV2TicketPanel();
+
+          const supportMessage = document.getElementById("supportMessage");
+          if (supportMessage && !supportMessage.value) {
+            supportMessage.value = message;
+          }
+        }, 350);
+
+        return;
+      }
+
+      if (
+        normalized.includes("agenda") ||
+        normalized.includes("visita") ||
+        normalized.includes("compromisso")
+      ) {
+        addPabloV2Message(
+          "A agenda operacional já existe no sistema. Use o botão Agenda acima para acessá-la diretamente.",
+          "ai"
+        );
+        return;
+      }
+
+      if (
+        normalized.includes("notificacao") ||
+        normalized.includes("pendencia") ||
+        normalized.includes("alerta")
+      ) {
+        handlePabloV2Action("notifications");
+        return;
+      }
+
+      if (
+        normalized.includes("cliente") ||
+        normalized.includes("servico") ||
+        normalized.includes("kanban")
+      ) {
+        addPabloV2Message(
+          "Posso levar você ao controle de serviços. Nesta primeira camada ainda não altero clientes automaticamente.",
+          "ai"
+        );
+        return;
+      }
+
+      addPabloV2Message(
+        "Entendi. Nesta primeira versão já consigo orientar a navegação, consultar suas pendências e transformar um problema em chamado. A próxima camada conectará minha inteligência ao contexto real da operação.",
+        "ai"
+      );
     }
 
     function closeSupport() {
@@ -9135,6 +9570,28 @@
     document.getElementById("mobileSupportButton")?.addEventListener("click", () => {
       document.getElementById("supportButton")?.click();
       closeMobileDrawer();
+    });
+
+    document.querySelectorAll("[data-pablo-action]").forEach((button) => {
+      button.addEventListener("click", () => {
+        handlePabloV2Action(button.dataset.pabloAction);
+      });
+    });
+
+    document.getElementById("pabloV2BackButton")?.addEventListener("click", () => {
+      showPabloV2Home();
+    });
+
+    document.getElementById("pabloV2Composer")?.addEventListener(
+      "submit",
+      handlePabloV2Composer
+    );
+
+    document.getElementById("pabloV2Input")?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        document.getElementById("pabloV2Composer")?.requestSubmit();
+      }
     });
 
     document.getElementById("mobileLogoutButton")?.addEventListener("click", () => {
