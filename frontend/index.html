@@ -8256,10 +8256,11 @@
     }
 
 
-    function handlePabloV2Composer(event) {
+    async function handlePabloV2Composer(event) {
       event.preventDefault();
 
       const input = document.getElementById("pabloV2Input");
+      const submitButton = document.querySelector("#pabloV2Composer button[type='submit']");
       const message = input?.value?.trim();
 
       if (!message) return;
@@ -8267,71 +8268,83 @@
       addPabloV2Message(message, "user");
       input.value = "";
 
-      const normalized = message
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "");
+      if (submitButton) {
+        submitButton.disabled = true;
+      }
 
-      if (
-        normalized.includes("chamado") ||
-        normalized.includes("ticket") ||
-        normalized.includes("suporte")
-      ) {
+      const thinkingBubble = document.createElement("div");
+      thinkingBubble.className = "pablo-v2-bubble ai";
+      thinkingBubble.dataset.pabloThinking = "true";
+      thinkingBubble.textContent = "Analisando sua operação...";
+
+      const messages = document.getElementById("pabloV2Messages");
+      messages?.appendChild(thinkingBubble);
+
+      if (messages) {
+        messages.scrollTop = messages.scrollHeight;
+      }
+
+      try {
+        const response = await apiFetch(`${API_BASE}/pablo/chat`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            message
+          })
+        });
+
+        const data = await response.json().catch(() => ({}));
+
+        thinkingBubble.remove();
+
+        if (!response.ok) {
+          addPabloV2Message(
+            data.detail ||
+            "Não consegui consultar sua operação neste momento.",
+            "ai"
+          );
+          return;
+        }
+
         addPabloV2Message(
-          "Posso registrar isso como chamado técnico. Vou abrir o formulário para você informar módulo, prioridade e detalhes.",
+          data.reply || "Consulta concluída.",
           "ai"
         );
 
-        setTimeout(() => {
-          showPabloV2TicketPanel();
+        if (
+          data.context &&
+          data.context.summary &&
+          data.intent === "general"
+        ) {
+          const summary = data.context.summary;
 
-          const supportMessage = document.getElementById("supportMessage");
-          if (supportMessage && !supportMessage.value) {
-            supportMessage.value = message;
-          }
-        }, 350);
+          console.debug("Pablo operational context", {
+            visibleClients: summary.visible_clients,
+            openTickets: summary.open_tickets,
+            unreadNotifications: summary.unread_notifications,
+            scheduledServices: summary.scheduled_services
+          });
+        }
+      } catch (error) {
+        thinkingBubble.remove();
 
-        return;
-      }
+        console.error("Pablo AI Engine error:", error);
 
-      if (
-        normalized.includes("agenda") ||
-        normalized.includes("visita") ||
-        normalized.includes("compromisso")
-      ) {
         addPabloV2Message(
-          "A agenda operacional já existe no sistema. Use o botão Agenda acima para acessá-la diretamente.",
+          "Não consegui me conectar ao motor operacional. Tente novamente em alguns segundos.",
           "ai"
         );
-        return;
-      }
+      } finally {
+        if (submitButton) {
+          submitButton.disabled = false;
+        }
 
-      if (
-        normalized.includes("notificacao") ||
-        normalized.includes("pendencia") ||
-        normalized.includes("alerta")
-      ) {
-        handlePabloV2Action("notifications");
-        return;
+        input?.focus();
       }
-
-      if (
-        normalized.includes("cliente") ||
-        normalized.includes("servico") ||
-        normalized.includes("kanban")
-      ) {
-        addPabloV2Message(
-          "Posso levar você ao controle de serviços. Nesta primeira camada ainda não altero clientes automaticamente.",
-          "ai"
-        );
-        return;
-      }
-
-      addPabloV2Message(
-        "Entendi. Nesta primeira versão já consigo orientar a navegação, consultar suas pendências e transformar um problema em chamado. A próxima camada conectará minha inteligência ao contexto real da operação.",
-        "ai"
-      );
     }
+
 
     function closeSupport() {
       document.getElementById("supportWidget").classList.remove("open");

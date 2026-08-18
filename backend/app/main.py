@@ -27,6 +27,7 @@ from app.routes.lead_routes import router as lead_router
 from app.routes.lead_document_routes import router as lead_document_router
 from app.routes.notification_routes import router as notification_router
 from app.routes.public_service_request_routes import router as public_service_request_router
+from app.routes.pablo_routes import router as pablo_router
 from app.routes.service_request_routes import router as service_request_router
 from app.routes.support_routes import router as support_router
 from app.routes.user_routes import router as user_router
@@ -81,6 +82,7 @@ app.include_router(admin_router)
 app.include_router(contract_router)
 app.include_router(public_service_request_router)
 app.include_router(service_request_router)
+app.include_router(pablo_router)
 
 frontend_dir = Path(__file__).resolve().parents[2] / "frontend"
 if frontend_dir.exists():
