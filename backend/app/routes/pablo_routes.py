@@ -9,6 +9,7 @@ from app.models.service_order import ServiceOrder
 from app.models.support_ticket import SupportTicket
 from app.models.user import User
 from app.routes.lead_routes import apply_actor_scope
+from app.services.pablo_ai_service import generate_pablo_reply, pablo_ai_enabled
 
 
 router = APIRouter(prefix="/pablo", tags=["pablo-ai"])
@@ -31,20 +32,45 @@ def normalize_message(value: str) -> str:
 def detect_intent(message: str) -> str:
     text = normalize_message(message)
 
-    if any(word in text for word in ("chamado", "chamados", "ticket", "tickets", "suporte")):
+    cleaned = (
+        text.replace("?", " ")
+        .replace("!", " ")
+        .replace(",", " ")
+        .replace(".", " ")
+        .replace(":", " ")
+        .replace(";", " ")
+    )
+    tokens = set(cleaned.split())
+
+    if tokens.intersection({"chamado", "chamados", "ticket", "tickets", "suporte"}):
         return "tickets"
 
-    if any(word in text for word in ("pendencia", "pendência", "notificacao", "notificação", "alerta")):
+    if tokens.intersection({
+        "pendencia",
+        "pendência",
+        "pendencias",
+        "pendências",
+        "notificacao",
+        "notificação",
+        "notificacoes",
+        "notificações",
+        "alerta",
+        "alertas",
+    }):
         return "notifications"
 
-    if any(word in text for word in ("servico", "serviço", "servicos", "serviços", "ordem", "os ")):
-        return "services"
-
-    if any(word in text for word in ("cliente", "clientes", "lead", "leads")):
+    if tokens.intersection({"cliente", "clientes", "lead", "leads"}):
         return "clients"
 
-    if any(word in text for word in ("agenda", "agendado", "agendada", "visita", "visitas")):
+    if tokens.intersection({"agenda", "agendado", "agendada", "visita", "visitas"}):
         return "agenda"
+
+    if (
+        tokens.intersection({"servico", "serviço", "servicos", "serviços", "ordem", "ordens", "os"})
+        or "ordem de serviço" in text
+        or "ordem de servico" in text
+    ):
+        return "services"
 
     return "general"
 
@@ -170,11 +196,24 @@ def pablo_chat(
     db: Session = Depends(get_db),
     actor: User = Depends(get_current_user),
 ):
-    intent = detect_intent(payload.message)
+    message = payload.message.strip()
+    intent = detect_intent(message)
     context = build_context(db, actor)
 
+    fallback_reply = build_reply(intent, context)
+    reply = fallback_reply
+
+    if pablo_ai_enabled():
+        ai_reply = generate_pablo_reply(
+            message=message,
+            actor=context["actor"],
+            context=context,
+        )
+        if ai_reply:
+            reply = ai_reply
+
     return PabloChatResponse(
-        reply=build_reply(intent, context),
+        reply=reply,
         intent=intent,
         context=context,
     )
