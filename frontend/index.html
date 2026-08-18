@@ -2336,7 +2336,7 @@
 
     .pablo-v2-composer {
       display: grid;
-      grid-template-columns: 1fr auto;
+      grid-template-columns: 1fr auto auto;
       gap: 8px;
       align-items: end;
     }
@@ -2365,6 +2365,34 @@
       min-height: 48px;
       padding: 0 14px;
       border-radius: 8px;
+    }
+
+    .pablo-v2-audio-controls {
+      display: flex;
+      gap: 6px;
+      align-items: stretch;
+    }
+
+    .pablo-v2-audio-controls button {
+      min-width: 48px;
+      padding: 0 10px;
+    }
+
+    .pablo-v2-mic.is-recording {
+      border-color: #fb7185;
+      background: rgba(244, 63, 94, 0.18);
+      color: #fecdd3;
+    }
+
+    .pablo-v2-mic.is-processing,
+    .pablo-v2-cancel:disabled {
+      opacity: 0.55;
+    }
+
+    .pablo-v2-audio-status {
+      min-height: 17px;
+      color: rgba(203, 213, 225, 0.72);
+      font-size: 11px;
     }
 
     .pablo-v2-ticket-panel {
@@ -4062,12 +4090,20 @@
             </div>
           </div>
 
+          <div class="pablo-v2-audio-status" id="pabloV2AudioStatus" aria-live="polite"></div>
+
           <form class="pablo-v2-composer" id="pabloV2Composer">
             <textarea
               id="pabloV2Input"
               placeholder="Pergunte ou peça algo ao Pablo..."
               aria-label="Mensagem para Pablo IA"
             ></textarea>
+            <div class="pablo-v2-audio-controls">
+              <input id="pabloV2ImageInput" type="file" accept="image/*" hidden>
+              <button id="pabloV2AttachButton" type="button" title="Anexar imagem" aria-label="Anexar imagem">＋</button>
+              <button id="pabloV2MicButton" class="pablo-v2-mic" type="button" title="Gravar mensagem de voz" aria-label="Gravar mensagem de voz">●</button>
+              <button id="pabloV2CancelRecording" class="pablo-v2-cancel" type="button" title="Cancelar gravação" aria-label="Cancelar gravação" hidden>×</button>
+            </div>
             <button type="submit" aria-label="Enviar mensagem para Pablo">➤</button>
           </form>
         </div>
@@ -8346,6 +8382,111 @@
     }
 
 
+    let pabloMediaRecorder = null;
+    let pabloAudioChunks = [];
+    let pabloAudioTimer = null;
+
+    function setPabloAudioState(state, message = "") {
+      const micButton = document.getElementById("pabloV2MicButton");
+      const cancelButton = document.getElementById("pabloV2CancelRecording");
+      const status = document.getElementById("pabloV2AudioStatus");
+      if (micButton) {
+        micButton.classList.toggle("is-recording", state === "recording");
+        micButton.classList.toggle("is-processing", state === "processing");
+        micButton.disabled = state === "processing";
+        micButton.textContent = state === "recording" ? "■" : "●";
+        micButton.title = state === "recording" ? "Parar gravação" : "Gravar mensagem de voz";
+      }
+      if (cancelButton) {
+        cancelButton.hidden = state !== "recording";
+        cancelButton.disabled = state !== "recording";
+      }
+      if (status) status.textContent = message;
+    }
+
+    function clearPabloAudioTimer() {
+      if (pabloAudioTimer) {
+        window.clearTimeout(pabloAudioTimer);
+        pabloAudioTimer = null;
+      }
+    }
+
+    function cancelPabloRecording() {
+      clearPabloAudioTimer();
+      if (pabloMediaRecorder && pabloMediaRecorder.state !== "inactive") {
+        pabloMediaRecorder.ondataavailable = null;
+        pabloMediaRecorder.onstop = null;
+        pabloMediaRecorder.stop();
+      }
+      pabloMediaRecorder?.stream?.getTracks().forEach((track) => track.stop());
+      pabloMediaRecorder = null;
+      pabloAudioChunks = [];
+      setPabloAudioState("ready");
+    }
+
+    async function transcribePabloRecording(blob) {
+      setPabloAudioState("processing", "Transcrevendo áudio...");
+      const formData = new FormData();
+      formData.append("file", blob, "pablo-recording.webm");
+      try {
+        const response = await apiFetch(`${API_BASE}/pablo/transcribe`, {
+          method: "POST",
+          body: formData
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.text) {
+          throw new Error(data.detail || "Não foi possível transcrever o áudio.");
+        }
+        const input = document.getElementById("pabloV2Input");
+        if (input) {
+          input.value = data.text;
+          input.focus();
+          document.getElementById("pabloV2Composer")?.requestSubmit();
+        }
+        setPabloAudioState("ready");
+      } catch (error) {
+        setPabloAudioState("error", error.message || "Não foi possível transcrever o áudio.");
+      }
+    }
+
+    async function startPabloRecording() {
+      if (!window.MediaRecorder || !navigator.mediaDevices?.getUserMedia) {
+        setPabloAudioState("error", "Gravação de áudio não é suportada neste navegador.");
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
+          .find((type) => MediaRecorder.isTypeSupported(type));
+        pabloMediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+        pabloAudioChunks = [];
+        pabloMediaRecorder.ondataavailable = (event) => {
+          if (event.data.size) pabloAudioChunks.push(event.data);
+        };
+        pabloMediaRecorder.onstop = () => {
+          stream.getTracks().forEach((track) => track.stop());
+          const blob = new Blob(pabloAudioChunks, { type: pabloMediaRecorder?.mimeType || "audio/webm" });
+          pabloMediaRecorder = null;
+          pabloAudioChunks = [];
+          if (blob.size) transcribePabloRecording(blob);
+        };
+        pabloMediaRecorder.start();
+        setPabloAudioState("recording", "Gravando... limite de 60 segundos");
+        pabloAudioTimer = window.setTimeout(() => stopPabloRecording(), 60000);
+      } catch (_error) {
+        setPabloAudioState("error", "Permissão de microfone não concedida.");
+      }
+    }
+
+    function stopPabloRecording() {
+      clearPabloAudioTimer();
+      if (pabloMediaRecorder && pabloMediaRecorder.state !== "inactive") {
+        pabloMediaRecorder.stop();
+        setPabloAudioState("processing", "Preparando áudio...");
+      }
+    }
+
+
     function closeSupport() {
       document.getElementById("supportWidget").classList.remove("open");
     }
@@ -9604,6 +9745,28 @@
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
         document.getElementById("pabloV2Composer")?.requestSubmit();
+      }
+    });
+
+    document.getElementById("pabloV2MicButton")?.addEventListener("click", () => {
+      if (pabloMediaRecorder?.state === "recording") stopPabloRecording();
+      else startPabloRecording();
+    });
+
+    document.getElementById("pabloV2CancelRecording")?.addEventListener(
+      "click",
+      cancelPabloRecording
+    );
+
+    document.getElementById("pabloV2AttachButton")?.addEventListener("click", () => {
+      document.getElementById("pabloV2ImageInput")?.click();
+    });
+
+    document.getElementById("pabloV2ImageInput")?.addEventListener("change", (event) => {
+      const file = event.target.files?.[0];
+      if (file) {
+        addPabloV2Message("Imagem selecionada. A análise de documentos será habilitada em uma próxima versão.", "ai");
+        event.target.value = "";
       }
     });
 

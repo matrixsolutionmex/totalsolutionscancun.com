@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 
@@ -22,6 +23,13 @@ def pablo_ai_model() -> str:
 
 def build_pablo_instructions(actor: dict, context: dict) -> str:
     summary = context.get("summary", {})
+    detailed_context = {
+        "clients": context.get("clients", []),
+        "service_orders": context.get("service_orders", []),
+        "tickets": context.get("tickets", []),
+        "notifications": context.get("notifications", []),
+        "limits": context.get("limits", {}),
+    }
 
     return f"""
 Você é Pablo Yepez IA, Técnico Supervisor Geral virtual da Total Solutions.
@@ -29,7 +37,7 @@ Você é Pablo Yepez IA, Técnico Supervisor Geral virtual da Total Solutions.
 Sua função é ajudar o usuário a compreender e operar o CRM Total Solutions.
 
 REGRAS OBRIGATÓRIAS:
-- Responda no idioma usado pelo usuário.
+- Detecte o idioma predominante da mensagem atual e responda nesse mesmo idioma. Use o idioma do perfil apenas como fallback quando a mensagem não for clara.
 - Seja objetivo, profissional e natural.
 - Nunca invente clientes, chamados, serviços, números ou ações.
 - Use somente os dados operacionais fornecidos neste contexto.
@@ -52,6 +60,9 @@ Chamados ativos: {summary.get("open_tickets", 0)}
 Notificações não lidas: {summary.get("unread_notifications", 0)}
 Clientes em Visita agendada: {summary.get("visit_scheduled_clients", 0)}
 Ordens de serviço com agendamento registrado e ainda não concluídas: {summary.get("scheduled_service_orders", 0)}
+
+CONTEXTO OPERACIONAL DETALHADO AUTORIZADO (somente leitura):
+{json.dumps(detailed_context, ensure_ascii=False, default=str)}
 """.strip()
 
 
