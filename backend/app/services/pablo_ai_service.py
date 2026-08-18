@@ -1,41 +1,23 @@
-import json
 import logging
 import os
 
-import httpx
+from app.services.pablo_ai_providers import (
+    configured_provider_names,
+    generate_from_provider,
+    has_configured_provider,
+    provider_config,
+)
 
 
 logger = logging.getLogger(__name__)
 
-OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
-
 
 def pablo_ai_enabled() -> bool:
-    return bool(os.getenv("OPENAI_API_KEY", "").strip())
+    return has_configured_provider()
 
 
 def pablo_ai_model() -> str:
     return os.getenv("PABLO_AI_MODEL", "gpt-5.6-luna").strip() or "gpt-5.6-luna"
-
-
-def extract_output_text(payload: dict) -> str | None:
-    direct = payload.get("output_text")
-    if isinstance(direct, str) and direct.strip():
-        return direct.strip()
-
-    chunks = []
-
-    for item in payload.get("output", []) or []:
-        if item.get("type") != "message":
-            continue
-
-        for content in item.get("content", []) or []:
-            if content.get("type") == "output_text":
-                value = content.get("text")
-                if isinstance(value, str) and value.strip():
-                    chunks.append(value.strip())
-
-    return "\n".join(chunks).strip() or None
 
 
 def build_pablo_instructions(actor: dict, context: dict) -> str:
@@ -80,40 +62,17 @@ def generate_pablo_reply(
     context: dict,
     timeout_seconds: float = 25.0,
 ) -> str | None:
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
-
-    if not api_key:
-        return None
-
-    payload = {
-        "model": pablo_ai_model(),
-        "instructions": build_pablo_instructions(actor, context),
-        "input": message,
-        "max_output_tokens": 500,
-    }
-
-    try:
-        with httpx.Client(timeout=timeout_seconds) as client:
-            response = client.post(
-                OPENAI_RESPONSES_URL,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-
-        if response.status_code >= 400:
-            logger.warning(
-                "Pablo AI request failed: status=%s body=%s",
-                response.status_code,
-                response.text[:800],
-            )
-            return None
-
-        data = response.json()
-        return extract_output_text(data)
-
-    except (httpx.HTTPError, json.JSONDecodeError, ValueError) as exc:
-        logger.warning("Pablo AI unavailable: %s", exc)
-        return None
+    instructions = build_pablo_instructions(actor, context)
+    for provider_name in configured_provider_names():
+        config = provider_config(provider_name)
+        if not config:
+            continue
+        reply = generate_from_provider(
+            config,
+            message=message,
+            instructions=instructions,
+            timeout_seconds=timeout_seconds,
+        )
+        if reply:
+            return reply
+    return None
