@@ -183,6 +183,7 @@ class LeadCreate(BaseModel):
     observaciones: str | None = None
     observacoes: str | None = None
     pais: str | None = "MX"
+    valor_negocio: float | None = None
 
     @model_validator(mode="after")
     def validate_payload(self):

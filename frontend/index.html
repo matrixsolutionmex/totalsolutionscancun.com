@@ -2395,6 +2395,53 @@
       font-size: 11px;
     }
 
+    .pablo-action-card {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+      border: 1px solid rgba(250, 204, 21, 0.42);
+      border-radius: 8px;
+      background: rgba(250, 204, 21, 0.08);
+      color: #f8fbff;
+      font-size: 12px;
+    }
+
+    .pablo-action-card strong {
+      color: #fde68a;
+      font-size: 11px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .pablo-action-card dl {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 3px 10px;
+      margin: 0;
+    }
+
+    .pablo-action-card dt {
+      color: rgba(203, 213, 225, 0.7);
+    }
+
+    .pablo-action-card dd {
+      margin: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .pablo-action-card-actions {
+      display: flex;
+      gap: 7px;
+      flex-wrap: wrap;
+    }
+
+    .pablo-action-card-actions button {
+      min-height: 32px;
+      min-width: 0;
+      padding: 0 10px;
+      font-size: 11px;
+    }
+
     .pablo-v2-ticket-panel {
       display: none;
     }
@@ -8217,6 +8264,66 @@
       messages.scrollTop = messages.scrollHeight;
     }
 
+    function renderPabloActionProposal(proposal) {
+      const messages = document.getElementById("pabloV2Messages");
+      if (!messages || !proposal) return;
+      document.querySelectorAll("[data-pablo-action-card]").forEach((card) => card.remove());
+
+      const card = document.createElement("div");
+      card.className = "pablo-action-card";
+      card.dataset.pabloActionCard = "true";
+
+      const title = document.createElement("strong");
+      title.textContent = "Pablo preparou um cadastro";
+      card.appendChild(title);
+
+      const data = proposal.data || {};
+      const fields = [
+        ["Nome", data.name],
+        ["Telefone", data.phone],
+        ["Email", data.email],
+        ["Serviço", data.service_type],
+        ["Valor", data.service_value]
+      ].filter(([, value]) => value !== undefined && value !== null && value !== "");
+      const details = document.createElement("dl");
+      fields.forEach(([label, value]) => {
+        const dt = document.createElement("dt");
+        const dd = document.createElement("dd");
+        dt.textContent = label;
+        dd.textContent = String(value);
+        details.append(dt, dd);
+      });
+      card.appendChild(details);
+
+      if (proposal.status === "PENDING_CONFIRMATION") {
+        const actions = document.createElement("div");
+        actions.className = "pablo-action-card-actions";
+        actions.innerHTML = `
+          <button type="button" data-pablo-confirm-action>Confirmar cadastro</button>
+          <button type="button" data-pablo-correct-action>Corrigir</button>
+          <button type="button" data-pablo-cancel-action>Cancelar</button>
+        `;
+        card.appendChild(actions);
+      }
+      messages.appendChild(card);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    async function confirmPabloClientDraft() {
+      const response = await apiFetch(`${API_BASE}/pablo/actions/client-draft/confirm`, { method: "POST" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Não foi possível confirmar o cadastro.");
+      document.querySelectorAll("[data-pablo-action-card]").forEach((card) => card.remove());
+      addPabloV2Message(data.message || `Cliente ${data.client_name || ""} criado com sucesso.`, "ai");
+    }
+
+    async function cancelPabloClientDraft() {
+      const response = await apiFetch(`${API_BASE}/pablo/actions/client-draft/cancel`, { method: "POST" });
+      if (!response.ok) throw new Error("Não foi possível cancelar o cadastro.");
+      document.querySelectorAll("[data-pablo-action-card]").forEach((card) => card.remove());
+      addPabloV2Message("Cadastro cancelado. Nenhum cliente foi criado.", "ai");
+    }
+
 
     function pabloV2UnreadNotifications() {
       if (!Array.isArray(cachedNotifications)) return [];
@@ -8348,6 +8455,7 @@
           data.reply || "Consulta concluída.",
           "ai"
         );
+        renderPabloActionProposal(data.action_proposal);
 
         if (
           data.context &&
@@ -9767,6 +9875,21 @@
       if (file) {
         addPabloV2Message("Imagem selecionada. A análise de documentos será habilitada em uma próxima versão.", "ai");
         event.target.value = "";
+      }
+    });
+
+    document.getElementById("pabloV2Messages")?.addEventListener("click", async (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      try {
+        if (target.matches("[data-pablo-confirm-action]")) await confirmPabloClientDraft();
+        if (target.matches("[data-pablo-cancel-action]")) await cancelPabloClientDraft();
+        if (target.matches("[data-pablo-correct-action]")) {
+          document.getElementById("pabloV2Input")?.focus();
+          addPabloV2Message("Envie a correção do campo que deseja alterar.", "ai");
+        }
+      } catch (error) {
+        addPabloV2Message(error.message || "Não foi possível concluir a ação.", "ai");
       }
     });
 

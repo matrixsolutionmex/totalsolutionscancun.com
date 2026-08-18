@@ -12,11 +12,20 @@ from sqlalchemy.pool import StaticPool
 from app.database.connection import Base
 from app.main import app
 from app.models.lead import Lead
+from app.models.lead_event import LeadEvent
 from app.models.notification import Notification
 from app.models.organization import Organization
 from app.models.service_order import ServiceOrder
 from app.models.support_ticket import SupportTicket
 from app.models.user import User
+from app.models.notification import WebPushSubscription
+from app.services.pablo_actions_service import (
+    _drafts,
+    _lead_payload,
+    cancel_client_draft,
+    confirm_client_draft,
+    process_client_message,
+)
 from app.services.pablo_audio_service import transcribe_audio
 from app.services.pablo_context_service import build_context
 
@@ -35,9 +44,11 @@ class PabloLiveContextTest(unittest.TestCase):
                 Organization.__table__,
                 User.__table__,
                 Lead.__table__,
+                LeadEvent.__table__,
                 ServiceOrder.__table__,
                 SupportTicket.__table__,
                 Notification.__table__,
+                WebPushSubscription.__table__,
             ],
         )
         cls.Session = sessionmaker(bind=cls.engine)
@@ -73,6 +84,7 @@ class PabloLiveContextTest(unittest.TestCase):
         cls.engine.dispose()
 
     def tearDown(self):
+        cancel_client_draft(self.actor)
         self.db.rollback()
         self.db.close()
 
@@ -180,6 +192,52 @@ class PabloLiveContextTest(unittest.TestCase):
             )
         self.assertEqual(text, "quantos clientes tenho")
         self.assertEqual(post.call_args.args[0], "https://api.openai.com/v1/audio/transcriptions")
+
+    def test_broker_builds_isolated_draft_and_confirmation_uses_authenticated_actor(self):
+        proposal = process_client_message(self.actor, "Quero cadastrar cliente")
+        self.assertEqual(proposal["status"], "PENDING_INPUT")
+        process_client_message(self.actor, "Carlos Gomez")
+        proposal = process_client_message(self.actor, "+52 998 123 4567")
+        self.assertEqual(proposal["status"], "PENDING_CONFIRMATION")
+
+        other_proposal = process_client_message(self.other_user, "Quero cadastrar cliente")
+        self.assertNotEqual(proposal["data"], other_proposal["data"])
+
+        with patch("app.services.pablo_actions_service.dispatch_web_push_for_notification_ids"):
+            result = confirm_client_draft(self.db, self.actor)
+        self.assertEqual(result["message"], "Cliente criado com sucesso.")
+        lead = self.db.query(Lead).filter(Lead.id == result["client_id"]).one()
+        self.assertEqual(lead.organization_id, self.actor.organization_id)
+        self.assertEqual(lead.assigned_to_user_id, self.actor.id)
+        self.assertEqual(lead.nome, "Carlos Gomez")
+        untrusted_payload = _lead_payload({
+            "name": "Ignorado",
+            "phone": "+52 998 999 0000",
+            "organization_id": 999999,
+            "created_by_user_id": 999999,
+        })
+        self.assertNotIn("organization_id", untrusted_payload.model_dump())
+        self.assertNotIn("created_by_user_id", untrusted_payload.model_dump())
+        self.assertIsNone(process_client_message(self.actor, "confirmar"))
+        with self.assertRaises(Exception):
+            confirm_client_draft(self.db, self.actor)
+        audit = self.db.query(LeadEvent).filter(
+            LeadEvent.lead_id == lead.id,
+            LeadEvent.event_type == "PABLO_ACTION_CREATE_CLIENT",
+        ).one()
+        self.assertEqual(audit.actor_id, self.actor.id)
+
+    def test_draft_cancel_and_expiration_do_not_create_client(self):
+        existing_leads = self.db.query(Lead).count()
+        process_client_message(self.actor, "Quero cadastrar cliente")
+        self.assertTrue(cancel_client_draft(self.actor))
+        self.assertIsNone(process_client_message(self.actor, "confirmar"))
+
+        process_client_message(self.actor, "Quero cadastrar cliente")
+        _drafts[(self.actor.organization_id, self.actor.id)]["expires_at"] -= __import__("datetime").timedelta(minutes=16)
+        replacement = process_client_message(self.actor, "Quero cadastrar cliente")
+        self.assertEqual(replacement["status"], "PENDING_INPUT")
+        self.assertEqual(self.db.query(Lead).count(), existing_leads)
 
     def test_pablo_chat_and_transcribe_routes_are_registered(self):
         routes = {

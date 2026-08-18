@@ -4,6 +4,12 @@ from sqlalchemy.orm import Session
 
 from app.auth.jwt_handler import get_current_user, get_db
 from app.models.user import User
+from app.services.pablo_actions_service import (
+    cancel_client_draft,
+    confirm_client_draft,
+    get_client_draft,
+    process_client_message,
+)
 from app.services.pablo_audio_service import MAX_AUDIO_BYTES, transcribe_audio
 from app.services.pablo_context_service import build_context
 from app.services.pablo_ai_service import generate_pablo_reply, pablo_ai_enabled
@@ -20,6 +26,11 @@ class PabloChatResponse(BaseModel):
     reply: str
     intent: str
     context: dict
+    action_proposal: dict | None = None
+
+
+class PabloActionMessage(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
 
 
 def normalize_message(value: str) -> str:
@@ -116,6 +127,22 @@ def build_reply(intent: str, context: dict) -> str:
     )
 
 
+def action_reply(proposal: dict) -> str:
+    if proposal["status"] == "PENDING_INPUT":
+        questions = {
+            "name": "Qual é o nome do cliente?",
+            "phone_or_email": "Qual telefone ou email devo registrar?",
+        }
+        field = proposal["missing_fields"][0]
+        return questions.get(field, "Envie o próximo dado do cliente.")
+    data = proposal["data"]
+    return (
+        "Preparei o cadastro. Confira os dados e confirme quando estiver tudo correto: "
+        f"{data.get('name')}"
+        f"({data.get('phone') or data.get('email')})."
+    )
+
+
 @router.post("/chat", response_model=PabloChatResponse)
 def pablo_chat(
     payload: PabloChatRequest,
@@ -125,6 +152,15 @@ def pablo_chat(
     message = payload.message.strip()
     intent = detect_intent(message)
     context = build_context(db, actor)
+
+    proposal = process_client_message(actor, message)
+    if proposal:
+        return PabloChatResponse(
+            reply=action_reply(proposal),
+            intent="general",
+            context=context,
+            action_proposal=proposal,
+        )
 
     fallback_reply = build_reply(intent, context)
     reply = fallback_reply
@@ -142,6 +178,7 @@ def pablo_chat(
         reply=reply,
         intent=intent,
         context=context,
+        action_proposal=None,
     )
 
 
@@ -162,3 +199,32 @@ async def pablo_transcribe(
     if not text:
         raise HTTPException(status_code=503, detail="Transcricao indisponivel neste momento")
     return {"text": text}
+
+
+@router.post("/actions/client-draft")
+def pablo_client_draft(
+    payload: PabloActionMessage,
+    actor: User = Depends(get_current_user),
+):
+    proposal = process_client_message(actor, payload.message)
+    if not proposal:
+        raise HTTPException(status_code=400, detail="A mensagem não inicia um cadastro de cliente")
+    return {"reply": action_reply(proposal), "action_proposal": proposal}
+
+
+@router.get("/actions/client-draft")
+def pablo_client_draft_current(actor: User = Depends(get_current_user)):
+    return {"action_proposal": get_client_draft(actor)}
+
+
+@router.post("/actions/client-draft/confirm")
+def pablo_client_draft_confirm(
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_user),
+):
+    return confirm_client_draft(db, actor)
+
+
+@router.post("/actions/client-draft/cancel")
+def pablo_client_draft_cancel(actor: User = Depends(get_current_user)):
+    return {"status": "CANCELLED", "cancelled": cancel_client_draft(actor)}

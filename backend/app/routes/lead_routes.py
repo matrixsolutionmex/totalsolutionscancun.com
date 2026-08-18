@@ -27,16 +27,10 @@ from app.schemas.lead_schema import (
 )
 from app.services.enrichment_service import EnrichmentError, enrich_lead_record, enrich_leads_in_background
 from app.services.dossier_pdf_service import build_service_dossier_pdf
-from app.services.lead_entry_service import (
-    duplicate_lead,
-    duplicate_lead_message,
-    ensure_property_id,
-    lead_mapping_from_manual,
-    property_extra_json,
-    validate_responsible,
-)
+from app.services.lead_entry_service import property_extra_json, validate_responsible
+from app.services.lead_creation_service import create_lead_record
 from app.services.service_order_service import ensure_service_order, sync_service_order_from_lead
-from app.services.notification_service import dispatch_web_push_for_notification_ids, notify_assignment_change, notify_client_created
+from app.services.notification_service import dispatch_web_push_for_notification_ids, notify_assignment_change
 
 router = APIRouter(prefix="/leads", tags=["leads"])
 
@@ -214,40 +208,7 @@ def create_lead(
     db: Session = Depends(get_db),
     actor: User = Depends(get_actor),
 ):
-    mapping = lead_mapping_from_manual(payload, actor=actor)
-    mapping["organization_id"] = actor.organization_id
-    validate_responsible(db, actor, mapping.get("assigned_to_user_id"))
-
-    duplicate = duplicate_lead(
-        db,
-        email=mapping.get("email"),
-        contato=mapping.get("contato"),
-        whatsapp=mapping.get("whatsapp"),
-        organization_id=actor.organization_id,
-    )
-    if duplicate:
-        raise HTTPException(status_code=409, detail=duplicate_lead_message(duplicate))
-
-    lead = Lead(**mapping)
-    db.add(lead)
-    db.flush()
-    ensure_property_id(lead)
-    service_order = ensure_service_order(db, lead, actor=actor)
-    add_lead_event(
-        db,
-        lead,
-        actor,
-        "ENTRADA",
-        f"OS {service_order.order_number} criada para cliente com origem {lead.origen or 'OTRO'}",
-    )
-    pending_push_notification_ids = notify_client_created(db, lead=lead, actor=actor)
-    pending_push_notification_ids = notify_assignment_change(
-        db,
-        lead=lead,
-        actor=actor,
-        previous_user_id=None,
-        new_user_id=lead.assigned_to_user_id,
-    ) + pending_push_notification_ids
+    lead, pending_push_notification_ids = create_lead_record(db, payload, actor)
     db.commit()
     dispatch_web_push_for_notification_ids(db, pending_push_notification_ids)
     db.refresh(lead)

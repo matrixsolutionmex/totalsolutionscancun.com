@@ -169,6 +169,7 @@ def lead_mapping_from_manual(payload, *, actor: User | None = None):
         "foto_fachada_url": clean_text(payload.foto_fachada_url),
         "property_extra_json": property_extra_json(payload),
         "pais": clean_text(payload.pais or "MX"),
+        "valor_negocio": payload.valor_negocio,
         "assigned_to_user_id": assigned_to_user_id,
         "pipeline": "NOVO LEAD",
         "pipeline_updated_at": now,
