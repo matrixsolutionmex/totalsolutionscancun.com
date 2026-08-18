@@ -63,10 +63,17 @@ def generate_pablo_reply(
     timeout_seconds: float = 25.0,
 ) -> str | None:
     instructions = build_pablo_instructions(actor, context)
+    previous_provider = None
     for provider_name in configured_provider_names():
         config = provider_config(provider_name)
         if not config:
             continue
+        if previous_provider:
+            logger.warning(
+                "Pablo AI fallback: from=%s to=%s",
+                previous_provider,
+                config.name,
+            )
         reply = generate_from_provider(
             config,
             message=message,
@@ -75,4 +82,6 @@ def generate_pablo_reply(
         )
         if reply:
             return reply
+        previous_provider = config.name
+    logger.warning("Pablo AI providers exhausted; deterministic fallback will be used")
     return None

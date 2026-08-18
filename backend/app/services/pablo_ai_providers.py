@@ -123,6 +123,11 @@ def generate_from_provider(
     instructions: str,
     timeout_seconds: float,
 ) -> str | None:
+    logger.info(
+        "Pablo AI provider selected: provider=%s model=%s",
+        config.name,
+        config.model,
+    )
     if config.name == "openai":
         url = f"{config.base_url}/responses"
         payload = {
@@ -161,6 +166,8 @@ def generate_from_provider(
         reply = _response_text(data, config.name)
         if not reply:
             logger.warning("Pablo AI response invalid: provider=%s error=empty_response", config.name)
+        else:
+            logger.info("Pablo AI request succeeded: provider=%s", config.name)
         return reply
     except httpx.TimeoutException:
         logger.warning("Pablo AI request failed: provider=%s error=timeout", config.name)

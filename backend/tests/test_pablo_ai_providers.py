@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import httpx
 
-from app.services.pablo_ai_providers import ProviderConfig, generate_from_provider
+from app.services.pablo_ai_providers import ProviderConfig, generate_from_provider, provider_config
 from app.services.pablo_ai_service import generate_pablo_reply, pablo_ai_enabled
 
 
@@ -43,6 +43,29 @@ class PabloAiProvidersTest(unittest.TestCase):
     def test_openai_legacy_key_enables_provider(self):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "legacy-key"}, clear=True):
             self.assertTrue(pablo_ai_enabled())
+
+    def test_openai_key_precedence_is_provider_then_generic_then_legacy(self):
+        with patch.dict(os.environ, {
+            "PABLO_OPENAI_API_KEY": "provider-key",
+            "PABLO_AI_API_KEY": "generic-key",
+            "OPENAI_API_KEY": "legacy-key",
+        }, clear=True):
+            self.assertEqual(provider_config("openai").api_key, "provider-key")
+
+        with patch.dict(os.environ, {
+            "PABLO_AI_API_KEY": "generic-key",
+            "OPENAI_API_KEY": "legacy-key",
+        }, clear=True):
+            self.assertEqual(provider_config("openai").api_key, "generic-key")
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "legacy-key"}, clear=True):
+            self.assertEqual(provider_config("openai").api_key, "legacy-key")
+
+    def test_openai_default_model_and_base_url_are_resolved(self):
+        with patch.dict(os.environ, {"PABLO_AI_API_KEY": "generic-key"}, clear=True):
+            config = provider_config("openai")
+            self.assertEqual(config.model, "gpt-5.6-luna")
+            self.assertEqual(config.base_url, "https://api.openai.com/v1")
 
     def test_new_generic_configuration_is_supported_without_exposing_key(self):
         response = httpx.Response(
