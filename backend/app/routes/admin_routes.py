@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
@@ -25,6 +26,11 @@ from app.services.user_lifecycle_service import record_user_lifecycle_event, rev
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 PENDING_ADMIN_STATUSES = {"PENDING", "PENDING_APPROVAL", "PENDING_ADMIN"}
+PENDING_EMAIL_SUPPORT_STATUSES = {"PENDING", "PENDING_EMAIL", "PENDING_APPROVAL", "PENDING_ADMIN"}
+
+
+class ManualEmailVerificationRequest(BaseModel):
+    reason: str
 
 
 def require_reason(reason: str) -> str:
@@ -323,6 +329,163 @@ def anonymize_user(
         is_active=False,
         metadata={"released_clients": released_clients},
     )
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+
+@router.post("/users/{user_id}/email-verification/resend")
+def admin_resend_email_verification(
+    user_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_user),
+):
+    user = load_target_user(db, user_id, actor)
+
+    if user.email_verified:
+        raise HTTPException(status_code=400, detail="Correo ya verificado")
+
+    if (user.status or "").upper() not in PENDING_EMAIL_SUPPORT_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail="Estado del usuario no permite soporte de verificacion",
+        )
+
+    delivered = issue_email_verification(db, user)
+
+    audit_auth_event(
+        db,
+        request=None,
+        event_type="ADMIN_EMAIL_VERIFICATION_RESEND",
+        outcome="DELIVERED" if delivered else "DELIVERY_FAILED",
+        user=user,
+        actor=actor,
+        detail={"channel": "email"},
+    )
+
+    db.commit()
+
+    return {
+        "ok": delivered,
+        "email_verified": False,
+        "message": (
+            "Correo de verificacion reenviado"
+            if delivered
+            else "No fue posible entregar el correo. Puede generar un enlace para compartir."
+        ),
+    }
+
+
+@router.post("/users/{user_id}/email-verification/link")
+def admin_generate_email_verification_link(
+    user_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_user),
+):
+    user = load_target_user(db, user_id, actor)
+
+    if user.email_verified:
+        raise HTTPException(status_code=400, detail="Correo ya verificado")
+
+    if (user.status or "").upper() not in PENDING_EMAIL_SUPPORT_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail="Estado del usuario no permite soporte de verificacion",
+        )
+
+    verification_url = create_email_verification_link(user)
+
+    if not verification_url:
+        raise HTTPException(
+            status_code=500,
+            detail="No fue posible generar el enlace de verificacion",
+        )
+
+    audit_auth_event(
+        db,
+        request=None,
+        event_type="ADMIN_EMAIL_VERIFICATION_LINK",
+        outcome="GENERATED",
+        user=user,
+        actor=actor,
+        detail={
+            "channel": "manual_share",
+            "expires_minutes": 60,
+        },
+    )
+
+    db.commit()
+
+    return {
+        "ok": True,
+        "verification_url": verification_url,
+        "expires_minutes": 60,
+        "message": "Enlace de verificacion generado",
+    }
+
+
+@router.post("/users/{user_id}/email-verification/manual", response_model=UserResponse)
+def admin_manual_email_verification(
+    user_id: int,
+    payload: ManualEmailVerificationRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_user),
+):
+    user = load_target_user(db, user_id, actor)
+    reason = require_reason(payload.reason)
+
+    if user.email_verified:
+        raise HTTPException(status_code=400, detail="Correo ya verificado")
+
+    current_status = (user.status or "").upper()
+
+    if current_status not in PENDING_EMAIL_SUPPORT_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail="Estado del usuario no permite verificacion manual",
+        )
+
+    previous_status = user.status
+    next_status = "PENDING_ADMIN" if current_status == "PENDING_EMAIL" else user.status
+
+    user.email_verified = True
+    user.email_verification_token = None
+    user.email_verification_token_hash = None
+    user.email_verification_expires_at = None
+    user.email_verification_used_at = datetime.utcnow()
+
+    if next_status != user.status:
+        user.status = next_status
+        user.status_reason = reason
+        user.status_changed_at = datetime.utcnow()
+        user.status_changed_by = actor.id
+
+    record_user_lifecycle_event(
+        db,
+        user=user,
+        actor=actor,
+        event_type="EMAIL_VERIFIED_MANUALLY",
+        from_status=previous_status,
+        to_status=user.status,
+        reason=reason,
+        metadata={"method": "admin_manual_override"},
+    )
+
+    audit_auth_event(
+        db,
+        request=None,
+        event_type="ADMIN_EMAIL_VERIFICATION_MANUAL",
+        outcome="SUCCESS",
+        user=user,
+        actor=actor,
+        detail={
+            "reason": reason,
+            "previous_status": previous_status,
+            "new_status": user.status,
+        },
+    )
+
     db.commit()
     db.refresh(user)
     return user

@@ -406,6 +406,48 @@
       box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.28), var(--shadow-md);
     }
 
+    .admin-email-support {
+      grid-column: 1 / -1;
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+      border: 1px solid rgba(34, 197, 94, 0.28);
+      border-radius: 10px;
+      background: rgba(34, 197, 94, 0.07);
+    }
+
+    .admin-email-support-title {
+      font-size: 13px;
+      font-weight: 900;
+      color: var(--green);
+    }
+
+    .admin-email-support-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .admin-email-support-actions button {
+      min-height: 40px;
+      padding: 0 12px;
+    }
+
+    .admin-verification-share {
+      display: grid;
+      gap: 8px;
+    }
+
+    .admin-verification-share.hidden {
+      display: none;
+    }
+
+    .admin-verification-share input {
+      width: 100%;
+      min-width: 0;
+      font-size: 12px;
+    }
+
     .pending-user-controls {
       display: grid;
       grid-template-columns: repeat(4, minmax(120px, 1fr));
@@ -2801,9 +2843,56 @@
       }
 
       .toolbar,
+      .admin-panel,
+      .view-grid,
       .panel-box,
       .view {
-        max-width: 100vw;
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+      }
+
+      .toolbar,
+      .admin-panel,
+      .view-grid {
+        padding-left: 12px;
+        padding-right: 12px;
+      }
+
+      .toolbar > *,
+      .admin-panel > *,
+      .view-grid > *,
+      .panel-box > *,
+      .profile-summary,
+      .profile-identity,
+      .profile-actions {
+        min-width: 0;
+        max-width: 100%;
+      }
+
+      .toolbar input,
+      .toolbar select,
+      .toolbar button,
+      .admin-panel input,
+      .admin-panel select,
+      .admin-panel button,
+      .view-grid input,
+      .view-grid select,
+      .view-grid button,
+      .panel-box input,
+      .panel-box select,
+      .panel-box textarea,
+      .panel-box button {
+        max-width: 100%;
+      }
+
+      .subtitle,
+      .panel-box,
+      .profile-summary,
+      .profile-identity,
+      .user-pill,
+      .line {
+        overflow-wrap: anywhere;
       }
 
       .board {
@@ -8012,7 +8101,54 @@
     function adminUserActionButtons(user) {
       const status = String(user.status || "").toUpperCase();
       if (currentAdminUserTab === "PENDING" || ["PENDING", "PENDING_EMAIL", "PENDING_APPROVAL", "PENDING_ADMIN"].includes(status)) {
+        const emailSupport = user.email_verified ? "" : `
+          <div class="admin-email-support" data-admin-email-support>
+            <div class="admin-email-support-title">Soporte de verificación</div>
+
+            <div class="admin-email-support-actions">
+              <button class="lv-button-secondary" type="button" data-admin-resend-verification>
+                Reenviar correo
+              </button>
+
+              <button class="lv-button-secondary" type="button" data-admin-generate-verification>
+                Generar enlace
+              </button>
+
+              <button class="lv-button-secondary" type="button" data-admin-manual-verification>
+                Validar manualmente
+              </button>
+            </div>
+
+            <div class="admin-verification-share hidden" data-admin-verification-share>
+              <small>Enlace válido por 60 minutos y de un solo uso.</small>
+
+              <input
+                class="lv-input"
+                type="text"
+                readonly
+                data-admin-verification-url
+                aria-label="Enlace de verificación"
+              >
+
+              <div class="admin-email-support-actions">
+                <button class="lv-button-secondary" type="button" data-admin-copy-verification>
+                  Copiar enlace
+                </button>
+
+                <button class="lv-button-secondary" type="button" data-admin-share-whatsapp>
+                  WhatsApp
+                </button>
+
+                <button class="lv-button-secondary" type="button" data-admin-share-telegram>
+                  Telegram
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+
         return `
+          ${emailSupport}
           <button class="lv-button-primary" data-approve-pending ${user.email_verified ? "" : "disabled"}>${escapeHtml(t("approve"))}</button>
           <button class="lv-button-secondary" data-suspend-user>Suspender</button>
         `;
@@ -8101,6 +8237,48 @@
         syncManager();
       });
 
+      list.querySelectorAll("[data-admin-resend-verification]").forEach((button) => {
+        button.addEventListener("click", () => {
+          adminResendEmailVerification(button.closest("[data-pending-user-id]"));
+        });
+      });
+
+      list.querySelectorAll("[data-admin-generate-verification]").forEach((button) => {
+        button.addEventListener("click", () => {
+          adminGenerateEmailVerificationLink(button.closest("[data-pending-user-id]"));
+        });
+      });
+
+      list.querySelectorAll("[data-admin-manual-verification]").forEach((button) => {
+        button.addEventListener("click", () => {
+          adminManualEmailVerification(button.closest("[data-pending-user-id]"));
+        });
+      });
+
+      list.querySelectorAll("[data-admin-copy-verification]").forEach((button) => {
+        button.addEventListener("click", () => {
+          copyAdminVerificationLink(button.closest("[data-pending-user-id]"));
+        });
+      });
+
+      list.querySelectorAll("[data-admin-share-whatsapp]").forEach((button) => {
+        button.addEventListener("click", () => {
+          shareAdminVerificationLink(
+            button.closest("[data-pending-user-id]"),
+            "whatsapp"
+          );
+        });
+      });
+
+      list.querySelectorAll("[data-admin-share-telegram]").forEach((button) => {
+        button.addEventListener("click", () => {
+          shareAdminVerificationLink(
+            button.closest("[data-pending-user-id]"),
+            "telegram"
+          );
+        });
+      });
+
       list.querySelectorAll("[data-approve-pending]").forEach((button) => {
         button.addEventListener("click", () => approvePendingUser(button.closest("[data-pending-user-id]")));
       });
@@ -8159,6 +8337,181 @@
         button.addEventListener("click", () => rejectReactivationRequest(button.closest("[data-reactivation-request-id]")));
       });
     }
+
+    async function adminResendEmailVerification(row) {
+      const userId = row?.dataset.pendingUserId;
+      if (!userId) return;
+
+      const button = row.querySelector("[data-admin-resend-verification]");
+      if (button) button.disabled = true;
+
+      try {
+        const response = await apiFetch(
+          `${API_BASE}/admin/users/${userId}/email-verification/resend`,
+          { method: "POST" }
+        );
+
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          alert(data.detail || data.message || "No fue posible reenviar el correo.");
+          return;
+        }
+
+        alert(
+          data.message ||
+          (data.ok
+            ? "Correo de verificación reenviado."
+            : "El correo no pudo entregarse. Genere un enlace para compartir.")
+        );
+      } finally {
+        if (button) button.disabled = false;
+      }
+    }
+
+
+    async function adminGenerateEmailVerificationLink(row) {
+      const userId = row?.dataset.pendingUserId;
+      if (!userId) return;
+
+      const button = row.querySelector("[data-admin-generate-verification]");
+      if (button) button.disabled = true;
+
+      try {
+        const response = await apiFetch(
+          `${API_BASE}/admin/users/${userId}/email-verification/link`,
+          { method: "POST" }
+        );
+
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          alert(data.detail || data.message || "No fue posible generar el enlace.");
+          return;
+        }
+
+        const shareBox = row.querySelector("[data-admin-verification-share]");
+        const input = row.querySelector("[data-admin-verification-url]");
+
+        if (!shareBox || !input || !data.verification_url) {
+          alert("Enlace generado, pero no fue posible mostrarlo.");
+          return;
+        }
+
+        input.value = data.verification_url;
+        shareBox.classList.remove("hidden");
+        input.focus();
+        input.select();
+      } finally {
+        if (button) button.disabled = false;
+      }
+    }
+
+
+    async function adminManualEmailVerification(row) {
+      const userId = row?.dataset.pendingUserId;
+      if (!userId) return;
+
+      const reason = prompt(
+        "Motivo de la validación manual del correo:",
+        "Usuario confirmó su identidad durante atención administrativa"
+      );
+
+      if (reason === null) return;
+
+      const cleanReason = reason.trim();
+
+      if (cleanReason.length < 3) {
+        alert("Informe un motivo válido.");
+        return;
+      }
+
+      const confirmed = confirm(
+        "¿Confirmar manualmente este correo?\\n\\n" +
+        "La cuenta NO será activada automáticamente. " +
+        "Después deberá aprobar el usuario normalmente."
+      );
+
+      if (!confirmed) return;
+
+      const response = await apiFetch(
+        `${API_BASE}/admin/users/${userId}/email-verification/manual`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason: cleanReason })
+        }
+      );
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        alert(data.detail || "No fue posible validar el correo.");
+        return;
+      }
+
+      alert(
+        "Correo validado manualmente.\\n\\n" +
+        "El usuario continúa pendiente de aprobación administrativa."
+      );
+
+      await loadPendingUsers();
+    }
+
+
+    async function copyAdminVerificationLink(row) {
+      const input = row?.querySelector("[data-admin-verification-url]");
+      const url = input?.value?.trim();
+
+      if (!url) {
+        alert("Primero genere un enlace.");
+        return;
+      }
+
+      try {
+        await navigator.clipboard.writeText(url);
+        alert("Enlace copiado.");
+      } catch (_) {
+        input.focus();
+        input.select();
+        document.execCommand("copy");
+        alert("Enlace copiado.");
+      }
+    }
+
+
+    function shareAdminVerificationLink(row, channel) {
+      const input = row?.querySelector("[data-admin-verification-url]");
+      const url = input?.value?.trim();
+
+      if (!url) {
+        alert("Primero genere un enlace.");
+        return;
+      }
+
+      const message =
+        "Total Solutions Cancún\\n\\n" +
+        "Utiliza este enlace seguro para confirmar tu correo. " +
+        "El enlace vence en 60 minutos y solo puede utilizarse una vez.";
+
+      let shareUrl = "";
+
+      if (channel === "whatsapp") {
+        shareUrl =
+          `https://wa.me/?text=${encodeURIComponent(message + "\\n\\n" + url)}`;
+      }
+
+      if (channel === "telegram") {
+        shareUrl =
+          `https://t.me/share/url?url=${encodeURIComponent(url)}` +
+          `&text=${encodeURIComponent(message)}`;
+      }
+
+      if (shareUrl) {
+        window.open(shareUrl, "_blank", "noopener,noreferrer");
+      }
+    }
+
 
     async function loadPendingUsers() {
       if (currentUser.role !== "ROOT") {

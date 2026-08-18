@@ -384,17 +384,29 @@ def send_verification_email(*, to_email: str, full_name: str | None, verificatio
         return False
 
 
-def issue_email_verification(db: Session, user: User) -> bool:
+def create_email_verification_link(user: User) -> str | None:
     raw_token = secrets.token_urlsafe(48)
     verification_url = email_verification_url(raw_token)
+    if not verification_url:
+        return None
+
     user.email_verification_token = None
     user.email_verification_token_hash = hash_value(raw_token)
     user.email_verification_expires_at = now_utc() + timedelta(minutes=EMAIL_VERIFICATION_TTL_MINUTES)
     user.email_verification_sent_at = now_utc()
     user.email_verification_used_at = None
+    return verification_url
+
+
+def issue_email_verification(db: Session, user: User) -> bool:
+    verification_url = create_email_verification_link(user)
     if not verification_url:
         return False
-    return send_verification_email(to_email=user.email, full_name=user.full_name, verification_url=verification_url)
+    return send_verification_email(
+        to_email=user.email,
+        full_name=user.full_name,
+        verification_url=verification_url,
+    )
 
 
 def generic_register_response(
