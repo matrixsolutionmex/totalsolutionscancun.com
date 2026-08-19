@@ -24,6 +24,7 @@ from app.services.pablo_actions_service import (
     _lead_payload,
     cancel_client_draft,
     cancel_operational_proposal,
+    correct_operational_proposal,
     confirm_client_draft,
     confirm_operational_proposal,
     is_create_client_request,
@@ -366,6 +367,54 @@ Observação: Cliente solicitou diagnóstico de 12 aparelhos de ar-condicionado 
         proposal = process_operational_message(self.db, self.actor, "+52 555 777 8888")
         self.assertEqual(proposal["status"], "PENDING_CONFIRMATION")
         self.assertEqual(proposal["changes"], {"contato": "+52 555 777 8888"})
+
+    def test_update_service_order_proposal_requires_confirmation(self):
+        lead = Lead(
+            organization_id=self.org.id,
+            nome="Javier Edmundo",
+            assigned_to_user_id=self.actor.id,
+            pipeline="VISITA",
+        )
+        self.db.add(lead)
+        self.db.flush()
+        order = ServiceOrder(
+            organization_id=self.org.id,
+            lead_id=lead.id,
+            order_number=f"TS-TEST-{lead.id}",
+            status="EM_DIAGNOSTICO",
+            responsible_user_id=self.actor.id,
+        )
+        self.db.add(order)
+        self.db.commit()
+
+        proposal = process_operational_message(
+            self.db,
+            self.actor,
+            "atualize a OS do Javier Edmundo status para CONCLUIDA",
+        )
+        self.assertEqual(proposal["action"], "UPDATE_SERVICE_ORDER")
+        self.assertEqual(proposal["status"], "PENDING_CONFIRMATION")
+        self.assertEqual(proposal["changes"]["status"], "CONCLUIDA")
+        self.assertEqual(order.status, "EM_DIAGNOSTICO")
+        confirm_operational_proposal(self.db, self.actor)
+        self.db.refresh(order)
+        self.assertEqual(order.status, "CONCLUIDA")
+
+    def test_operational_correction_preserves_target_and_returns_to_input(self):
+        lead = Lead(
+            organization_id=self.org.id,
+            nome="Javier Edmundo",
+            contato="555-1000",
+            assigned_to_user_id=self.actor.id,
+        )
+        self.db.add(lead)
+        self.db.commit()
+        proposal = process_operational_message(self.db, self.actor, "troque o telefone do Javier Edmundo para +52 555 777 8888")
+        self.assertEqual(proposal["status"], "PENDING_CONFIRMATION")
+        corrected = correct_operational_proposal(self.actor)
+        self.assertEqual(corrected["status"], "PENDING_INPUT")
+        self.assertEqual(corrected["target"]["name"], "Javier Edmundo")
+        self.assertEqual(corrected["missing_fields"], ["value"])
 
 
 if __name__ == "__main__":

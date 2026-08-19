@@ -18,6 +18,8 @@ from app.services.pablo_actions_service import (
     confirm_client_draft,
     confirm_operational_proposal,
     cancel_operational_proposal,
+    correct_client_draft,
+    correct_operational_proposal,
     get_operational_proposal,
     get_client_draft,
     is_create_client_request,
@@ -189,9 +191,18 @@ def pablo_chat(
     proposal = process_client_message(actor, message)
     if proposal is None:
         proposal = process_operational_message(db, actor, message)
+    if proposal is None:
+        # A pending proposal must never fall through to conversational LLM output.
+        proposal = get_operational_proposal(actor) or get_client_draft(actor)
     if proposal is None and is_create_client_request(message):
         logger.warning("Pablo create-client intent produced no draft: actor_id=%s", actor.id)
     if proposal:
+        logger.info(
+            "Pablo structured action response: action=%s status=%s actor_id=%s",
+            proposal.get("action"),
+            proposal.get("status"),
+            actor.id,
+        )
         return PabloChatResponse(
             reply=action_reply(proposal),
             intent=proposal.get("action", "general"),
@@ -347,3 +358,11 @@ def pablo_action_cancel(actor: User = Depends(get_current_user)):
     if cancel_operational_proposal(actor):
         return {"status": "CANCELLED", "cancelled": True}
     return {"status": "CANCELLED", "cancelled": cancel_client_draft(actor)}
+
+
+@router.post("/actions/correct")
+def pablo_action_correct(actor: User = Depends(get_current_user)):
+    proposal = get_operational_proposal(actor)
+    if proposal:
+        return {"action_proposal": correct_operational_proposal(actor)}
+    return {"action_proposal": correct_client_draft(actor)}

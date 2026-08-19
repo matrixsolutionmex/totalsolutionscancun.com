@@ -8274,50 +8274,43 @@
       card.dataset.pabloActionCard = "true";
 
       const title = document.createElement("strong");
-      title.textContent = proposal.action === "CREATE_CLIENT"
+      const action = String(proposal.action || "ACTION").toUpperCase();
+      const status = String(proposal.status || "").toUpperCase();
+      title.textContent = action === "CREATE_CLIENT"
         ? "Pablo preparou um cadastro"
-        : `Pablo preparou: ${proposal.action}`;
+        : `Pablo preparou: ${action}`;
       card.appendChild(title);
 
       const data = proposal.data || {};
-      const fields = [
-        ["Nome", data.name],
-        ["Telefone", data.phone],
-        ["Email", data.email],
-        ["Serviço", data.service_type],
-        ["Valor", data.service_value]
-      ].filter(([, value]) => value !== undefined && value !== null && value !== "");
       const details = document.createElement("dl");
-      fields.forEach(([label, value]) => {
+      const addDetail = (label, value) => {
+        if (value === undefined || value === null || value === "") return;
         const dt = document.createElement("dt");
         const dd = document.createElement("dd");
         dt.textContent = label;
         dd.textContent = String(value);
         details.append(dt, dd);
-      });
+      };
+      if (action === "CREATE_CLIENT") {
+        [["Nome", data.name], ["Telefone", data.phone], ["Email", data.email], ["Serviço", data.service_type], ["Valor", data.service_value]]
+          .forEach(([label, value]) => addDetail(label, value));
+      } else {
+        addDetail("Cliente", proposal.target?.name);
+        const labels = { contato: "Telefone", email: "Email", endereco: "Endereço", cidade: "Cidade", urgencia: "Urgência", empresa: "Empresa", pipeline: "Etapa", status: "Status" };
+        const changes = proposal.changes || {};
+        Object.keys(changes).forEach((field) => {
+          if (field === "_pending_field") return;
+          addDetail(`${labels[field] || field} atual`, proposal.current?.[field]);
+          addDetail(`${labels[field] || field} novo`, changes[field]);
+        });
+      }
       card.appendChild(details);
 
-      if (proposal.target?.name) {
-        const target = document.createElement("p");
-        target.textContent = `Cliente: ${proposal.target.name}`;
-        card.insertBefore(target, details);
-      }
-      if (proposal.current && Object.keys(proposal.current).length) {
-        const before = document.createElement("p");
-        before.textContent = `Atual: ${JSON.stringify(proposal.current)}`;
-        card.appendChild(before);
-      }
-      if (proposal.changes && Object.keys(proposal.changes).length) {
-        const after = document.createElement("p");
-        after.textContent = `Novo: ${JSON.stringify(proposal.changes)}`;
-        card.appendChild(after);
-      }
-
-      if (proposal.status === "PENDING_CONFIRMATION") {
+      if (status === "PENDING_CONFIRMATION") {
         const actions = document.createElement("div");
         actions.className = "pablo-action-card-actions";
         actions.innerHTML = `
-          <button type="button" data-pablo-confirm-action>${proposal.action === "CREATE_CLIENT" ? "Confirmar cadastro" : "Confirmar ação"}</button>
+          <button type="button" data-pablo-confirm-action>${action === "CREATE_CLIENT" ? "Confirmar cadastro" : "Confirmar"}</button>
           <button type="button" data-pablo-correct-action>Corrigir</button>
           <button type="button" data-pablo-cancel-action>Cancelar</button>
         `;
@@ -8355,6 +8348,15 @@
       if (!response.ok) throw new Error("Não foi possível cancelar a ação.");
       document.querySelectorAll("[data-pablo-action-card]").forEach((card) => card.remove());
       addPabloV2Message("Ação cancelada. Nenhuma alteração foi feita.", "ai");
+    }
+
+    async function correctPabloAction() {
+      const response = await apiFetch(`${API_BASE}/pablo/actions/correct`, { method: "POST" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Não foi possível corrigir a ação.");
+      document.querySelectorAll("[data-pablo-action-card]").forEach((card) => card.remove());
+      addPabloV2Message("Certo. Qual dado deseja corrigir?", "ai");
+      renderPabloActionProposal(data.action_proposal);
     }
 
     async function analyzePabloImage(file) {
@@ -9779,10 +9781,8 @@
       try {
         if (target.matches("[data-pablo-confirm-action]")) await confirmPabloAction();
         if (target.matches("[data-pablo-cancel-action]")) await cancelPabloAction();
-        if (target.matches("[data-pablo-correct-action]")) {
-          document.getElementById("pabloV2Input")?.focus();
-          addPabloV2Message("Envie a correção do campo que deseja alterar.", "ai");
-        }
+        if (target.matches("[data-pablo-correct-action]")) await correctPabloAction();
+        if (target.matches("[data-pablo-correct-action]")) document.getElementById("pabloV2Input")?.focus();
       } catch (error) {
         addPabloV2Message(error.message || "Não foi possível concluir a ação.", "ai");
       }

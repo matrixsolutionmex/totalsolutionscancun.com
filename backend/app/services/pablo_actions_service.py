@@ -159,7 +159,7 @@ def _lead_reference(message: str) -> str:
     )
     if possessive:
         return possessive.group(1).strip()
-    name = r"([A-ZÀ-Ý][\wÀ-ÿ]+(?:\s+[A-ZÀ-Ý][\wÀ-ÿ]+){0,5}?)(?=\s+(?:para|a|to|for|en)\b|[?.!,;:]|$)"
+    name = r"([A-ZÀ-Ý][\wÀ-ÿ]+(?:\s+[A-ZÀ-Ý][\wÀ-ÿ]+){0,5}?)(?=\s+(?:para|a|to|for|en|status|estado)\b|[?.!,;:]|$)"
     match = re.search(rf"(?:do|da|de|del|of|for|o|a|el|la)\s+{name}", message)
     if not match:
         match = re.search(rf"\b(?:mover|move|cambiar|change|atualizar|actualizar|update|colocar|put)\s+{name}", message, re.IGNORECASE)
@@ -220,7 +220,7 @@ def _build_operational_proposal(db: Session, actor: User, message: str, action: 
             return {**proposal, "status": "PENDING_INPUT", "missing_fields": ["changes"]}
     else:
         proposal["current"] = {"status": lead.service_order.status if lead.service_order else None}
-        status_match = re.search(r"(?:status|estado)\s*(?:é|e|es|is|:)?\s*([\wÀ-ÿ ]+)", message, re.IGNORECASE)
+        status_match = re.search(r"(?:status|estado)\s*(?:é|e|es|is|:)?\s*(?:para|to|a)?\s*([\wÀ-ÿ_]+)", message, re.IGNORECASE)
         if status_match:
             proposal["changes"] = {"status": status_match.group(1).strip(" .,:;?!").upper()}
         else:
@@ -278,6 +278,35 @@ def get_operational_proposal(actor: User) -> dict | None:
 def cancel_operational_proposal(actor: User) -> bool:
     with _draft_lock:
         return _action_proposals.pop(_action_key(actor), None) is not None
+
+
+def correct_operational_proposal(actor: User) -> dict:
+    with _draft_lock:
+        proposal = _action_proposals.get(_action_key(actor))
+        if not proposal:
+            raise HTTPException(status_code=404, detail="Nenhuma ação pendente para corrigir")
+        proposal["status"] = "PENDING_INPUT"
+        if proposal.get("action") == "UPDATE_CLIENT":
+            field = next(iter(proposal.get("changes", {})), None)
+            if field:
+                proposal["changes"] = {"_pending_field": field}
+                proposal["missing_fields"] = ["value"]
+            else:
+                proposal["missing_fields"] = ["changes"]
+        elif proposal.get("action") == "CREATE_CLIENT":
+            proposal["missing_fields"] = []
+        else:
+            proposal["missing_fields"] = ["changes"]
+        return dict(proposal)
+
+
+def correct_client_draft(actor: User) -> dict:
+    with _draft_lock:
+        draft = _drafts.get(_key(actor))
+        if not draft:
+            raise HTTPException(status_code=404, detail="Nenhum cadastro pendente para corrigir")
+        draft["status"] = "PENDING_INPUT"
+        return _proposal(draft)
 
 
 def confirm_operational_proposal(db: Session, actor: User) -> dict:
