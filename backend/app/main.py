@@ -16,7 +16,7 @@ from app.core.organization import get_or_create_default_organization
 from app.core.storage import UPLOADS_DIR
 from app.auth.routes import router as auth_router
 from app.database.connection import Base, SessionLocal, engine
-from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, deletion_request, notification, user_lifecycle, auth_security, organization, service_property, service_request, service_opportunity, commercial_subscription
+from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, deletion_request, notification, user_lifecycle, auth_security, organization, service_property, service_request, service_opportunity, commercial_subscription, commercial_upgrade_intent
 from app.models.lead import Lead
 from app.models.service_order import ServiceOrder
 from app.models.user import User
@@ -310,6 +310,7 @@ def create_database_tables():
             "service_opportunities",
             "commercial_subscriptions",
             "plan_change_events",
+            "commercial_upgrade_intents",
         ):
             add_column_if_missing(db, table_name, "organization_id", "INTEGER")
 

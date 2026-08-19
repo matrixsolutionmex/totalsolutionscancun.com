@@ -3654,6 +3654,10 @@
         <div class="line">Escolha o plano ideal para sua operação.</div>
         <div id="commercialAccountSummary" class="metric-row" style="margin: 16px 0;"></div>
         <div id="commercialPlanCards" class="view-grid"></div>
+        <div class="panel-box manager-only" style="margin-top: 18px;">
+          <div class="panel-title">Solicitações comerciais</div>
+          <div class="broker-list" id="commercialUpgradeIntentList"></div>
+        </div>
       </div>
     </div>
   </section>
@@ -5780,10 +5784,83 @@
             <h3>${marketplaceValue(plan.price)}</h3>
             <div class="line">${(plan.features || []).slice(0, 6).map((feature) => marketplaceValue(feature)).join(" · ")}</div>
             <p>Clientes: ${plan.limits?.clients || 0} · Usuários: ${plan.limits?.users || 0}</p>
-            <button type="button" data-commercial-plan="${marketplaceValue(plan.name)}">${plan.name === "FREE" ? "Começar grátis" : "Solicitar acesso promocional"}</button>
+            ${plan.name === "FREE"
+              ? `<button type="button" data-commercial-plan="FREE">Começar grátis</button>`
+              : `<button class="primary-btn" type="button" data-commercial-plan="${marketplaceValue(plan.name)}">Solicitar/Contratar ${marketplaceValue(plan.name)}</button>`}
           </article>`).join("");
+        if (currentUser && ["ROOT", "GERENTE"].includes(currentUser.role)) {
+          await loadCommercialUpgradeIntents();
+        }
       } catch (error) {
         cards.innerHTML = `<div class="line">${escapeHtml(error.message || "Não foi possível carregar os planos.")}</div>`;
+      }
+    }
+
+    async function requestCommercialCheckout(plan, button) {
+      const originalText = button.textContent;
+      button.disabled = true;
+      button.textContent = "Preparando checkout...";
+      try {
+        const response = await apiFetch(`${API_BASE}/commercial/upgrade-intents`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({plan})
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.checkout_url) {
+          throw new Error(data.detail || "Não foi possível preparar o checkout.");
+        }
+        window.open(data.checkout_url, "_blank", "noopener,noreferrer");
+        addPabloV2Message(`Solicitei o ${data.plan}. O pagamento ainda precisa ser confirmado por um administrador.`, "ai");
+      } catch (error) {
+        addPabloV2Message(error.message || "Não foi possível preparar o checkout.", "ai");
+      } finally {
+        button.disabled = false;
+        button.textContent = originalText;
+      }
+    }
+
+    async function loadCommercialUpgradeIntents() {
+      const list = document.getElementById("commercialUpgradeIntentList");
+      if (!list || !currentUser || !["ROOT", "GERENTE"].includes(currentUser.role)) return;
+      try {
+        const response = await apiFetch(`${API_BASE}/commercial/upgrade-intents`);
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || "Não foi possível carregar as solicitações.");
+        const intents = data.intents || [];
+        list.innerHTML = intents.length ? intents.map((intent) => `
+          <div class="broker-row">
+            <div>
+              <strong>${escapeHtml(intent.user)} · ${escapeHtml(intent.plan)}</strong>
+              <span>${escapeHtml(intent.organization)} · MX$ ${Number(intent.reference_price_mxn).toLocaleString("es-MX", {minimumFractionDigits: 2})} · ${escapeHtml(intent.provider)}</span>
+              <small>${new Date(intent.created_at).toLocaleString()} · ${escapeHtml(intent.status)}</small>
+            </div>
+            <div class="inline-actions">
+              ${intent.status === "CHECKOUT_OPENED" || intent.status === "PAYMENT_PENDING"
+                ? `<button type="button" data-commercial-intent-action="confirm-payment" data-commercial-intent-id="${intent.id}">Marcar pagamento confirmado</button>` : ""}
+              ${intent.status === "PAID"
+                ? `<button type="button" data-commercial-intent-action="activate" data-commercial-intent-id="${intent.id}">Ativar plano</button>` : ""}
+              ${!["ACTIVATED", "CANCELLED", "ABANDONED"].includes(intent.status)
+                ? `<button class="ghost" type="button" data-commercial-intent-action="cancel" data-commercial-intent-id="${intent.id}">Cancelar</button>` : ""}
+            </div>
+          </div>`).join("") : `<div class="empty-state">Nenhuma solicitação comercial.</div>`;
+      } catch (error) {
+        list.innerHTML = `<div class="empty-state">${escapeHtml(error.message || "Não foi possível carregar as solicitações.")}</div>`;
+      }
+    }
+
+    async function handleCommercialIntentAction(button) {
+      const intentId = button.dataset.commercialIntentId;
+      const action = button.dataset.commercialIntentAction;
+      button.disabled = true;
+      try {
+        const response = await apiFetch(`${API_BASE}/commercial/upgrade-intents/${intentId}/${action}`, {method: "POST"});
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || "Não foi possível atualizar a solicitação.");
+        await loadCommercialPlans();
+      } catch (error) {
+        addPabloV2Message(error.message || "Não foi possível atualizar a solicitação.", "ai");
+        button.disabled = false;
       }
     }
 
@@ -10065,7 +10142,17 @@
         addPabloV2Message("O plano FREE está disponível para começar. Nenhum pagamento foi realizado.", "ai");
         return;
       }
-      addPabloV2Message(`Solicitação de acesso promocional ao plano ${plan} registrada para orientação administrativa. Pagamento online em breve.`, "ai");
+      requestCommercialCheckout(plan, target).catch((error) => {
+        addPabloV2Message(error.message || "Não foi possível preparar o checkout.", "ai");
+      });
+    });
+
+    document.getElementById("commercialUpgradeIntentList")?.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || !target.matches("[data-commercial-intent-action]")) return;
+      handleCommercialIntentAction(target).catch((error) => {
+        addPabloV2Message(error.message || "Não foi possível atualizar a solicitação.", "ai");
+      });
     });
 
     document.getElementById("marketplacePanel")?.addEventListener("click", async (event) => {
