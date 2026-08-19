@@ -17,6 +17,8 @@ from app.core.storage import PROFILE_PHOTOS_DIR, delete_profile_photo
 from app.models.lead import Lead
 from app.models.lead_event import LeadEvent
 from app.models.user import User
+from app.models.organization import Organization
+from app.core.organization import create_independent_organization
 from app.schemas.user_schema import AssignLeadsRequest, LoginRequest, ReturnLeadsRequest, UserCreate, UserResponse, UserUpdate
 from app.services.notification_service import dispatch_web_push_for_notification_ids, notify_assignment_change
 from app.services.user_lifecycle_service import transition_user_status
@@ -194,9 +196,26 @@ def create_user(
     actor: User = Depends(require_admin_actor),
 ):
     role = payload.role.upper()
-
     if role not in {"ROOT", "GERENTE", "BROKER"}:
         raise HTTPException(status_code=400, detail="Role deve ser ROOT, GERENTE ou BROKER")
+    organization_mode = (payload.organization_mode or "").strip().upper()
+    if organization_mode not in {"INDEPENDENT", "CURRENT", "ORGANIZATION"}:
+        raise HTTPException(status_code=400, detail="organization_mode deve ser INDEPENDENT, CURRENT ou ORGANIZATION")
+    if organization_mode == "ORGANIZATION" and payload.organization_id is None:
+        raise HTTPException(status_code=400, detail="organization_id é obrigatório para ORGANIZATION")
+    if organization_mode == "ORGANIZATION" and actor.role != "ROOT":
+        raise HTTPException(status_code=403, detail="Apenas ROOT pode escolher outra organização")
+
+    if organization_mode == "INDEPENDENT":
+        target_organization = create_independent_organization(db, name=payload.company or payload.full_name or payload.username)
+    elif organization_mode == "ORGANIZATION":
+        target_organization = db.query(Organization).filter(Organization.id == payload.organization_id).first()
+        if not target_organization:
+            raise HTTPException(status_code=404, detail="Organização não encontrada")
+    else:
+        target_organization = db.query(Organization).filter(Organization.id == actor.organization_id).first()
+        if not target_organization:
+            raise HTTPException(status_code=400, detail="Administrador sem organização")
 
     if actor and actor.role == "GERENTE" and role != "BROKER":
         raise HTTPException(status_code=403, detail="Gerente pode cadastrar apenas broker")
@@ -212,7 +231,7 @@ def create_user(
                     User.id == manager_id,
                     User.role == "GERENTE",
                     User.is_active.is_(True),
-                    User.organization_id == actor.organization_id,
+                    User.organization_id == target_organization.id,
                 )
                 .first()
             )
@@ -223,15 +242,15 @@ def create_user(
 
     existing_user = (
         db.query(User)
-        .filter(User.username == payload.username, User.organization_id == actor.organization_id)
+        .filter(User.username == payload.username, User.organization_id == target_organization.id)
         .first()
     )
     if existing_user:
         raise HTTPException(status_code=409, detail="Usuario ja existe")
 
     user = User(
-        organization_id=actor.organization_id,
-        manager_id=manager_id,
+        organization_id=target_organization.id,
+        manager_id=manager_id if organization_mode != "INDEPENDENT" else None,
         username=payload.username,
         email=(payload.email or payload.email_pessoal or "").strip().lower() or None,
         company=(payload.company or "").strip() or None,
@@ -250,7 +269,8 @@ def create_user(
         idioma=(payload.idioma or "pt").lower(),
         email_verified=True,
         status="ACTIVE",
-        plan=(payload.plan or "FREE").upper(),
+        plan="FREE",
+        onboarding_source="INDEPENDENT" if organization_mode == "INDEPENDENT" else "TEAM",
         plan_max_brokers=max(payload.plan_max_brokers or 0, 0),
         plan_max_leads=max(payload.plan_max_leads or 0, 0),
         is_active=True,

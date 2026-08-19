@@ -10,6 +10,9 @@ class RegisterRequest(BaseModel):
     company: str | None = None
     phone: str | None = None
     plan: str = "FREE"
+    invite_token: str | None = None
+    referral_code: str | None = None
+    referral_email: str | None = None
     turnstile_token: str | None = None
 
 
@@ -64,6 +67,8 @@ class UserApprovalRequest(BaseModel):
     plan_max_brokers: int | None = None
     plan_max_leads: int | None = None
     manager_id: int | None = None
+    organization_mode: str = "INDEPENDENT"
+    organization_id: int | None = None
 
 
 class PublicAuthConfig(BaseModel):

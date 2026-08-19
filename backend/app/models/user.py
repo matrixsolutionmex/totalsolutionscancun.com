@@ -50,6 +50,7 @@ class User(Base):
     plan = Column(String, default="FREE", nullable=False)
     plan_max_brokers = Column(Integer, default=1, nullable=False)
     plan_max_leads = Column(Integer, default=100, nullable=False)
+    onboarding_source = Column(String, default="INDEPENDENT", nullable=False)
     registered_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     @property

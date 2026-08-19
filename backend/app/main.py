@@ -16,7 +16,7 @@ from app.core.organization import get_or_create_default_organization
 from app.core.storage import UPLOADS_DIR
 from app.auth.routes import router as auth_router
 from app.database.connection import Base, SessionLocal, engine
-from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, deletion_request, notification, user_lifecycle, auth_security, organization, service_property, service_request, service_opportunity, commercial_subscription, commercial_upgrade_intent
+from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, deletion_request, notification, user_lifecycle, auth_security, organization, organization_invitation, referral_attribution, service_property, service_request, service_opportunity, commercial_subscription, commercial_upgrade_intent
 from app.models.lead import Lead
 from app.models.service_order import ServiceOrder
 from app.models.user import User
@@ -34,6 +34,7 @@ from app.routes.commercial_routes import router as commercial_router
 from app.routes.support_routes import router as support_router
 from app.routes.user_routes import router as user_router
 from app.routes.contract_routes import router as contract_router
+from app.routes.organization_routes import router as organization_router
 from app.services.service_order_service import ensure_service_order
 from app.services.notification_service import process_email_outbox
 from app.services.commercial_upgrade_service import normalize_existing_upgrade_intents
@@ -83,6 +84,7 @@ app.include_router(integration_router)
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(contract_router)
+app.include_router(organization_router)
 app.include_router(public_service_request_router)
 app.include_router(service_request_router)
 app.include_router(marketplace_router)
@@ -314,6 +316,9 @@ def create_database_tables():
             "commercial_upgrade_intents",
         ):
             add_column_if_missing(db, table_name, "organization_id", "INTEGER")
+
+        add_column_if_missing(db, "users", "onboarding_source", "VARCHAR DEFAULT 'INDEPENDENT'")
+        db.execute(text("UPDATE users SET onboarding_source = 'INDEPENDENT' WHERE onboarding_source IS NULL OR TRIM(onboarding_source) = ''"))
 
         normalized_upgrade_intents = normalize_existing_upgrade_intents(db)
         if normalized_upgrade_intents:

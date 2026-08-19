@@ -42,11 +42,14 @@ from app.core.auth_security import (
     encrypt_secret,
     now_utc,
 )
-from app.core.organization import get_or_create_default_organization
+from app.core.organization import create_independent_organization, get_or_create_default_organization
 from app.core.security import hash_password, password_needs_upgrade, verify_password
 from app.models.auth_security import PasswordResetToken, UserIdentity
 from app.models.user import User
 from app.models.user_lifecycle import UserReactivationRequest
+from app.models.organization import Organization
+from app.models.organization_invitation import OrganizationInvitation
+from app.services.organization_onboarding_service import accept_invitation, invitation_for_token, record_referral
 from app.schemas.auth_schema import (
     AuthLoginRequest,
     AuthResponse,
@@ -484,7 +487,7 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
     if os.getenv("PUBLIC_SIGNUP_ENABLED", "true").strip().lower() == "false":
         raise HTTPException(status_code=403, detail="Registro temporalmente no disponible.")
     email = normalized_email(payload.email)
-    organization = get_or_create_default_organization(db)
+    invitation = invitation_for_token(db, payload.invite_token) if payload.invite_token else None
     apply_public_rate_limits(db, request, email, "register")
     verify_turnstile_or_403(db, request, token=payload.turnstile_token, expected_action="register")
     if len(payload.password) < 8:
@@ -544,6 +547,16 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
         db.commit()
         return generic_register_response(email)
 
+    if invitation:
+        organization = db.query(Organization).filter(Organization.id == invitation.organization_id).first()
+        if not organization:
+            raise HTTPException(status_code=404, detail="Organização do convite não encontrada")
+    else:
+        organization = create_independent_organization(
+            db,
+            name=(payload.company or payload.full_name or "Minha organização"),
+        )
+
     user = User(
         organization_id=organization.id,
         username=email,
@@ -558,10 +571,25 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
         email_verification_token=None,
         status="PENDING_EMAIL",
         is_active=False,
+        onboarding_source="INVITATION" if invitation else "INDEPENDENT",
         registered_at=datetime.utcnow(),
     )
     db.add(user)
     db.flush()
+    if invitation:
+        if user.email != invitation.invited_email:
+            raise HTTPException(status_code=403, detail="O convite foi enviado para outro e-mail")
+        user.role = invitation.role
+        user.manager_id = invitation.supervisor_user_id
+        invitation.status = "ACCEPTED"
+        invitation.accepted_at = datetime.utcnow()
+    record_referral(
+        db,
+        user=user,
+        referral_code=payload.referral_code,
+        referral_email=payload.referral_email,
+        invitation_id=invitation.id if invitation else None,
+    )
     email_sent = issue_email_verification(db, user)
     audit_auth_event(
         db,
@@ -1035,8 +1063,12 @@ def google_login(payload: GoogleLoginRequest, request: Request, response: Respon
             audit_auth_event(db, request=request, event_type="GOOGLE_LOGIN", outcome="LINK_REQUIRED", user=existing_email_user)
             db.commit()
             raise HTTPException(status_code=409, detail="Conta Google precisa ser vinculada após login seguro na conta atual.")
+        organization = create_independent_organization(
+            db,
+            name=claims.get("name") or provider_email,
+        )
         user = User(
-            organization_id=get_or_create_default_organization(db).id,
+            organization_id=organization.id,
             username=provider_email,
             email=provider_email,
             full_name=claims.get("name") or provider_email,
@@ -1046,6 +1078,7 @@ def google_login(payload: GoogleLoginRequest, request: Request, response: Respon
             email_verified=True,
             status="PENDING_ADMIN",
             is_active=False,
+            onboarding_source="INDEPENDENT",
             registered_at=datetime.utcnow(),
         )
         db.add(user)

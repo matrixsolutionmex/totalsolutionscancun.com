@@ -29,6 +29,8 @@ class UserCreate(BaseModel):
     plan: str | None = "FREE"
     plan_max_brokers: int | None = 1
     plan_max_leads: int | None = 100
+    organization_mode: str | None = None
+    organization_id: int | None = None
 
 
 class UserUpdate(BaseModel):
@@ -57,6 +59,7 @@ class UserUpdate(BaseModel):
 
 class UserResponse(BaseModel):
     id: int
+    organization_id: int | None = None
     manager_id: int | None = None
     username: str
     email: str | None = None
@@ -87,6 +90,7 @@ class UserResponse(BaseModel):
     plan: str = "FREE"
     plan_max_brokers: int = 1
     plan_max_leads: int = 100
+    onboarding_source: str = "INDEPENDENT"
     registered_at: datetime | None = None
 
     model_config = {

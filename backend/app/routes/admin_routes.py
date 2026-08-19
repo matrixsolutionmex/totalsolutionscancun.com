@@ -11,6 +11,8 @@ from app.core.auth_security import audit_auth_event
 from app.core.security import hash_password
 from app.models.lead import Lead
 from app.models.user import User
+from app.models.organization import Organization
+from app.core.organization import create_independent_organization
 from app.models.user_lifecycle import UserLifecycleEvent, UserReactivationRequest
 from app.schemas.auth_schema import UserApprovalRequest
 from app.schemas.user_schema import (
@@ -117,11 +119,50 @@ def approve_pending_user(db: Session, user: User, actor: User, payload: UserAppr
         raise HTTPException(status_code=400, detail="Correo pendiente de confirmación")
     if (user.status or "").upper() not in PENDING_ADMIN_STATUSES:
         raise HTTPException(status_code=400, detail="Usuario no está pendiente de aprobación administrativa")
-    role, manager_id = validate_role_and_manager(db, actor, payload.role, payload.manager_id)
+    role = payload.role.upper()
+    if role not in {"GERENTE", "BROKER"}:
+        raise HTTPException(status_code=400, detail="Role deve ser GERENTE ou BROKER")
+    organization_mode = (payload.organization_mode or "INDEPENDENT").upper()
+    if organization_mode not in {"INDEPENDENT", "EXISTING"}:
+        raise HTTPException(status_code=400, detail="organization_mode deve ser INDEPENDENT ou EXISTING")
+    if organization_mode == "EXISTING":
+        if payload.organization_id is None:
+            raise HTTPException(status_code=400, detail="organization_id é obrigatório para organização existente")
+        if actor.role != "ROOT" and payload.organization_id != actor.organization_id:
+            raise HTTPException(status_code=403, detail="Organização fora do escopo administrativo")
+        target_organization = db.query(Organization).filter(Organization.id == payload.organization_id).first()
+        if not target_organization:
+            raise HTTPException(status_code=404, detail="Organização não encontrada")
+    else:
+        target_organization = db.query(Organization).filter(Organization.id == user.organization_id).first()
+        if user.onboarding_source != "INDEPENDENT" or not target_organization or target_organization.slug == "total-solutions-cancun":
+            target_organization = create_independent_organization(
+                db,
+                name=user.company or user.full_name or user.username,
+            )
+        user.organization_id = target_organization.id
+        user.onboarding_source = "INDEPENDENT"
+    if organization_mode == "EXISTING":
+        user.onboarding_source = "TEAM"
+
+    manager_id = payload.manager_id if role == "BROKER" else None
+    if actor.role == "GERENTE" and role != "BROKER":
+        raise HTTPException(status_code=403, detail="Supervisor pode aprovar apenas técnicos")
+    if manager_id is not None:
+        manager = db.query(User).filter(
+            User.id == manager_id,
+            User.organization_id == target_organization.id,
+            User.role == "GERENTE",
+            User.status == "ACTIVE",
+            User.is_active.is_(True),
+        ).first()
+        if not manager:
+            raise HTTPException(status_code=400, detail="Supervisor responsável não encontrado na organização")
     previous_status = user.status
     user.role = role
     user.manager_id = manager_id
-    user.plan = (payload.plan or user.plan or "FREE").upper()
+    user.plan = "FREE"
+    user.organization_id = target_organization.id
     if payload.plan_max_brokers is not None:
         user.plan_max_brokers = max(payload.plan_max_brokers, 0)
     if payload.plan_max_leads is not None:
@@ -140,7 +181,7 @@ def approve_pending_user(db: Session, user: User, actor: User, payload: UserAppr
         from_status=previous_status,
         to_status="ACTIVE",
         reason="Cadastro aprovado",
-        metadata={"role": role, "manager_id": manager_id},
+        metadata={"role": role, "manager_id": manager_id, "organization_id": target_organization.id, "organization_mode": organization_mode},
     )
     return user
 

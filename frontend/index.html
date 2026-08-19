@@ -3303,9 +3303,7 @@
           <input id="registerCompany" placeholder="Empresa" autocomplete="organization">
           <input id="registerPhone" placeholder="Teléfono" autocomplete="tel">
           <select id="registerPlan">
-            <option value="STARTER">Starter</option>
-            <option value="PRO">Pro</option>
-            <option value="EQUIPES">Equipes</option>
+            <option value="FREE">FREE</option>
           </select>
           <input id="registerPassword" type="password" placeholder="Contraseña" autocomplete="new-password">
           <input id="registerPasswordConfirm" type="password" placeholder="Confirmar contraseña" autocomplete="new-password">
@@ -3650,8 +3648,8 @@
   <section class="view" id="view-planos">
     <div class="view-grid">
       <div class="panel-box" style="grid-column: 1 / -1;">
-        <div class="panel-title">Planos</div>
-        <div class="line">Escolha o plano ideal para sua operação.</div>
+        <div class="panel-title">Planos e assinatura</div>
+        <div class="line">Escolha o plano ideal para sua operação. Este plano é compartilhado pelos usuários desta organização.</div>
         <div id="commercialAccountSummary" class="metric-row" style="margin: 16px 0;"></div>
         <div id="commercialPlanCards" class="view-grid"></div>
         <div class="panel-box manager-only" style="margin-top: 18px;">
@@ -3741,6 +3739,10 @@
           <select id="newBrokerRole" class="root-only">
             <option value="BROKER">Técnico</option>
             <option value="GERENTE">Supervisor</option>
+          </select>
+          <select id="newBrokerOrganizationMode" aria-label="Tipo de cadastro">
+            <option value="CURRENT">Adicionar à organização atual</option>
+            <option value="INDEPENDENT">Novo profissional independente · FREE</option>
           </select>
           <select id="newBrokerManager" class="root-only">
             <option value="">Sin supervisor</option>
@@ -4237,6 +4239,9 @@
     let resendVerificationSeconds = 0;
     let pendingMfaChallenge = "";
     let pendingMfaSetupRequired = false;
+    const pendingInviteToken = window.location.pathname.startsWith("/invite/")
+      ? decodeURIComponent(window.location.pathname.slice("/invite/".length).split("/")[0] || "")
+      : "";
 
     function authHeaders(headers = {}) {
       const authenticatedHeaders = new Headers(headers);
@@ -4416,6 +4421,17 @@
       document.getElementById("mfaForm").classList.add("hidden");
       document.getElementById("registerForm").classList.remove("hidden");
       setAuthStatus("loginStatus");
+      if (pendingInviteToken) {
+        fetch(`${API_BASE}/organization/invitations/${encodeURIComponent(pendingInviteToken)}`)
+          .then((response) => response.ok ? response.json() : null)
+          .then((invitation) => {
+            if (invitation) {
+              document.getElementById("registerSubtitle").textContent =
+                `Você foi convidado para entrar em ${invitation.organization_name}. Aceite criando sua conta com o e-mail convidado.`;
+            }
+          })
+          .catch(() => {});
+      }
     }
 
     function showReactivationForm() {
@@ -5794,7 +5810,7 @@
         const account = await accountResponse.json();
         if (!plansResponse.ok || !accountResponse.ok) throw new Error("Não foi possível carregar os planos.");
         summary.innerHTML = `
-          <div class="metric">Plano atual<strong>${marketplaceValue(account.plan)}</strong></div>
+          <div class="metric">Plano da organização<strong>${marketplaceValue(account.plan)}</strong></div>
           <div class="metric">Status<strong>${marketplaceValue(account.status)}</strong></div>
           <div class="metric">Preço de referência<strong>${marketplaceValue(account.reference_price)}</strong></div>
           <div class="metric">Uso da organização<strong>${account.usage?.clients || 0} / ${account.limits?.clients || 0}</strong></div>`;
@@ -7855,6 +7871,7 @@
           company: document.getElementById("registerCompany").value.trim() || null,
           phone: document.getElementById("registerPhone").value.trim() || null,
           plan: document.getElementById("registerPlan").value,
+          invite_token: pendingInviteToken || null,
           password,
           turnstile_token: turnstileToken("register")
         })
@@ -9058,6 +9075,7 @@
       const password = document.getElementById("newBrokerPassword").value;
       const role = document.getElementById("newBrokerRole").value;
       const managerId = document.getElementById("newBrokerManager").value;
+      const organizationMode = document.getElementById("newBrokerOrganizationMode").value;
       const paisOperacao = document.getElementById("newBrokerCountry").value;
       const estadoOperacao = document.getElementById("newBrokerState").value.trim();
       const cidadeOperacao = document.getElementById("newBrokerCity").value.trim();
@@ -9068,7 +9086,7 @@
         return;
       }
 
-      if (currentUser.role === "ROOT" && role === "BROKER" && cachedBrokers.some((user) => user.role === "GERENTE") && !managerId) {
+      if (organizationMode === "CURRENT" && currentUser.role === "ROOT" && role === "BROKER" && cachedBrokers.some((user) => user.role === "GERENTE") && !managerId) {
         alert("Seleccione el supervisor responsable por este técnico");
         return;
       }
@@ -9084,6 +9102,7 @@
           role,
           manager_id: role === "BROKER" && managerId ? Number(managerId) : null,
           full_name: username,
+          organization_mode: organizationMode,
           pais_operacao: paisOperacao,
           estado_operacao: estadoOperacao,
           cidade_operacao: cidadeOperacao,
@@ -9282,11 +9301,11 @@
                 <option value="GERENTE">Supervisor</option>
               </select>
               <select class="lv-input" data-pending-manager>${pendingManagerOptions()}</select>
-              <select class="lv-input" data-pending-plan>
-                <option value="STARTER">Starter</option>
-                <option value="PRO">Pro</option>
-                <option value="EQUIPES">Equipes</option>
+              <select class="lv-input" data-pending-organization-mode aria-label="Tipo de organização">
+                <option value="INDEPENDENT">Independente · FREE</option>
+                <option value="EXISTING">Organização existente</option>
               </select>
+              <input class="lv-input" data-pending-organization-id type="number" min="1" placeholder="ID da organização" disabled>
               <input class="lv-input" data-pending-max-brokers type="number" min="0" value="${user.plan_max_brokers || 1}" placeholder="${escapeHtml(t("maxBrokers"))}">
               <input class="lv-input" data-pending-max-leads type="number" min="0" value="${user.plan_max_leads || 100}" placeholder="${escapeHtml(t("maxLeads"))}">
               ${adminUserActionButtons(user)}
@@ -9306,6 +9325,17 @@
         };
         roleSelect.addEventListener("change", syncManager);
         syncManager();
+      });
+
+      list.querySelectorAll("[data-pending-organization-mode]").forEach((modeSelect) => {
+        const row = modeSelect.closest("[data-pending-user-id]");
+        const organizationInput = row.querySelector("[data-pending-organization-id]");
+        const syncOrganization = () => {
+          organizationInput.disabled = modeSelect.value !== "EXISTING";
+          if (organizationInput.disabled) organizationInput.value = "";
+        };
+        modeSelect.addEventListener("change", syncOrganization);
+        syncOrganization();
       });
 
       list.querySelectorAll("[data-admin-resend-verification]").forEach((button) => {
@@ -9499,7 +9529,11 @@
         body: JSON.stringify({
           role,
           manager_id: role === "BROKER" && managerValue ? Number(managerValue) : null,
-          plan: row.querySelector("[data-pending-plan]").value,
+          plan: "FREE",
+          organization_mode: row.querySelector("[data-pending-organization-mode]").value,
+          organization_id: row.querySelector("[data-pending-organization-id]").value
+            ? Number(row.querySelector("[data-pending-organization-id]").value)
+            : null,
           plan_max_brokers: Number(row.querySelector("[data-pending-max-brokers]").value || 0),
           plan_max_leads: Number(row.querySelector("[data-pending-max-leads]").value || 0)
         })
