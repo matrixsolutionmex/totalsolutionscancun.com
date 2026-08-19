@@ -10,14 +10,19 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.lead_event import LeadEvent
+from app.models.lead import Lead
+from app.models.service_order import ServiceOrder
 from app.models.user import User
 from app.schemas.lead_schema import LeadCreate
 from app.services.lead_creation_service import create_lead_record
 from app.services.notification_service import dispatch_web_push_for_notification_ids
+from app.routes.lead_routes import PIPELINE_STAGES, apply_actor_scope, ensure_lead_visible_to_actor
+from app.services.service_order_service import ensure_service_order, sync_service_order_from_lead
 
 
 DRAFT_TTL = timedelta(minutes=15)
 _drafts: dict[tuple[int | None, int], dict] = {}
+_action_proposals: dict[tuple[int | None, int], dict] = {}
 _draft_lock = RLock()
 logger = logging.getLogger(__name__)
 _DRAFT_FIELDS = (
@@ -58,6 +63,207 @@ def _proposal(draft: dict) -> dict:
         "missing_fields": missing_fields(draft),
         "expires_at": draft["expires_at"].isoformat(),
     }
+
+
+def _action_key(actor: User) -> tuple[int | None, int]:
+    return _key(actor)
+
+
+def _clean(value: str | None) -> str:
+    return " ".join((value or "").strip().lower().split())
+
+
+def _resolve_lead(db: Session, actor: User, reference: str) -> Lead | None:
+    reference = _clean(reference).strip(" .,:;!?\"")
+    if not reference:
+        return None
+    query = apply_actor_scope(db.query(Lead), db, actor)
+    exact = query.filter(Lead.nome.ilike(reference)).first()
+    if exact:
+        return exact
+    return query.filter(Lead.nome.ilike(f"%{reference}%")).order_by(Lead.id).first()
+
+
+def _pipeline_stage(value: str) -> str | None:
+    normalized = unicodedata.normalize("NFKD", value.lower()).encode("ascii", "ignore").decode()
+    aliases = {
+        "novo contato": "NOVO LEAD",
+        "nuevo contacto": "NOVO LEAD",
+        "new contact": "NOVO LEAD",
+        "atendimento": "ATENDIMENTO",
+        "atencion": "ATENDIMENTO",
+        "atención": "ATENDIMENTO",
+        "tentativa de contato": "TENTATIVA DE CONTATO",
+        "visita agendada": "TENTATIVA DE CONTATO",
+        "visita": "VISITA",
+        "diagnostico": "VISITA",
+        "diagnosis": "VISITA",
+        "diagnostic": "VISITA",
+        "montagem de pasta": "MONTAGEM DE PASTA",
+        "cotizacion enviada": "MONTAGEM DE PASTA",
+        "venda ganha": "VENDA GANHA",
+        "servicio aprobado": "VENDA GANHA",
+        "service won": "VENDA GANHA",
+        "perdido": "PERDIDO",
+        "cancelado": "PERDIDO",
+    }
+    return aliases.get(normalized) or (value.upper() if value.upper() in PIPELINE_STAGES else None)
+
+
+def _detect_action(message: str) -> str | None:
+    normalized = unicodedata.normalize("NFKD", message.lower()).encode("ascii", "ignore").decode()
+    if is_create_client_request(message):
+        return "CREATE_CLIENT"
+    if re.search(r"\b(?:mude|mudar|troque|trocar|atualize|actualiza|cambie|change|update|edit)\b", normalized) and re.search(r"\b(?:telefone|telefono|phone|email|correo|endereco|direccion|address|urgencia|urgency|valor|value|cidade|city|empresa|company)\b", normalized):
+        return "UPDATE_CLIENT"
+    if re.search(r"\b(?:coloque|colocar|mova|mover|passe|passar|move|put|cambie|cambiar)\b", normalized) and re.search(r"\b(?:diagnostico|diagnosis|diagnostic|atendimento|visita|pipeline|etapa|stage|novo contato|new contact|cotizacao|venda ganha|cancelado)\b", normalized):
+        return "CHANGE_PIPELINE"
+    if re.search(r"\b(?:registre|registrar|registra|anote|anotar|add note|adicionar nota|nota)\b", normalized):
+        return "ADD_NOTE"
+    if re.search(r"\b(?:os|ordem de servico|service order|orden de servicio)\b", normalized) and re.search(r"\b(?:atualize|actualiza|update|marque|marca|agende|agenda|defeito|defecto|status|conclu)\b", normalized):
+        return "UPDATE_SERVICE_ORDER"
+    return None
+
+
+def _lead_reference(message: str) -> str:
+    name = r"([A-ZÀ-Ý][\wÀ-ÿ]+(?:\s+[A-ZÀ-Ý][\wÀ-ÿ]+){1,5}?)(?=\s+(?:para|a|to|for|en)\b|[?.!,;:]|$)"
+    match = re.search(rf"(?:do|da|de|del|of|for|o|a|el|la)\s+{name}", message)
+    if not match:
+        match = re.search(rf"\b(?:mover|move|cambiar|change|atualizar|actualizar|update|colocar|put)\s+{name}", message, re.IGNORECASE)
+    if match:
+        return match.group(1).strip(" .,:;?!")
+    return ""
+
+
+def _build_operational_proposal(db: Session, actor: User, message: str, action: str) -> dict | None:
+    reference = _lead_reference(message)
+    lead = _resolve_lead(db, actor, reference) if reference else None
+    if not lead:
+        return {"action": action, "status": "PENDING_INPUT", "missing_fields": ["client"], "target": {"reference": reference}}
+
+    proposal = {
+        "action": action,
+        "status": "PENDING_CONFIRMATION",
+        "target": {"lead_id": lead.id, "name": lead.nome},
+        "current": {},
+        "changes": {},
+        "created_at": datetime.utcnow().isoformat(),
+        "expires_at": (datetime.utcnow() + DRAFT_TTL).isoformat(),
+    }
+    normalized = unicodedata.normalize("NFKD", message.lower()).encode("ascii", "ignore").decode()
+    if action == "CHANGE_PIPELINE":
+        destination = next((stage for label, stage in {
+            "diagnostico": "VISITA", "diagnosis": "VISITA", "diagnostic": "VISITA",
+            "atendimento": "ATENDIMENTO", "novo contato": "NOVO LEAD", "new contact": "NOVO LEAD",
+            "visita agendada": "TENTATIVA DE CONTATO", "cotizacao enviada": "MONTAGEM DE PASTA",
+            "venda ganha": "VENDA GANHA", "cancelado": "PERDIDO",
+        }.items() if label in normalized), None)
+        if not destination:
+            return {**proposal, "status": "PENDING_INPUT", "missing_fields": ["pipeline_stage"]}
+        proposal["current"] = {"pipeline": lead.pipeline}
+        proposal["changes"] = {"pipeline": destination}
+    elif action == "ADD_NOTE":
+        marker = re.search(r"(?:que|que|that|nota|note)\s*[:,-]?\s*(.+)$", message, re.IGNORECASE)
+        note = (marker.group(1) if marker else message).strip()
+        proposal["changes"] = {"note": note}
+    elif action == "UPDATE_CLIENT":
+        field_patterns = {
+            "contato": r"(?:telefone|telefono|phone)\s*(?:é|e|es|is|:)?\s*([^,;\n]+)",
+            "email": r"(?:email|e-mail|correo)\s*(?:é|e|es|is|:)?\s*([^,;\n]+)",
+            "endereco": r"(?:endereco|direcao|direccion|address)\s*(?:é|e|es|is|:)?\s*([^,;\n]+)",
+            "cidade": r"(?:cidade|ciudad|city)\s*(?:é|e|es|is|:)?\s*([^,;\n]+)",
+            "urgencia": r"(?:urgencia|urgency|prioridad|priority)\s*(?:é|e|es|is|:)?\s*([^,;\n]+)",
+            "empresa": r"(?:empresa|company)\s*(?:é|e|es|is|:)?\s*([^,;\n]+)",
+        }
+        for field, pattern in field_patterns.items():
+            match = re.search(pattern, message, re.IGNORECASE)
+            if match:
+                proposal["changes"][field] = match.group(1).strip(" .,:;?!")
+        value_match = re.search(r"(?:valor|value|precio)\s*(?:é|e|es|is|:)?\s*[$€MXN\s]*([\d.,]+)", message, re.IGNORECASE)
+        if value_match:
+            proposal["changes"]["valor_negocio"] = float(value_match.group(1).replace(".", "").replace(",", "."))
+        proposal["current"] = {field: getattr(lead, field, None) for field in proposal["changes"]}
+        if not proposal["changes"]:
+            return {**proposal, "status": "PENDING_INPUT", "missing_fields": ["changes"]}
+    else:
+        proposal["current"] = {"status": lead.service_order.status if lead.service_order else None}
+        status_match = re.search(r"(?:status|estado)\s*(?:é|e|es|is|:)?\s*([\wÀ-ÿ ]+)", message, re.IGNORECASE)
+        if status_match:
+            proposal["changes"] = {"status": status_match.group(1).strip(" .,:;?!").upper()}
+        else:
+            return {**proposal, "status": "PENDING_INPUT", "missing_fields": ["service_order_change"]}
+    proposal["missing_fields"] = []
+    return proposal
+
+
+def process_operational_message(db: Session, actor: User, message: str) -> dict | None:
+    action = _detect_action(message)
+    if not action or action == "CREATE_CLIENT":
+        return None
+    logger.info("Pablo action detected: action=%s actor_id=%s", action, actor.id)
+    proposal = _build_operational_proposal(db, actor, message, action)
+    if proposal:
+        with _draft_lock:
+            _action_proposals[_action_key(actor)] = proposal
+        logger.info("Pablo action proposal created: action=%s", action)
+    return proposal
+
+
+def get_operational_proposal(actor: User) -> dict | None:
+    with _draft_lock:
+        return dict(_action_proposals.get(_action_key(actor)) or {}) or None
+
+
+def cancel_operational_proposal(actor: User) -> bool:
+    with _draft_lock:
+        return _action_proposals.pop(_action_key(actor), None) is not None
+
+
+def confirm_operational_proposal(db: Session, actor: User) -> dict:
+    with _draft_lock:
+        proposal = _action_proposals.pop(_action_key(actor), None)
+    if not proposal:
+        raise HTTPException(status_code=404, detail="Nenhuma ação pendente para confirmar")
+    lead_id = proposal.get("target", {}).get("lead_id")
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+    ensure_lead_visible_to_actor(db, lead, actor)
+    action = proposal["action"]
+    changes = proposal.get("changes", {})
+    if action == "CHANGE_PIPELINE":
+        stage = changes["pipeline"]
+        if stage not in PIPELINE_STAGES:
+            raise HTTPException(status_code=400, detail="Etapa de pipeline invalida")
+        previous = lead.pipeline or "SEM ETAPA"
+        lead.pipeline = stage
+        lead.pipeline_updated_at = datetime.utcnow()
+        lead.updated_at = datetime.utcnow()
+        service_order = ensure_service_order(db, lead, actor=actor)
+        sync_service_order_from_lead(db, service_order, lead, actor=actor)
+        message = f"Moveu de {previous} para {stage}"
+    elif action == "UPDATE_CLIENT":
+        for field, value in changes.items():
+            setattr(lead, field, value)
+        lead.updated_at = datetime.utcnow()
+        service_order = ensure_service_order(db, lead, actor=actor)
+        sync_service_order_from_lead(db, service_order, lead, actor=actor)
+        message = f"Atualizou dados do cliente: {', '.join(changes)}"
+    elif action == "ADD_NOTE":
+        message = changes["note"]
+    else:
+        service_order = ensure_service_order(db, lead, actor=actor)
+        for field, value in changes.items():
+            if field not in {"status", "warranty_days", "checklist_status", "signature_status", "warranty_seal_status"}:
+                raise HTTPException(status_code=400, detail="Campo de OS não permitido")
+            setattr(service_order, field, value)
+        service_order.updated_at = datetime.utcnow()
+        message = f"Atualizou OS: {', '.join(changes)}"
+    event_type = "NOTA" if action == "ADD_NOTE" else f"PABLO_ACTION_{action}"
+    db.add(LeadEvent(organization_id=lead.organization_id or actor.organization_id, lead_id=lead.id, actor_id=actor.id, actor_name=actor.full_name or actor.username, event_type=event_type, message=message))
+    db.commit()
+    logger.info("Pablo action completed: action=%s actor_id=%s", action, actor.id)
+    return {"action": action, "status": "EXECUTED", "message": "Ação concluída.", "lead_id": lead.id, "lead_name": lead.nome}
 
 
 def missing_fields(draft: dict) -> list[str]:

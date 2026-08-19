@@ -8274,7 +8274,9 @@
       card.dataset.pabloActionCard = "true";
 
       const title = document.createElement("strong");
-      title.textContent = "Pablo preparou um cadastro";
+      title.textContent = proposal.action === "CREATE_CLIENT"
+        ? "Pablo preparou um cadastro"
+        : `Pablo preparou: ${proposal.action}`;
       card.appendChild(title);
 
       const data = proposal.data || {};
@@ -8295,11 +8297,27 @@
       });
       card.appendChild(details);
 
+      if (proposal.target?.name) {
+        const target = document.createElement("p");
+        target.textContent = `Cliente: ${proposal.target.name}`;
+        card.insertBefore(target, details);
+      }
+      if (proposal.current && Object.keys(proposal.current).length) {
+        const before = document.createElement("p");
+        before.textContent = `Atual: ${JSON.stringify(proposal.current)}`;
+        card.appendChild(before);
+      }
+      if (proposal.changes && Object.keys(proposal.changes).length) {
+        const after = document.createElement("p");
+        after.textContent = `Novo: ${JSON.stringify(proposal.changes)}`;
+        card.appendChild(after);
+      }
+
       if (proposal.status === "PENDING_CONFIRMATION") {
         const actions = document.createElement("div");
         actions.className = "pablo-action-card-actions";
         actions.innerHTML = `
-          <button type="button" data-pablo-confirm-action>Confirmar cadastro</button>
+          <button type="button" data-pablo-confirm-action>${proposal.action === "CREATE_CLIENT" ? "Confirmar cadastro" : "Confirmar ação"}</button>
           <button type="button" data-pablo-correct-action>Corrigir</button>
           <button type="button" data-pablo-cancel-action>Cancelar</button>
         `;
@@ -8322,6 +8340,34 @@
       if (!response.ok) throw new Error("Não foi possível cancelar o cadastro.");
       document.querySelectorAll("[data-pablo-action-card]").forEach((card) => card.remove());
       addPabloV2Message("Cadastro cancelado. Nenhum cliente foi criado.", "ai");
+    }
+
+    async function confirmPabloAction() {
+      const response = await apiFetch(`${API_BASE}/pablo/actions/confirm`, { method: "POST" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Não foi possível confirmar a ação.");
+      document.querySelectorAll("[data-pablo-action-card]").forEach((card) => card.remove());
+      addPabloV2Message(data.message || "Ação concluída.", "ai");
+    }
+
+    async function cancelPabloAction() {
+      const response = await apiFetch(`${API_BASE}/pablo/actions/cancel`, { method: "POST" });
+      if (!response.ok) throw new Error("Não foi possível cancelar a ação.");
+      document.querySelectorAll("[data-pablo-action-card]").forEach((card) => card.remove());
+      addPabloV2Message("Ação cancelada. Nenhuma alteração foi feita.", "ai");
+    }
+
+    async function analyzePabloImage(file) {
+      const formData = new FormData();
+      formData.append("file", file, file.name || "pablo-image");
+      const response = await apiFetch(`${API_BASE}/pablo/vision/analyze`, { method: "POST", body: formData });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Não foi possível analisar a imagem.");
+      const analysis = data.analysis || {};
+      const fields = analysis.fields && Object.keys(analysis.fields).length
+        ? JSON.stringify(analysis.fields)
+        : "Nenhum campo confiável foi identificado.";
+      addPabloV2Message(`Análise visual concluída. ${fields}${analysis.notes ? `\n\n${analysis.notes}` : ""}\n\nNada foi salvo automaticamente.`, "ai");
     }
 
 
@@ -9873,7 +9919,8 @@
     document.getElementById("pabloV2ImageInput")?.addEventListener("change", (event) => {
       const file = event.target.files?.[0];
       if (file) {
-        addPabloV2Message("Imagem selecionada. A análise de documentos será habilitada em uma próxima versão.", "ai");
+        addPabloV2Message("Imagem recebida. Analisando sem salvar automaticamente...", "ai");
+        analyzePabloImage(file).catch((error) => addPabloV2Message(error.message || "Não foi possível analisar a imagem.", "ai"));
         event.target.value = "";
       }
     });
@@ -9882,8 +9929,8 @@
       const target = event.target;
       if (!(target instanceof HTMLElement)) return;
       try {
-        if (target.matches("[data-pablo-confirm-action]")) await confirmPabloClientDraft();
-        if (target.matches("[data-pablo-cancel-action]")) await cancelPabloClientDraft();
+        if (target.matches("[data-pablo-confirm-action]")) await confirmPabloAction();
+        if (target.matches("[data-pablo-cancel-action]")) await cancelPabloAction();
         if (target.matches("[data-pablo-correct-action]")) {
           document.getElementById("pabloV2Input")?.focus();
           addPabloV2Message("Envie a correção do campo que deseja alterar.", "ai");

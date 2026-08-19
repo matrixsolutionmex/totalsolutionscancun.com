@@ -174,3 +174,44 @@ def generate_from_provider(
     except httpx.HTTPError as exc:
         logger.warning("Pablo AI request failed: provider=%s error=%s", config.name, type(exc).__name__)
     return None
+
+
+def generate_multimodal_from_provider(
+    config: ProviderConfig,
+    *,
+    image_data_url: str,
+    instructions: str,
+    timeout_seconds: float,
+) -> str | None:
+    """Analyze an explicitly selected image without persisting or exposing it."""
+    if config.name == "openai":
+        url = f"{config.base_url}/responses"
+        payload = {
+            "model": config.model,
+            "instructions": instructions,
+            "input": [{"role": "user", "content": [
+                {"type": "input_text", "text": "Analise esta imagem."},
+                {"type": "input_image", "image_url": image_data_url},
+            ]}],
+            "max_output_tokens": 700,
+        }
+    else:
+        url = f"{config.base_url}/chat/completions"
+        payload = {
+            "model": config.model,
+            "messages": [{"role": "system", "content": instructions}, {"role": "user", "content": [
+                {"type": "text", "text": "Analise esta imagem."},
+                {"type": "image_url", "image_url": {"url": image_data_url}},
+            ]}],
+            "max_tokens": 700,
+        }
+    try:
+        with httpx.Client(timeout=timeout_seconds) as client:
+            response = client.post(url, headers=_headers(config), json=payload)
+        if response.status_code >= 400:
+            logger.warning("Pablo vision request failed: provider=%s status=%s", config.name, response.status_code)
+            return None
+        return _response_text(response.json(), config.name)
+    except (httpx.HTTPError, json.JSONDecodeError, ValueError) as exc:
+        logger.warning("Pablo vision request failed: provider=%s error=%s", config.name, type(exc).__name__)
+        return None

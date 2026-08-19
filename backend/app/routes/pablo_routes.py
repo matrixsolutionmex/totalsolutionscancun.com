@@ -1,21 +1,33 @@
 import logging
+from pathlib import Path
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth.jwt_handler import get_current_user, get_db
 from app.models.user import User
+from app.models.lead import Lead
+from app.models.lead_document import LeadDocument
+from app.models.lead_event import LeadEvent
+from app.core.storage import UPLOADS_DIR
+from app.routes.lead_routes import ensure_lead_visible_to_actor, actor_label
 from app.services.pablo_actions_service import (
     cancel_client_draft,
     confirm_client_draft,
+    confirm_operational_proposal,
+    cancel_operational_proposal,
+    get_operational_proposal,
     get_client_draft,
     is_create_client_request,
+    process_operational_message,
     process_client_message,
 )
 from app.services.pablo_audio_service import MAX_AUDIO_BYTES, transcribe_audio
 from app.services.pablo_context_service import build_context
 from app.services.pablo_ai_service import generate_pablo_reply, pablo_ai_enabled
+from app.services.pablo_vision_service import ALLOWED_IMAGE_TYPES, MAX_IMAGE_BYTES, analyze_image, valid_image_bytes
 
 
 router = APIRouter(prefix="/pablo", tags=["pablo-ai"])
@@ -132,6 +144,22 @@ def build_reply(intent: str, context: dict) -> str:
 
 
 def action_reply(proposal: dict) -> str:
+    if proposal.get("action") != "CREATE_CLIENT":
+        if proposal.get("status") == "PENDING_INPUT":
+            field = (proposal.get("missing_fields") or ["client"])[0]
+            prompts = {
+                "client": "Qual é o cliente ou número da OS?",
+                "pipeline_stage": "Qual é a etapa real de destino?",
+                "changes": "Qual campo devo alterar e qual é o novo valor?",
+                "service_order_change": "Qual dado da OS devo atualizar?",
+            }
+            return prompts.get(field, "Preciso de mais um dado para preparar a ação.")
+        target = proposal.get("target", {})
+        if proposal["action"] == "CHANGE_PIPELINE":
+            return f"Vou mover {target.get('name')} de {proposal.get('current', {}).get('pipeline')} para {proposal.get('changes', {}).get('pipeline')}. Confirme para executar."
+        if proposal["action"] == "ADD_NOTE":
+            return f"Vou registrar uma nota para {target.get('name')}. Confirme para executar."
+        return f"Preparei a ação {proposal['action']} para {target.get('name')}. Confira e confirme para executar."
     if proposal["status"] == "PENDING_INPUT":
         questions = {
             "name": "Qual é o nome do cliente?",
@@ -158,12 +186,14 @@ def pablo_chat(
     context = build_context(db, actor)
 
     proposal = process_client_message(actor, message)
+    if proposal is None:
+        proposal = process_operational_message(db, actor, message)
     if proposal is None and is_create_client_request(message):
         logger.warning("Pablo create-client intent produced no draft: actor_id=%s", actor.id)
     if proposal:
         return PabloChatResponse(
             reply=action_reply(proposal),
-            intent="general",
+            intent=proposal.get("action", "general"),
             context=context,
             action_proposal=proposal,
         )
@@ -207,6 +237,65 @@ async def pablo_transcribe(
     return {"text": text}
 
 
+@router.post("/vision/analyze")
+async def pablo_vision_analyze(
+    file: UploadFile = File(...),
+    actor: User = Depends(get_current_user),
+):
+    del actor
+    content = await file.read(MAX_IMAGE_BYTES + 1)
+    if len(content) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Imagem excede o tamanho maximo permitido")
+    if file.content_type not in ALLOWED_IMAGE_TYPES or not valid_image_bytes(content, file.content_type):
+        raise HTTPException(status_code=415, detail="Formato de imagem invalido")
+    return {"status": "ANALYZED", "analysis": analyze_image(content, file.content_type), "persisted": False}
+
+
+@router.post("/actions/evidence")
+async def pablo_attach_evidence(
+    lead_id: int = Form(...),
+    document_type: str = Form("OTROS"),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_user),
+):
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Cliente nao encontrado")
+    ensure_lead_visible_to_actor(db, lead, actor)
+    allowed_extensions = {".pdf", ".jpg", ".jpeg", ".png", ".webp"}
+    allowed_types = {"application/pdf", *ALLOWED_IMAGE_TYPES}
+    content = await file.read(50 * 1024 * 1024 + 1)
+    extension = Path(file.filename or "arquivo").suffix.lower()
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Arquivo excede o tamanho maximo permitido")
+    if extension not in allowed_extensions or file.content_type not in allowed_types:
+        raise HTTPException(status_code=415, detail="Formato de evidência invalido")
+    if file.content_type != "application/pdf" and not valid_image_bytes(content, file.content_type):
+        raise HTTPException(status_code=415, detail="Conteudo de arquivo invalido")
+    folder = UPLOADS_DIR / "lead_documents" / str(lead.id)
+    folder.mkdir(parents=True, exist_ok=True)
+    safe_name = f"{uuid4().hex}{extension}"
+    destination = folder / safe_name
+    destination.write_bytes(content)
+    document = LeadDocument(
+        organization_id=lead.organization_id or actor.organization_id,
+        lead_id=lead.id,
+        uploaded_by_user_id=actor.id,
+        document_type=document_type if document_type else "OTROS",
+        file_name=file.filename or "evidencia",
+        file_path=f"/uploads/lead_documents/{lead.id}/{safe_name}",
+        file_mime=file.content_type,
+        file_size=len(content),
+    )
+    db.add(document)
+    db.add(LeadEvent(organization_id=lead.organization_id or actor.organization_id, lead_id=lead.id, actor_id=actor.id, actor_name=actor_label(actor), event_type="DOCUMENTO", message=f"Pablo anexou evidência: {document.document_type}"))
+    db.commit()
+    db.refresh(document)
+    logger.info("Pablo action completed: action=ATTACH_EVIDENCE actor_id=%s", actor.id)
+    return {"action": "ATTACH_EVIDENCE", "status": "EXECUTED", "document_id": document.id, "lead_id": lead.id}
+
+
 @router.post("/actions/client-draft")
 def pablo_client_draft(
     payload: PabloActionMessage,
@@ -233,4 +322,27 @@ def pablo_client_draft_confirm(
 
 @router.post("/actions/client-draft/cancel")
 def pablo_client_draft_cancel(actor: User = Depends(get_current_user)):
+    return {"status": "CANCELLED", "cancelled": cancel_client_draft(actor)}
+
+
+@router.get("/actions/current")
+def pablo_current_action(actor: User = Depends(get_current_user)):
+    return {"action_proposal": get_operational_proposal(actor) or get_client_draft(actor)}
+
+
+@router.post("/actions/confirm")
+def pablo_action_confirm(
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_user),
+):
+    proposal = get_operational_proposal(actor)
+    if proposal:
+        return confirm_operational_proposal(db, actor)
+    return confirm_client_draft(db, actor)
+
+
+@router.post("/actions/cancel")
+def pablo_action_cancel(actor: User = Depends(get_current_user)):
+    if cancel_operational_proposal(actor):
+        return {"status": "CANCELLED", "cancelled": True}
     return {"status": "CANCELLED", "cancelled": cancel_client_draft(actor)}

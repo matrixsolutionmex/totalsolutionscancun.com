@@ -23,8 +23,11 @@ from app.services.pablo_actions_service import (
     _drafts,
     _lead_payload,
     cancel_client_draft,
+    cancel_operational_proposal,
     confirm_client_draft,
+    confirm_operational_proposal,
     is_create_client_request,
+    process_operational_message,
     process_client_message,
 )
 from app.services.pablo_audio_service import transcribe_audio
@@ -86,6 +89,7 @@ class PabloLiveContextTest(unittest.TestCase):
 
     def tearDown(self):
         cancel_client_draft(self.actor)
+        cancel_operational_proposal(self.actor)
         self.db.rollback()
         self.db.close()
 
@@ -278,6 +282,45 @@ Observação: Cliente solicitou diagnóstico de 12 aparelhos de ar-condicionado 
         }
         self.assertIn(("/pablo/chat", "POST"), routes)
         self.assertIn(("/pablo/transcribe", "POST"), routes)
+
+    def test_change_pipeline_requires_confirmation_and_uses_actor_scope(self):
+        lead = Lead(
+            organization_id=self.org.id,
+            nome="Javier Edmundo",
+            contato="555-1000",
+            assigned_to_user_id=self.actor.id,
+            pipeline="ATENDIMENTO",
+        )
+        self.db.add(lead)
+        self.db.commit()
+        proposal = process_operational_message(self.db, self.actor, "Você pode colocar o Javier Edmundo para diagnóstico?")
+        self.assertEqual(proposal["action"], "CHANGE_PIPELINE")
+        self.assertEqual(proposal["status"], "PENDING_CONFIRMATION")
+        self.db.refresh(lead)
+        self.assertEqual(lead.pipeline, "ATENDIMENTO")
+        result = confirm_operational_proposal(self.db, self.actor)
+        self.assertEqual(result["action"], "CHANGE_PIPELINE")
+        self.db.refresh(lead)
+        self.assertEqual(lead.pipeline, "VISITA")
+        with self.assertRaises(Exception):
+            confirm_operational_proposal(self.db, self.actor)
+
+    def test_update_client_proposal_is_scoped_and_confirmed_once(self):
+        lead = Lead(
+            organization_id=self.org.id,
+            nome="Javier Edmundo",
+            contato="555-1000",
+            assigned_to_user_id=self.actor.id,
+            pipeline="ATENDIMENTO",
+        )
+        self.db.add(lead)
+        self.db.commit()
+        proposal = process_operational_message(self.db, self.actor, "troque o telefone do Javier Edmundo para +52 555 777 8888")
+        self.assertEqual(proposal["action"], "UPDATE_CLIENT")
+        self.assertEqual(lead.contato, "555-1000")
+        confirm_operational_proposal(self.db, self.actor)
+        self.db.refresh(lead)
+        self.assertEqual(lead.contato, "+52 555 777 8888")
 
 
 if __name__ == "__main__":
