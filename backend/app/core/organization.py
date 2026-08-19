@@ -36,7 +36,13 @@ def get_or_create_default_organization(db: Session) -> Organization:
     return organization
 
 
-def create_independent_organization(db: Session, *, name: str, country: str = "MX") -> Organization:
+def create_independent_organization(
+    db: Session,
+    *,
+    name: str,
+    country: str = "MX",
+    pending_onboarding: bool = True,
+) -> Organization:
     """Create a private FREE workspace; callers must explicitly opt into invitations."""
     CommercialSubscription.__table__.create(bind=db.get_bind(), checkfirst=True)
     clean_name = (name or "Minha organização").strip()[:160] or "Minha organização"
@@ -47,7 +53,7 @@ def create_independent_organization(db: Session, *, name: str, country: str = "M
         slug=slug,
         country=(country or "MX").upper()[:2],
         plan="FREE",
-        status="ACTIVE",
+        status="PENDING_ONBOARDING" if pending_onboarding else "ACTIVE",
         is_platform_owner=False,
     )
     db.add(organization)

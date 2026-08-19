@@ -13,11 +13,16 @@ from app.models.commercial_subscription import CommercialSubscription
 from app.models.organization import Organization
 from app.models.organization_invitation import OrganizationInvitation
 from app.models.referral_attribution import ReferralAttribution
+from app.models.auth_security import UserSession
+from app.models.notification import WebPushSubscription
+from app.models.user_lifecycle import UserLifecycleEvent
 from app.models.user import User
 from app.models import service_order, service_property
 from app.services.entitlement_service import current_plan
 from app.services.organization_onboarding_service import accept_invitation, create_invitation, record_referral
 from app import main as _app_main  # registers the application's relationship models
+from app.routes.admin_routes import approve_pending_user, pending_onboarding_users, pending_users
+from app.schemas.auth_schema import UserApprovalRequest
 
 
 @pytest.fixture
@@ -31,6 +36,9 @@ def onboarding_db():
             CommercialSubscription.__table__,
             OrganizationInvitation.__table__,
             ReferralAttribution.__table__,
+            UserSession.__table__,
+            WebPushSubscription.__table__,
+            UserLifecycleEvent.__table__,
         ],
     )
     session = sessionmaker(bind=engine)()
@@ -123,3 +131,84 @@ def test_referral_is_recorded_without_changing_organization(onboarding_db):
     attribution = db.query(ReferralAttribution).filter_by(user_id=user.id).one()
     assert attribution.referral_code == "PARTNER-42"
     assert user.organization_id == organization.id
+
+
+def test_root_sees_global_pending_onboarding_but_manager_does_not(onboarding_db):
+    db = onboarding_db
+    root_org = create_independent_organization(db, name="Root")
+    other_org = create_independent_organization(db, name="Outra")
+    root = make_user(db, username="global-root", organization_id=root_org.id, role="ROOT")
+    manager = make_user(db, username="local-manager", organization_id=root_org.id, role="GERENTE")
+    pending = make_user(db, username="new-independent", organization_id=other_org.id)
+    pending.status = "PENDING_ADMIN"
+    pending.is_active = False
+    pending.onboarding_source = "INDEPENDENT"
+    db.commit()
+
+    global_rows = pending_onboarding_users(db, root)
+    assert {row["id"] for row in global_rows} == {pending.id}
+    assert global_rows[0]["organization_id"] == other_org.id
+    assert pending_users(db, manager) == []
+
+
+def test_global_independent_approval_preserves_workspace_and_free_plan(onboarding_db):
+    db = onboarding_db
+    root_org = create_independent_organization(db, name="Root")
+    workspace = create_independent_organization(db, name="Rebeca Workspace")
+    root = make_user(db, username="approval-root", organization_id=root_org.id, role="ROOT")
+    pending = make_user(db, username="rebeca-pending", organization_id=workspace.id)
+    pending.status = "PENDING_ADMIN"
+    pending.is_active = False
+    pending.onboarding_source = "INDEPENDENT"
+    db.commit()
+    workspace_id = workspace.id
+
+    approved = approve_pending_user(
+        db,
+        pending,
+        root,
+        UserApprovalRequest(role="BROKER", organization_mode="INDEPENDENT"),
+    )
+    db.commit()
+    db.refresh(approved)
+    db.refresh(workspace)
+    subscription = db.query(CommercialSubscription).filter_by(organization_id=workspace_id).one()
+    assert approved.organization_id == workspace_id
+    assert approved.status == "ACTIVE"
+    assert workspace.status == "ACTIVE"
+    assert workspace.plan == "FREE"
+    assert subscription.plan == "FREE"
+    assert subscription.status == "LAUNCH_ACCESS"
+    assert db.query(Organization).count() == 2
+
+
+def test_global_assignment_marks_empty_provisional_workspace_without_deleting_it(onboarding_db):
+    db = onboarding_db
+    root_org = create_independent_organization(db, name="Root")
+    provisional = create_independent_organization(db, name="Provisória")
+    target = create_independent_organization(db, name="Empresa existente", pending_onboarding=False)
+    root = make_user(db, username="assignment-root", organization_id=root_org.id, role="ROOT")
+    manager = make_user(db, username="target-manager", organization_id=target.id, role="GERENTE")
+    pending = make_user(db, username="assign-me", organization_id=provisional.id)
+    pending.status = "PENDING_ADMIN"
+    pending.is_active = False
+    pending.onboarding_source = "INDEPENDENT"
+    db.commit()
+
+    approved = approve_pending_user(
+        db,
+        pending,
+        root,
+        UserApprovalRequest(
+            role="BROKER",
+            organization_mode="EXISTING",
+            organization_id=target.id,
+            manager_id=manager.id,
+        ),
+    )
+    db.commit()
+    db.refresh(provisional)
+    assert approved.organization_id == target.id
+    assert approved.manager_id == manager.id
+    assert provisional.status == "ORPHANED_ONBOARDING"
+    assert db.query(Organization).filter_by(id=provisional.id).count() == 1

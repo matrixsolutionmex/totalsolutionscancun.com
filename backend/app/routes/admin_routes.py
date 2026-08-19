@@ -119,6 +119,7 @@ def approve_pending_user(db: Session, user: User, actor: User, payload: UserAppr
         raise HTTPException(status_code=400, detail="Correo pendiente de confirmación")
     if (user.status or "").upper() not in PENDING_ADMIN_STATUSES:
         raise HTTPException(status_code=400, detail="Usuario no está pendiente de aprobación administrativa")
+    previous_organization_id = user.organization_id
     role = payload.role.upper()
     if role not in {"GERENTE", "BROKER"}:
         raise HTTPException(status_code=400, detail="Role deve ser GERENTE ou BROKER")
@@ -139,6 +140,7 @@ def approve_pending_user(db: Session, user: User, actor: User, payload: UserAppr
             target_organization = create_independent_organization(
                 db,
                 name=user.company or user.full_name or user.username,
+                pending_onboarding=True,
             )
         user.organization_id = target_organization.id
         user.onboarding_source = "INDEPENDENT"
@@ -163,6 +165,8 @@ def approve_pending_user(db: Session, user: User, actor: User, payload: UserAppr
     user.manager_id = manager_id
     user.plan = "FREE"
     user.organization_id = target_organization.id
+    if target_organization.status == "PENDING_ONBOARDING":
+        target_organization.status = "ACTIVE"
     if payload.plan_max_brokers is not None:
         user.plan_max_brokers = max(payload.plan_max_brokers, 0)
     if payload.plan_max_leads is not None:
@@ -172,12 +176,26 @@ def approve_pending_user(db: Session, user: User, actor: User, payload: UserAppr
     user.status_reason = "Cadastro aprovado"
     user.status_changed_at = datetime.utcnow()
     user.status_changed_by = actor.id
+    if organization_mode == "EXISTING" and previous_organization_id != target_organization.id:
+        previous_organization = db.query(Organization).filter(Organization.id == previous_organization_id).first()
+        remaining_users = db.query(User).filter(
+            User.organization_id == previous_organization_id,
+            User.id != user.id,
+        ).count()
+        if previous_organization and previous_organization.status == "PENDING_ONBOARDING" and remaining_users == 0:
+            previous_organization.status = "ORPHANED_ONBOARDING"
     revoke_user_access(db, user, deactivate_push=True)
+    onboarding_event = {
+        ("INDEPENDENT", "GERENTE"): "ONBOARDING_APPROVED_SUPERVISOR",
+        ("INDEPENDENT", "BROKER"): "ONBOARDING_APPROVED_INDEPENDENT",
+        ("EXISTING", "BROKER"): "ONBOARDING_ASSIGNED_TO_ORGANIZATION",
+        ("EXISTING", "GERENTE"): "ONBOARDING_ASSIGNED_TO_ORGANIZATION",
+    }[(organization_mode, role)]
     record_user_lifecycle_event(
         db,
         user=user,
         actor=actor,
-        event_type="APPROVED",
+        event_type=onboarding_event,
         from_status=previous_status,
         to_status="ACTIVE",
         reason="Cadastro aprovado",
@@ -215,6 +233,94 @@ def pending_users(
     )
 
 
+def global_onboarding_pending_query(db: Session):
+    return (
+        db.query(User)
+        .filter(
+            User.onboarding_source == "INDEPENDENT",
+            User.status.in_(PENDING_ADMIN_STATUSES),
+        )
+        .order_by(User.registered_at.desc(), User.id.desc())
+    )
+
+
+def serialize_global_onboarding_user(db: Session, user: User) -> dict:
+    organization = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    supervisor = db.query(User).filter(User.id == user.manager_id).first() if user.manager_id else None
+    return {
+        "id": user.id,
+        "full_name": user.full_name,
+        "email": user.email,
+        "pais_operacao": user.pais_operacao,
+        "estado_operacao": user.estado_operacao,
+        "cidade_operacao": user.cidade_operacao,
+        "requested_role": user.role,
+        "organization_id": user.organization_id,
+        "organization_name": organization.name if organization else None,
+        "organization_status": organization.status if organization else None,
+        "onboarding_source": user.onboarding_source,
+        "created_at": user.registered_at.isoformat() if user.registered_at else None,
+        "supervisor": supervisor.full_name or supervisor.username if supervisor else None,
+        "status": user.status,
+        "email_verified": user.email_verified,
+    }
+
+
+@router.get("/onboarding/pending")
+def pending_onboarding_users(
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    return [serialize_global_onboarding_user(db, user) for user in global_onboarding_pending_query(db).all()]
+
+
+def load_global_onboarding_user(db: Session, user_id: int) -> User:
+    user = global_onboarding_pending_query(db).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Cadastro de onboarding não encontrado")
+    return user
+
+
+@router.post("/onboarding/{user_id}/approve", response_model=UserResponse)
+def approve_onboarding_user(
+    user_id: int,
+    payload: UserApprovalRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    user = load_global_onboarding_user(db, user_id)
+    approved = approve_pending_user(db, user, actor, payload)
+    db.commit()
+    db.refresh(approved)
+    notification_ids = notify_user_activation(db, activated_user=approved, actor=actor)
+    db.commit()
+    dispatch_web_push_for_notification_ids(db, notification_ids)
+    db.refresh(approved)
+    return approved
+
+
+@router.post("/onboarding/{user_id}/reject", response_model=UserResponse)
+def reject_onboarding_user(
+    user_id: int,
+    payload: UserLifecycleRequest | None = None,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    user = load_global_onboarding_user(db, user_id)
+    transition_user_status(
+        db,
+        user=user,
+        actor=actor,
+        to_status="SUSPENDED",
+        reason=require_reason(payload.reason if payload else "Cadastro rejeitado no onboarding global"),
+        event_type="ONBOARDING_REJECTED",
+        is_active=False,
+    )
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 @router.post("/users/{user_id}/approve", response_model=UserResponse)
 def approve_user(
     user_id: int,
@@ -223,6 +329,8 @@ def approve_user(
     actor: User = Depends(require_admin_user),
 ):
     user = load_target_user(db, user_id, actor)
+    if payload.organization_mode == "INDEPENDENT" and user.onboarding_source == "TEAM":
+        payload = payload.model_copy(update={"organization_mode": "EXISTING", "organization_id": user.organization_id})
     approved = approve_pending_user(db, user, actor, payload)
     db.commit()
     db.refresh(approved)

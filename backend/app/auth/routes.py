@@ -555,6 +555,7 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
         organization = create_independent_organization(
             db,
             name=(payload.company or payload.full_name or "Minha organização"),
+            pending_onboarding=True,
         )
 
     user = User(
@@ -1066,6 +1067,7 @@ def google_login(payload: GoogleLoginRequest, request: Request, response: Respon
         organization = create_independent_organization(
             db,
             name=claims.get("name") or provider_email,
+            pending_onboarding=True,
         )
         user = User(
             organization_id=organization.id,

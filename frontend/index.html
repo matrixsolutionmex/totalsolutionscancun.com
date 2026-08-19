@@ -3751,7 +3751,7 @@
         </div>
       </div>
       <div class="panel-box root-only">
-        <div class="panel-title" id="pendingUsersTitle">Gestión de usuarios</div>
+        <div class="panel-title" id="pendingUsersTitle">Cadastros aguardando aprovação</div>
         <div class="inline-actions">
           <button class="ghost" data-admin-user-tab="PENDING" type="button">Pendientes</button>
           <button class="ghost" data-admin-user-tab="ACTIVE" type="button">Activos</button>
@@ -6098,6 +6098,7 @@
           panels[index].textContent = label;
         }
       });
+      setText("#pendingUsersTitle", t("pendingUsersTitle"));
 
       [t("freeLeads"), t("segments"), t("countries"), t("combinations")].forEach((label, index) => {
         const metric = document.querySelectorAll("#view-leads .metric")[index];
@@ -9289,11 +9290,12 @@
       list.innerHTML = users.map((user) => {
         const emailState = user.email_verified ? "Correo confirmado" : "Correo pendiente";
         return `
-          <div class="pending-user-row" data-pending-user-id="${user.id}">
+          <div class="pending-user-row" data-pending-user-id="${user.id}" data-global-onboarding="true">
             <div>
               <strong>${escapeHtml(user.full_name || user.username)}</strong><br>
               <small>${escapeHtml(user.email || user.username)} · ${escapeHtml(user.company || "Sem empresa")}</small><br>
-              <small>${escapeHtml(emailState)} · ${escapeHtml(publicAccessState(user))}</small>
+              <small>${escapeHtml(user.organization_name || user.company || "Organização própria")} · ${escapeHtml(user.pais_operacao || "")} ${escapeHtml(user.cidade_operacao || "")}</small><br>
+              <small>${escapeHtml(emailState)} · ${escapeHtml(publicAccessState(user))} · ${escapeHtml(user.onboarding_source || "INDEPENDENT")}</small>
             </div>
             <div class="pending-user-controls">
               <select class="lv-input" data-pending-role>
@@ -9509,7 +9511,7 @@
       }
 
       const endpoint = currentAdminUserTab === "PENDING"
-        ? `${API_BASE}/admin/users/pending`
+        ? `${API_BASE}/admin/onboarding/pending`
         : `${API_BASE}/admin/users?status=${encodeURIComponent(currentAdminUserTab)}`;
       const response = await apiFetch(endpoint);
       if (!response.ok) {
@@ -9523,7 +9525,10 @@
       const userId = row.dataset.pendingUserId;
       const role = row.querySelector("[data-pending-role]").value;
       const managerValue = row.querySelector("[data-pending-manager]").value;
-      const response = await apiFetch(`${API_BASE}/admin/users/${userId}/approve`, {
+      const endpoint = row.dataset.globalOnboarding === "true"
+        ? `${API_BASE}/admin/onboarding/${userId}/approve`
+        : `${API_BASE}/admin/users/${userId}/approve`;
+      const response = await apiFetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -9548,7 +9553,10 @@
     }
 
     async function suspendPendingUser(row) {
-      const response = await apiFetch(`${API_BASE}/admin/users/${row.dataset.pendingUserId}/suspend`, {
+      const endpoint = row.dataset.globalOnboarding === "true"
+        ? `${API_BASE}/admin/onboarding/${row.dataset.pendingUserId}/reject`
+        : `${API_BASE}/admin/users/${row.dataset.pendingUserId}/suspend`;
+      const response = await apiFetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reason: "Suspensão administrativa" })

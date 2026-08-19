@@ -207,7 +207,11 @@ def create_user(
         raise HTTPException(status_code=403, detail="Apenas ROOT pode escolher outra organização")
 
     if organization_mode == "INDEPENDENT":
-        target_organization = create_independent_organization(db, name=payload.company or payload.full_name or payload.username)
+        target_organization = create_independent_organization(
+            db,
+            name=payload.company or payload.full_name or payload.username,
+            pending_onboarding=False,
+        )
     elif organization_mode == "ORGANIZATION":
         target_organization = db.query(Organization).filter(Organization.id == payload.organization_id).first()
         if not target_organization:
