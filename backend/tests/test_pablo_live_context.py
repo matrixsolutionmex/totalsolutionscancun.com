@@ -322,6 +322,28 @@ Observação: Cliente solicitou diagnóstico de 12 aparelhos de ar-condicionado 
         self.db.refresh(lead)
         self.assertEqual(lead.contato, "+52 555 777 8888")
 
+    def test_update_client_parser_separates_target_connectors_and_new_value(self):
+        leads = [
+            Lead(organization_id=self.org.id, nome="Javier Edmundo", contato="old-1", assigned_to_user_id=self.actor.id),
+            Lead(organization_id=self.org.id, nome="Javier", email="old-2@example.com", assigned_to_user_id=self.actor.id),
+            Lead(organization_id=self.org.id, nome="Carlos", cidade="old-city", assigned_to_user_id=self.actor.id),
+        ]
+        self.db.add_all(leads)
+        self.db.commit()
+
+        cases = [
+            ("cambia el teléfono de Javier Edmundo a +52 555 777 8888", "contato", "+52 555 777 8888"),
+            ("update Javier's email to teste@example.com", "email", "teste@example.com"),
+            ("mude a cidade do Carlos para Cancún", "cidade", "Cancún"),
+        ]
+        for message, field, expected in cases:
+            proposal = process_operational_message(self.db, self.actor, message)
+            self.assertEqual(proposal["action"], "UPDATE_CLIENT")
+            self.assertEqual(proposal["changes"][field], expected)
+            self.assertNotIn(" para ", proposal["changes"][field])
+            self.assertNotIn(" to ", proposal["changes"][field])
+            cancel_operational_proposal(self.actor)
+
 
 if __name__ == "__main__":
     unittest.main()

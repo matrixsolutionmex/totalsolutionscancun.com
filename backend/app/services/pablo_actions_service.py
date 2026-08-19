@@ -114,7 +114,7 @@ def _detect_action(message: str) -> str | None:
     normalized = unicodedata.normalize("NFKD", message.lower()).encode("ascii", "ignore").decode()
     if is_create_client_request(message):
         return "CREATE_CLIENT"
-    if re.search(r"\b(?:mude|mudar|troque|trocar|atualize|actualiza|cambie|change|update|edit)\b", normalized) and re.search(r"\b(?:telefone|telefono|phone|email|correo|endereco|direccion|address|urgencia|urgency|valor|value|cidade|city|empresa|company)\b", normalized):
+    if re.search(r"\b(?:mude|mudar|troque|trocar|altere|alterar|atualize|actualiza|actualizar|cambia|cambiar|cambie|change|update|edit)\b", normalized) and re.search(r"\b(?:telefone|telefono|phone|email|correo|endereco|direccion|address|urgencia|urgency|valor|value|cidade|city|empresa|company)\b", normalized):
         return "UPDATE_CLIENT"
     if re.search(r"\b(?:coloque|colocar|mova|mover|passe|passar|move|put|cambie|cambiar)\b", normalized) and re.search(r"\b(?:diagnostico|diagnosis|diagnostic|atendimento|visita|pipeline|etapa|stage|novo contato|new contact|cotizacao|venda ganha|cancelado)\b", normalized):
         return "CHANGE_PIPELINE"
@@ -126,7 +126,14 @@ def _detect_action(message: str) -> str | None:
 
 
 def _lead_reference(message: str) -> str:
-    name = r"([A-ZÀ-Ý][\wÀ-ÿ]+(?:\s+[A-ZÀ-Ý][\wÀ-ÿ]+){1,5}?)(?=\s+(?:para|a|to|for|en)\b|[?.!,;:]|$)"
+    possessive = re.search(
+        r"\b(?:change|update|edit)\s+([A-ZÀ-Ý][\wÀ-ÿ]+(?:\s+[A-ZÀ-Ý][\wÀ-ÿ]+){0,4})['’]s\s+",
+        message,
+        re.IGNORECASE,
+    )
+    if possessive:
+        return possessive.group(1).strip()
+    name = r"([A-ZÀ-Ý][\wÀ-ÿ]+(?:\s+[A-ZÀ-Ý][\wÀ-ÿ]+){0,5}?)(?=\s+(?:para|a|to|for|en)\b|[?.!,;:]|$)"
     match = re.search(rf"(?:do|da|de|del|of|for|o|a|el|la)\s+{name}", message)
     if not match:
         match = re.search(rf"\b(?:mover|move|cambiar|change|atualizar|actualizar|update|colocar|put)\s+{name}", message, re.IGNORECASE)
@@ -167,19 +174,33 @@ def _build_operational_proposal(db: Session, actor: User, message: str, action: 
         note = (marker.group(1) if marker else message).strip()
         proposal["changes"] = {"note": note}
     elif action == "UPDATE_CLIENT":
-        field_patterns = {
-            "contato": r"(?:telefone|telefono|phone)\s*(?:é|e|es|is|:)?\s*([^,;\n]+)",
-            "email": r"(?:email|e-mail|correo)\s*(?:é|e|es|is|:)?\s*([^,;\n]+)",
-            "endereco": r"(?:endereco|direcao|direccion|address)\s*(?:é|e|es|is|:)?\s*([^,;\n]+)",
-            "cidade": r"(?:cidade|ciudad|city)\s*(?:é|e|es|is|:)?\s*([^,;\n]+)",
-            "urgencia": r"(?:urgencia|urgency|prioridad|priority)\s*(?:é|e|es|is|:)?\s*([^,;\n]+)",
-            "empresa": r"(?:empresa|company)\s*(?:é|e|es|is|:)?\s*([^,;\n]+)",
+        field_labels = {
+            "contato": r"telefone|tel[eé]fono|phone",
+            "email": r"email|e-mail|correo",
+            "endereco": r"endereco|direcao|direccion|address",
+            "cidade": r"cidade|ciudad|city",
+            "urgencia": r"urgencia|urgency|prioridad|priority",
+            "empresa": r"empresa|company",
         }
-        for field, pattern in field_patterns.items():
-            match = re.search(pattern, message, re.IGNORECASE)
-            if match:
-                proposal["changes"][field] = match.group(1).strip(" .,:;?!")
-        value_match = re.search(r"(?:valor|value|precio)\s*(?:é|e|es|is|:)?\s*[$€MXN\s]*([\d.,]+)", message, re.IGNORECASE)
+
+        def update_value(labels: str) -> str | None:
+            # In target-oriented sentences, the value starts after the final
+            # natural-language connector, never after the client's name.
+            target_pattern = rf"(?:{labels})\b.*?\b(?:para|to|a)\s+([^,;\n]+)$"
+            direct_pattern = rf"(?:{labels})\s*(?:é|e|es|is|:)\s*([^,;\n]+)"
+            target_match = re.search(target_pattern, message, re.IGNORECASE)
+            direct_match = re.search(direct_pattern, message, re.IGNORECASE)
+            match = target_match or direct_match
+            return match.group(1).strip(" .,:;?!") if match else None
+
+        for field, labels in field_labels.items():
+            value = update_value(labels)
+            if value:
+                proposal["changes"][field] = value
+
+        value_pattern = r"(?:valor|value|precio)\b.*?\b(?:para|to|a)\s*[$€MXN\s]*([\d.,]+)$"
+        direct_value_pattern = r"(?:valor|value|precio)\s*(?:é|e|es|is|:)\s*[$€MXN\s]*([\d.,]+)"
+        value_match = re.search(value_pattern, message, re.IGNORECASE) or re.search(direct_value_pattern, message, re.IGNORECASE)
         if value_match:
             proposal["changes"]["valor_negocio"] = float(value_match.group(1).replace(".", "").replace(",", "."))
         proposal["current"] = {field: getattr(lead, field, None) for field in proposal["changes"]}

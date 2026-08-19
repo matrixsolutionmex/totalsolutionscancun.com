@@ -8853,39 +8853,9 @@
                 Reenviar correo
               </button>
 
-              <button class="lv-button-secondary" type="button" data-admin-generate-verification>
-                Generar enlace
-              </button>
-
               <button class="lv-button-secondary" type="button" data-admin-manual-verification>
                 Validar manualmente
               </button>
-            </div>
-
-            <div class="admin-verification-share hidden" data-admin-verification-share>
-              <small>Enlace válido por 60 minutos y de un solo uso.</small>
-
-              <input
-                class="lv-input"
-                type="text"
-                readonly
-                data-admin-verification-url
-                aria-label="Enlace de verificación"
-              >
-
-              <div class="admin-email-support-actions">
-                <button class="lv-button-secondary" type="button" data-admin-copy-verification>
-                  Copiar enlace
-                </button>
-
-                <button class="lv-button-secondary" type="button" data-admin-share-whatsapp>
-                  WhatsApp
-                </button>
-
-                <button class="lv-button-secondary" type="button" data-admin-share-telegram>
-                  Telegram
-                </button>
-              </div>
             </div>
           </div>
         `;
@@ -8986,39 +8956,9 @@
         });
       });
 
-      list.querySelectorAll("[data-admin-generate-verification]").forEach((button) => {
-        button.addEventListener("click", () => {
-          adminGenerateEmailVerificationLink(button.closest("[data-pending-user-id]"));
-        });
-      });
-
       list.querySelectorAll("[data-admin-manual-verification]").forEach((button) => {
         button.addEventListener("click", () => {
           adminManualEmailVerification(button.closest("[data-pending-user-id]"));
-        });
-      });
-
-      list.querySelectorAll("[data-admin-copy-verification]").forEach((button) => {
-        button.addEventListener("click", () => {
-          copyAdminVerificationLink(button.closest("[data-pending-user-id]"));
-        });
-      });
-
-      list.querySelectorAll("[data-admin-share-whatsapp]").forEach((button) => {
-        button.addEventListener("click", () => {
-          shareAdminVerificationLink(
-            button.closest("[data-pending-user-id]"),
-            "whatsapp"
-          );
-        });
-      });
-
-      list.querySelectorAll("[data-admin-share-telegram]").forEach((button) => {
-        button.addEventListener("click", () => {
-          shareAdminVerificationLink(
-            button.closest("[data-pending-user-id]"),
-            "telegram"
-          );
         });
       });
 
@@ -9113,44 +9053,6 @@
     }
 
 
-    async function adminGenerateEmailVerificationLink(row) {
-      const userId = row?.dataset.pendingUserId;
-      if (!userId) return;
-
-      const button = row.querySelector("[data-admin-generate-verification]");
-      if (button) button.disabled = true;
-
-      try {
-        const response = await apiFetch(
-          `${API_BASE}/admin/users/${userId}/email-verification/link`,
-          { method: "POST" }
-        );
-
-        const data = await response.json().catch(() => ({}));
-
-        if (!response.ok) {
-          alert(data.detail || data.message || "No fue posible generar el enlace.");
-          return;
-        }
-
-        const shareBox = row.querySelector("[data-admin-verification-share]");
-        const input = row.querySelector("[data-admin-verification-url]");
-
-        if (!shareBox || !input || !data.verification_url) {
-          alert("Enlace generado, pero no fue posible mostrarlo.");
-          return;
-        }
-
-        input.value = data.verification_url;
-        shareBox.classList.remove("hidden");
-        input.focus();
-        input.select();
-      } finally {
-        if (button) button.disabled = false;
-      }
-    }
-
-
     async function adminManualEmailVerification(row) {
       const userId = row?.dataset.pendingUserId;
       if (!userId) return;
@@ -9199,60 +9101,6 @@
       );
 
       await loadPendingUsers();
-    }
-
-
-    async function copyAdminVerificationLink(row) {
-      const input = row?.querySelector("[data-admin-verification-url]");
-      const url = input?.value?.trim();
-
-      if (!url) {
-        alert("Primero genere un enlace.");
-        return;
-      }
-
-      try {
-        await navigator.clipboard.writeText(url);
-        alert("Enlace copiado.");
-      } catch (_) {
-        input.focus();
-        input.select();
-        document.execCommand("copy");
-        alert("Enlace copiado.");
-      }
-    }
-
-
-    function shareAdminVerificationLink(row, channel) {
-      const input = row?.querySelector("[data-admin-verification-url]");
-      const url = input?.value?.trim();
-
-      if (!url) {
-        alert("Primero genere un enlace.");
-        return;
-      }
-
-      const message =
-        "Total Solutions Cancún\\n\\n" +
-        "Utiliza este enlace seguro para confirmar tu correo. " +
-        "El enlace vence en 60 minutos y solo puede utilizarse una vez.";
-
-      let shareUrl = "";
-
-      if (channel === "whatsapp") {
-        shareUrl =
-          `https://wa.me/?text=${encodeURIComponent(message + "\\n\\n" + url)}`;
-      }
-
-      if (channel === "telegram") {
-        shareUrl =
-          `https://t.me/share/url?url=${encodeURIComponent(url)}` +
-          `&text=${encodeURIComponent(message)}`;
-      }
-
-      if (shareUrl) {
-        window.open(shareUrl, "_blank", "noopener,noreferrer");
-      }
     }
 
 
