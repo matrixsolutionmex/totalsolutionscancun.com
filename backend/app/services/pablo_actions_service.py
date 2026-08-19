@@ -2,6 +2,9 @@
 
 from datetime import datetime, timedelta
 from threading import RLock
+import re
+import unicodedata
+import logging
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -16,7 +19,11 @@ from app.services.notification_service import dispatch_web_push_for_notification
 DRAFT_TTL = timedelta(minutes=15)
 _drafts: dict[tuple[int | None, int], dict] = {}
 _draft_lock = RLock()
-_DRAFT_FIELDS = ("name", "phone", "email", "address", "city", "state", "country", "service_type", "service_value")
+logger = logging.getLogger(__name__)
+_DRAFT_FIELDS = (
+    "name", "phone", "email", "company", "address", "city", "state",
+    "country", "service_type", "service_value", "urgency", "notes",
+)
 
 
 def _key(actor: User) -> tuple[int | None, int]:
@@ -64,8 +71,6 @@ def missing_fields(draft: dict) -> list[str]:
 
 
 def _extract_fields(message: str, draft: dict) -> None:
-    import re
-
     text = message.strip()
     lower = text.lower()
     data = draft["data"]
@@ -78,20 +83,23 @@ def _extract_fields(message: str, draft: dict) -> None:
                 data[field] = value
 
     capture(r"(?:nome|nombre|name)\s*(?:é|e|es|is|:)?\s*([^,;\n]+)", "name")
-    capture(r"(?:telefone|tel[eé]fono|phone|whatsapp)\s*(?:é|e|es|is|:)?\s*([+\d][\d () .-]{6,})", "phone")
+    capture(r"(?:telefone(?:\s*/\s*whatsapp)?|tel[eé]fono|phone|whatsapp)\s*(?:é|e|es|is|:)?\s*([+\d][\d () .-]{6,})", "phone")
     capture(r"(?:email|e-mail)\s*(?:é|e|es|is|:)?\s*([^,;\s]+@[^,;\s]+)", "email")
+    capture(r"(?:empresa|company)\s*(?:é|e|es|is|:)?\s*([^,;\n]+)", "company")
     capture(r"(?:endere[cç]o|direccion|address)\s*(?:é|e|es|is|:)?\s*([^;\n]+)", "address")
     capture(r"(?:cidade|ciudad|city)\s*(?:é|e|es|is|:)?\s*([^,;\n]+)", "city")
     capture(r"(?:estado|state)\s*(?:é|e|es|is|:)?\s*([^,;\n]+)", "state")
     capture(r"(?:pa[ií]s|country)\s*(?:é|e|es|is|:)?\s*([^,;\n]+)", "country")
-    capture(r"(?:servi[cç]o|servicio|service)\s*(?:é|e|es|is|:)?\s*([^,;\n]+)", "service_type")
-    value_match = re.search(r"(?:valor|value|precio)\s*(?:é|e|es|is|:)?\s*[$€MXN\s]*([\d.,]+)", text, re.IGNORECASE)
+    capture(r"(?:tipo\s+de\s+)?(?:servi[cç]o|servicio|service)\s*(?:é|e|es|is|:)?\s*([^,;\n]+)", "service_type")
+    value_match = re.search(r"(?:valor(?:\s+estimado)?|value|precio|estimated\s+value)\s*(?:é|e|es|is|:)?\s*[$€MXN\s]*([\d.,]+)", text, re.IGNORECASE)
     if value_match:
         raw = value_match.group(1).replace(".", "").replace(",", ".")
         try:
             data["service_value"] = float(raw)
         except ValueError:
             pass
+    capture(r"(?:urg[eê]ncia|urgency|prioridad|priority)\s*(?:é|e|es|is|:)?\s*([^,;\n]+)", "urgency")
+    capture(r"(?:observa[cç][aã]o|observacion|nota|notes?|observation)\s*(?:é|e|es|is|:)?\s*(.+)", "notes")
 
     if "@" in text and "email" not in data:
         email_match = re.search(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", text)
@@ -107,13 +115,13 @@ def _extract_fields(message: str, draft: dict) -> None:
 
 
 def is_create_client_request(message: str) -> bool:
-    import re
-
-    text = message.lower()
-    return bool(re.search(
-        r"(?:cadastrar|cadastre|criar|crear|registrar|registre)\s+(?:um|uma|o|a)?\s*cliente|novo\s+cliente",
-        text,
-    ))
+    text = unicodedata.normalize("NFKD", message.lower()).encode("ascii", "ignore").decode()
+    action = r"(?:crie|criar|cree|crear|create|cadastre|cadastrar|registre|registrar|register|adicionar|add)"
+    target = r"(?:cliente|clientes|client|customer|lead|leads)"
+    return bool(
+        re.search(rf"\b{action}\b.{{0,80}}\b{target}\b", text)
+        or re.search(rf"\b(?:novo|nueva?|new)\s+{target}\b", text)
+    )
 
 
 def process_client_message(actor: User, message: str) -> dict | None:
@@ -121,14 +129,20 @@ def process_client_message(actor: User, message: str) -> dict | None:
     with _draft_lock:
         _cleanup_expired()
         draft = _drafts.get(key)
-        if not draft and not is_create_client_request(message):
+        create_intent = is_create_client_request(message)
+        if not draft and not create_intent:
             return None
+        if create_intent:
+            logger.info("Pablo action detected: action=CREATE_CLIENT actor_id=%s", actor.id)
         if not draft:
             draft = _new_draft(actor)
             _drafts[key] = draft
         _extract_fields(message, draft)
         draft["status"] = "PENDING_CONFIRMATION" if not missing_fields(draft) else "PENDING_INPUT"
-        return _proposal(draft)
+        proposal = _proposal(draft)
+        if proposal["status"] == "PENDING_CONFIRMATION":
+            logger.info("Pablo client draft created: status=PENDING_CONFIRMATION")
+        return proposal
 
 
 def get_client_draft(actor: User) -> dict | None:
@@ -148,6 +162,7 @@ def _lead_payload(data: dict) -> LeadCreate:
         nome=data.get("name"),
         contato=data.get("phone"),
         email=data.get("email"),
+        empresa=data.get("company"),
         endereco=data.get("address"),
         cidade=data.get("city"),
         estado=data.get("state"),
@@ -155,6 +170,8 @@ def _lead_payload(data: dict) -> LeadCreate:
         nicho=data.get("service_type"),
         tipo_servico="OUTRO",
         valor_negocio=data.get("service_value"),
+        urgencia=data.get("urgency") or "NORMAL",
+        observacoes=data.get("notes"),
         origen="OTRO",
     )
 

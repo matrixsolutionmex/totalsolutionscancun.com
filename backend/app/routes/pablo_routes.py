@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -8,6 +10,7 @@ from app.services.pablo_actions_service import (
     cancel_client_draft,
     confirm_client_draft,
     get_client_draft,
+    is_create_client_request,
     process_client_message,
 )
 from app.services.pablo_audio_service import MAX_AUDIO_BYTES, transcribe_audio
@@ -16,6 +19,7 @@ from app.services.pablo_ai_service import generate_pablo_reply, pablo_ai_enabled
 
 
 router = APIRouter(prefix="/pablo", tags=["pablo-ai"])
+logger = logging.getLogger(__name__)
 
 
 class PabloChatRequest(BaseModel):
@@ -154,6 +158,8 @@ def pablo_chat(
     context = build_context(db, actor)
 
     proposal = process_client_message(actor, message)
+    if proposal is None and is_create_client_request(message):
+        logger.warning("Pablo create-client intent produced no draft: actor_id=%s", actor.id)
     if proposal:
         return PabloChatResponse(
             reply=action_reply(proposal),

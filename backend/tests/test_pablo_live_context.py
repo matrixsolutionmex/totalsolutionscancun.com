@@ -24,6 +24,7 @@ from app.services.pablo_actions_service import (
     _lead_payload,
     cancel_client_draft,
     confirm_client_draft,
+    is_create_client_request,
     process_client_message,
 )
 from app.services.pablo_audio_service import transcribe_audio
@@ -238,6 +239,35 @@ class PabloLiveContextTest(unittest.TestCase):
         replacement = process_client_message(self.actor, "Quero cadastrar cliente")
         self.assertEqual(replacement["status"], "PENDING_INPUT")
         self.assertEqual(self.db.query(Lead).count(), existing_leads)
+
+    def test_production_roberto_regression_creates_complete_pending_draft(self):
+        message = """Pablo, crie um novo cliente para mim.
+Nome: Roberto Almeida Ferreira
+Telefone/WhatsApp: +52 998 555 7821
+E-mail: roberto.almeida.teste@example.com
+Empresa: Hotel Mar Azul Teste
+Tipo de serviço: Manutenção de ar-condicionado
+Valor estimado: MX$ 48.500,00
+Urgência: Alta
+Cidade: Cancún
+Estado: Quintana Roo
+País: México
+Observação: Cliente solicitou diagnóstico de 12 aparelhos de ar-condicionado e possível contrato de manutenção preventiva."""
+        proposal = process_client_message(self.actor, message)
+        self.assertEqual(proposal["action"], "CREATE_CLIENT")
+        self.assertEqual(proposal["status"], "PENDING_CONFIRMATION")
+        self.assertEqual(proposal["missing_fields"], [])
+        self.assertEqual(proposal["data"]["name"], "Roberto Almeida Ferreira")
+        self.assertEqual(proposal["data"]["phone"], "+52 998 555 7821")
+        self.assertEqual(proposal["data"]["email"], "roberto.almeida.teste@example.com")
+        self.assertEqual(proposal["data"]["company"], "Hotel Mar Azul Teste")
+        self.assertEqual(proposal["data"]["service_value"], 48500.0)
+        self.assertEqual(proposal["data"]["urgency"], "Alta")
+
+    def test_create_client_intent_supports_portuguese_spanish_and_english(self):
+        self.assertTrue(is_create_client_request("crie um novo cliente"))
+        self.assertTrue(is_create_client_request("quiero registrar un cliente"))
+        self.assertTrue(is_create_client_request("create a new customer"))
 
     def test_pablo_chat_and_transcribe_routes_are_registered(self):
         routes = {
