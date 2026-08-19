@@ -167,6 +167,7 @@ def action_reply(proposal: dict) -> str:
             field = (proposal.get("missing_fields") or ["client"])[0]
             prompts = {
                 "client": "Qual é o cliente ou número da OS?",
+                "target": "Qual é o número da OS?" if proposal.get("target_type") == "SERVICE_ORDER" else "Qual é o cliente ou número da OS?",
                 "pipeline_stage": "Qual é a etapa real de destino?",
                 "changes": "Qual campo devo alterar e qual é o novo valor?",
                 "service_order_change": "Qual dado da OS devo atualizar?",
@@ -180,6 +181,9 @@ def action_reply(proposal: dict) -> str:
             return f"Vou registrar uma nota para {target.get('name')}. Confirme para executar."
         if proposal["action"] == "ATTACH_EVIDENCE":
             return f"Vou anexar a evidência de {target.get('name')} à OS {target.get('order_number') or ''}. Confirme para executar."
+        if proposal.get("location_id"):
+            destination = "Localização do cliente associado à OS" if target.get("order_number") else "Localização do cliente"
+            return f"Preparei uma atualização de localização. Cliente: {target.get('name')}. " + (f"OS: {target.get('order_number')}. " if target.get("order_number") else "") + f"Destino: {destination}. Confira e confirme para executar."
         return f"Preparei a ação {proposal['action']} para {target.get('name')}. Confira e confirme para executar."
     if proposal["status"] == "PENDING_INPUT":
         questions = {

@@ -8277,9 +8277,10 @@
       const title = document.createElement("strong");
       const action = String(proposal.action || "ACTION").toUpperCase();
       const status = String(proposal.status || "").toUpperCase();
+      const isLocationAction = Boolean(proposal.location_id);
       title.textContent = action === "CREATE_CLIENT"
         ? "Pablo preparou um cadastro"
-        : `Pablo preparou: ${action}`;
+        : isLocationAction ? "ATUALIZAÇÃO DE LOCALIZAÇÃO" : `Pablo preparou: ${action}`;
       card.appendChild(title);
 
       const data = proposal.data || {};
@@ -8298,6 +8299,10 @@
       } else {
         addDetail("Cliente", proposal.target?.name);
         addDetail("OS", proposal.target?.order_number);
+        if (isLocationAction) {
+          addDetail("Destino", proposal.target?.order_number ? "Localização do cliente associado à OS" : "Localização do cliente");
+          addDetail("Precisão aproximada", proposal.location_accuracy == null ? "Não informada" : `${proposal.location_accuracy} m`);
+        }
         const labels = { contato: "Telefone", email: "Email", endereco: "Endereço", cidade: "Cidade", urgencia: "Urgência", empresa: "Empresa", pipeline: "Etapa", status: "Status" };
         const changes = proposal.changes || {};
         Object.keys(changes).filter((field) => !["latitude", "longitude"].includes(field)).forEach((field) => {

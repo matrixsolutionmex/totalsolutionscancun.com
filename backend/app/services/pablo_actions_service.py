@@ -146,9 +146,9 @@ def _detect_location_action(message: str, has_location: bool) -> str | None:
     if not has_location:
         return None
     normalized = unicodedata.normalize("NFKD", message.lower()).encode("ascii", "ignore").decode()
-    if not re.search(r"\b(?:localizacao|ubicacion|location|local)\b|\b(?:registra|registrar|registre)\s+(?:onde|donde|where)\b|\b(?:estou|estoy|i am)\s+(?:aqui|aqui mesmo|here)\b", normalized):
+    if not re.search(r"\b(?:localizacao|ubicacion|location|local)\b|\b(?:registra|registrar|registre)\s+(?:onde|donde|where|aqui|aquí)\b|\b(?:estou|estoy|i am)\s+(?:aqui|aqui mesmo|here)\b|\b(?:usa|usar|use|coloca|colocar)\s+(?:isso|essa|esta|this|it)\b", normalized):
         return None
-    if re.search(r"\b(?:os|ordem|orden|service order)\b", normalized):
+    if re.search(r"\b(?:os|ordem|orden|service order)\b|\bts[-\s]?\d{4}[-\s]?\d+\b", normalized):
         return "UPDATE_SERVICE_ORDER"
     return "UPDATE_CLIENT"
 
@@ -157,12 +157,13 @@ def _build_location_proposal(db: Session, actor: User, message: str, action: str
     reference = _lead_reference(message)
     lead = _resolve_lead(db, actor, reference) if reference else None
     if action == "UPDATE_SERVICE_ORDER" and not lead:
-        order_match = re.search(r"\b(?:os|ordem|orden)\s*#?\s*([\w-]+)", message, re.IGNORECASE)
+        order_match = re.search(r"\b(?:os|ordem|orden)\s*#?\s*([\w-]+)|\b(ts[-\s]?\d{4}[-\s]?\d+)", message, re.IGNORECASE)
         order = None
         if order_match:
+            order_reference = next((group for group in order_match.groups() if group), "").replace(" ", "-")
             order = db.query(ServiceOrder).filter(
                 ServiceOrder.organization_id == actor.organization_id,
-                ServiceOrder.order_number.ilike(order_match.group(1)),
+                ServiceOrder.order_number.ilike(order_reference),
             ).first()
         if order:
             candidate = db.query(Lead).filter(Lead.id == order.lead_id).first()
@@ -175,8 +176,13 @@ def _build_location_proposal(db: Session, actor: User, message: str, action: str
             if lead:
                 reference = lead.nome
     if not lead:
-        return {"action": action, "status": "PENDING_INPUT", "missing_fields": ["client"],
-                "target": {"reference": reference}, "location_id": location["location_id"]}
+        normalized = unicodedata.normalize("NFKD", message.lower()).encode("ascii", "ignore").decode()
+        target_type = "SERVICE_ORDER" if action == "UPDATE_SERVICE_ORDER" else (
+            "CLIENT" if re.search(r"\b(?:cliente|cadastro|client|customer|lead)\b", normalized) else "CLIENT_OR_OS"
+        )
+        return {"action": action, "status": "PENDING_INPUT", "missing_fields": ["target"],
+                "target_type": target_type, "target": {"reference": reference},
+                "location_id": location["location_id"]}
     target = {"lead_id": lead.id, "name": lead.nome}
     if action == "UPDATE_SERVICE_ORDER":
         order = db.query(ServiceOrder).filter(
@@ -190,6 +196,56 @@ def _build_location_proposal(db: Session, actor: User, message: str, action: str
             "location_id": location["location_id"], "location_accuracy": location.get("accuracy"),
             "missing_fields": [], "created_at": datetime.utcnow().isoformat(),
             "expires_at": (datetime.utcnow() + DRAFT_TTL).isoformat()}
+
+
+def _resolve_pending_location_target(db: Session, actor: User, message: str, pending: dict) -> dict | None:
+    """Resolve a short target reply only while the action explicitly awaits one."""
+    reference = message.strip().strip(" .,:;?!\"'")
+    if not reference:
+        return None
+    target_type = pending.get("target_type") or ("SERVICE_ORDER" if pending.get("action") == "UPDATE_SERVICE_ORDER" else "CLIENT_OR_OS")
+    wants_order = target_type in {"SERVICE_ORDER", "CLIENT_OR_OS"}
+    if wants_order:
+        order_reference = re.sub(r"^(?:os|ordem|orden)\s*#?\s*", "", reference, flags=re.IGNORECASE)
+        order = db.query(ServiceOrder).filter(ServiceOrder.organization_id == actor.organization_id).filter(
+            (ServiceOrder.order_number.ilike(order_reference)) |
+            (ServiceOrder.order_number.ilike(f"OS {order_reference}"))
+        ).first()
+        if not order and re.fullmatch(r"\d+", order_reference):
+            order = db.query(ServiceOrder).filter(
+                ServiceOrder.organization_id == actor.organization_id,
+                ServiceOrder.order_number.ilike(f"%{order_reference.zfill(6)}"),
+            ).first()
+        if order:
+            lead = db.query(Lead).filter(Lead.id == order.lead_id).first()
+            if lead:
+                try:
+                    ensure_lead_visible_to_actor(db, lead, actor)
+                except HTTPException:
+                    return None
+                pending["action"] = "UPDATE_SERVICE_ORDER"
+                pending["target"] = {"lead_id": lead.id, "name": lead.nome,
+                                      "service_order_id": order.id, "order_number": order.order_number}
+                pending["target_type"] = "SERVICE_ORDER"
+                pending["current"] = {"latitude": lead.latitude, "longitude": lead.longitude}
+                pending["changes"] = {"latitude": str(get_active_location(actor)["latitude"]),
+                                       "longitude": str(get_active_location(actor)["longitude"])}
+                pending["missing_fields"] = []
+                pending["status"] = "PENDING_CONFIRMATION"
+                return dict(pending)
+    lead = _resolve_lead(db, actor, reference)
+    if lead:
+        pending["action"] = "UPDATE_CLIENT"
+        pending["target"] = {"lead_id": lead.id, "name": lead.nome}
+        pending["target_type"] = "CLIENT"
+        pending["current"] = {"latitude": lead.latitude, "longitude": lead.longitude}
+        location = get_active_location(actor)
+        if location:
+            pending["changes"] = {"latitude": str(location["latitude"]), "longitude": str(location["longitude"])}
+        pending["missing_fields"] = []
+        pending["status"] = "PENDING_CONFIRMATION"
+        return dict(pending)
+    return None
 
 
 _UPDATE_FIELD_LABELS = {
@@ -349,14 +405,25 @@ def _build_vision_proposal(db: Session, actor: User, message: str, action: str, 
 def process_operational_message(db: Session, actor: User, message: str) -> dict | None:
     vision = get_active_vision(actor)
     location = get_active_location(actor)
+    with _draft_lock:
+        pending = _action_proposals.get(_action_key(actor))
+
+    # Conversation state has priority over generic intent detection.
+    if pending and pending.get("status") == "PENDING_INPUT":
+        missing = pending.get("missing_fields") or []
+        if "target" in missing and pending.get("location_id"):
+            resolved = _resolve_pending_location_target(db, actor, message, pending)
+            if resolved:
+                with _draft_lock:
+                    _action_proposals[_action_key(actor)] = resolved
+                return resolved
+            return dict(pending)
+
     action = _detect_location_action(message, bool(location))
     if not action:
         action = _detect_action(message)
     if not action:
         action = _detect_vision_action(message, bool(vision))
-    with _draft_lock:
-        pending = _action_proposals.get(_action_key(actor))
-
     if not action and pending and pending.get("status") == "PENDING_INPUT":
         missing = pending.get("missing_fields") or []
         if "client" in missing:
@@ -413,8 +480,6 @@ def cancel_operational_proposal(actor: User) -> bool:
         proposal = _action_proposals.pop(_action_key(actor), None)
     if proposal and proposal.get("vision_id"):
         discard_vision(actor)
-    if proposal and proposal.get("location_id"):
-        discard_location(actor)
     return proposal is not None
 
 
@@ -424,7 +489,10 @@ def correct_operational_proposal(actor: User) -> dict:
         if not proposal:
             raise HTTPException(status_code=404, detail="Nenhuma ação pendente para corrigir")
         proposal["status"] = "PENDING_INPUT"
-        if proposal.get("action") == "UPDATE_CLIENT":
+        if proposal.get("location_id"):
+            proposal["missing_fields"] = ["target"]
+            proposal["target_type"] = proposal.get("target_type") or ("SERVICE_ORDER" if proposal.get("action") == "UPDATE_SERVICE_ORDER" else "CLIENT_OR_OS")
+        elif proposal.get("action") == "UPDATE_CLIENT":
             field = next(iter(proposal.get("changes", {})), None)
             if field:
                 proposal["changes"] = {"_pending_field": field}
@@ -460,6 +528,14 @@ def confirm_operational_proposal(db: Session, actor: User) -> dict:
     action = proposal["action"]
     changes = proposal.get("changes", {})
     location = coordinates_for_action(actor, proposal.get("location_id")) if proposal.get("location_id") else None
+    if location and proposal.get("target", {}).get("service_order_id"):
+        order = db.query(ServiceOrder).filter(
+            ServiceOrder.id == proposal["target"]["service_order_id"],
+            ServiceOrder.organization_id == actor.organization_id,
+            ServiceOrder.lead_id == lead.id,
+        ).first()
+        if not order:
+            raise HTTPException(status_code=404, detail="Ordem de serviço não encontrada no seu escopo")
     vision = None
     if proposal.get("vision_id"):
         vision = get_active_vision(actor, proposal["vision_id"])
@@ -528,7 +604,13 @@ def confirm_operational_proposal(db: Session, actor: User) -> dict:
     if location:
         discard_location(actor)
     logger.info("Pablo action completed: action=%s actor_id=%s", action, actor.id)
-    return {"action": action, "status": "EXECUTED", "message": "Ação concluída.", "lead_id": lead.id, "lead_name": lead.nome}
+    response_message = message
+    if location:
+        response_message = f"Localização registrada com sucesso no cliente {lead.nome}"
+        if proposal.get("target", {}).get("order_number"):
+            response_message += f", associado à OS {proposal['target']['order_number']}"
+        response_message += "."
+    return {"action": action, "status": "EXECUTED", "message": response_message, "lead_id": lead.id, "lead_name": lead.nome}
 
 
 def missing_fields(draft: dict) -> list[str]:
