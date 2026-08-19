@@ -56,6 +56,30 @@ def test_catalog_has_free_pro_business_and_central_limits(commercial_db):
     assert plans["PRO"]["recommended"] is True
 
 
+def test_new_organization_and_user_start_in_free(commercial_db):
+    db, actor, _, _ = commercial_db
+    organization = db.query(Organization).filter_by(id=actor.organization_id).one()
+    assert organization.plan == "FREE"
+    assert actor.plan == "FREE"
+    assert account_snapshot(db, actor)["plan"] == "FREE"
+    assert account_snapshot(db, actor)["reference_price"] == "MX$ 0 / mês"
+    assert not can_use_feature(db, actor, "PABLO_FULL")
+
+
+def test_legacy_free_fields_cannot_override_existing_subscription(commercial_db):
+    db, actor, _, _ = commercial_db
+    actor.plan = "PRO"
+    organization = db.query(Organization).filter_by(id=actor.organization_id).one()
+    organization.plan = "STARTER"
+    db.commit()
+    assert account_snapshot(db, actor)["plan"] == "FREE"
+    commercial_mock_plan(MockPlanChangeRequest(plan="PRO"), db, actor)
+    actor.plan = "FREE"
+    organization.plan = "FREE"
+    db.commit()
+    assert account_snapshot(db, actor)["plan"] == "PRO"
+
+
 def test_mock_upgrade_is_authorized_audited_and_isolated(commercial_db):
     db, actor, broker, other = commercial_db
     result = commercial_mock_plan(MockPlanChangeRequest(plan="PRO", reason="teste promocional"), db, actor)

@@ -22,7 +22,7 @@ def get_or_create_default_organization(db: Session) -> Organization:
         currency="MXN",
         timezone="America/Cancun",
         date_format="DD/MM/YYYY",
-        plan="INTERNAL",
+        plan="FREE",
         status="ACTIVE",
         is_platform_owner=True,
     )

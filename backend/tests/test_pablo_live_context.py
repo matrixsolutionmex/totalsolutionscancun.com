@@ -21,6 +21,7 @@ from app.models.service_order import ServiceOrder
 from app.models.service_opportunity import ServiceOpportunity
 from app.models.commercial_subscription import CommercialSubscription, PlanChangeEvent
 from app.models.commercial_upgrade_intent import CommercialUpgradeIntent
+from app.routes.pablo_routes import PabloChatRequest, pablo_chat
 from app.models.support_ticket import SupportTicket
 from app.models.user import User
 from app.models.notification import WebPushSubscription
@@ -116,6 +117,11 @@ class PabloLiveContextTest(unittest.TestCase):
         cancel_operational_proposal(self.actor)
         self.db.rollback()
         self.db.close()
+
+    def test_pablo_reports_free_for_new_organization(self):
+        response = pablo_chat(PabloChatRequest(message="qual plano estou usando?"), self.db, self.actor)
+        assert response.intent == "commercial"
+        assert "FREE" in response.reply
 
     def test_context_is_bounded_and_excludes_other_actor_records(self):
         actor_leads = [

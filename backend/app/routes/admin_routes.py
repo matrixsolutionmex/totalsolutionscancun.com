@@ -121,7 +121,7 @@ def approve_pending_user(db: Session, user: User, actor: User, payload: UserAppr
     previous_status = user.status
     user.role = role
     user.manager_id = manager_id
-    user.plan = (payload.plan or user.plan or "STARTER").upper()
+    user.plan = (payload.plan or user.plan or "FREE").upper()
     if payload.plan_max_brokers is not None:
         user.plan_max_brokers = max(payload.plan_max_brokers, 0)
     if payload.plan_max_leads is not None:

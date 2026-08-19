@@ -26,7 +26,7 @@ class UserCreate(BaseModel):
     idioma: str | None = "pt"
     email: str | None = None
     company: str | None = None
-    plan: str | None = "STARTER"
+    plan: str | None = "FREE"
     plan_max_brokers: int | None = 1
     plan_max_leads: int | None = 100
 
@@ -84,7 +84,7 @@ class UserResponse(BaseModel):
     status_changed_by: int | None = None
     archived_at: datetime | None = None
     anonymized_at: datetime | None = None
-    plan: str = "STARTER"
+    plan: str = "FREE"
     plan_max_brokers: int = 1
     plan_max_leads: int = 100
     registered_at: datetime | None = None

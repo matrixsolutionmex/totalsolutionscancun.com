@@ -47,7 +47,7 @@ class User(Base):
     mfa_secret_encrypted = Column(String, nullable=True)
     mfa_confirmed_at = Column(DateTime, nullable=True)
     mfa_last_counter = Column(Integer, nullable=True)
-    plan = Column(String, default="STARTER", nullable=False)
+    plan = Column(String, default="FREE", nullable=False)
     plan_max_brokers = Column(Integer, default=1, nullable=False)
     plan_max_leads = Column(Integer, default=100, nullable=False)
     registered_at = Column(DateTime, default=datetime.utcnow, nullable=False)

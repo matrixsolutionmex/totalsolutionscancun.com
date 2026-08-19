@@ -17,7 +17,7 @@ class Organization(Base):
     currency = Column(String, default="MXN", nullable=False)
     timezone = Column(String, default="America/Cancun", nullable=False)
     date_format = Column(String, default="DD/MM/YYYY", nullable=False)
-    plan = Column(String, default="INTERNAL", nullable=False)
+    plan = Column(String, default="FREE", nullable=False)
     status = Column(String, default="ACTIVE", nullable=False)
     user_limit = Column(Integer, default=25, nullable=False)
     technician_limit = Column(Integer, default=20, nullable=False)

@@ -250,7 +250,7 @@ def create_user(
         idioma=(payload.idioma or "pt").lower(),
         email_verified=True,
         status="ACTIVE",
-        plan=(payload.plan or "STARTER").upper(),
+        plan=(payload.plan or "FREE").upper(),
         plan_max_brokers=max(payload.plan_max_brokers or 0, 0),
         plan_max_leads=max(payload.plan_max_leads or 0, 0),
         is_active=True,

@@ -9,7 +9,7 @@ class RegisterRequest(BaseModel):
     password: str
     company: str | None = None
     phone: str | None = None
-    plan: str = "STARTER"
+    plan: str = "FREE"
     turnstile_token: str | None = None
 
 
