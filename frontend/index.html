@@ -3651,7 +3651,7 @@
     <div class="view-grid">
       <div class="panel-box" style="grid-column: 1 / -1;">
         <div class="panel-title">Planos</div>
-        <div class="line">Período de lançamento. Acesso promocional liberado; pagamento online em breve.</div>
+        <div class="line">Escolha o plano ideal para sua operação.</div>
         <div id="commercialAccountSummary" class="metric-row" style="margin: 16px 0;"></div>
         <div id="commercialPlanCards" class="view-grid"></div>
       </div>
@@ -5773,7 +5773,7 @@
           <div class="metric">Plano atual<strong>${marketplaceValue(account.plan)}</strong></div>
           <div class="metric">Status<strong>${marketplaceValue(account.status)}</strong></div>
           <div class="metric">Preço de referência<strong>${marketplaceValue(account.reference_price)}</strong></div>
-          <div class="metric">Uso de clientes<strong>${account.usage?.clients || 0} / ${account.limits?.clients || 0}</strong></div>`;
+          <div class="metric">Uso da organização<strong>${account.usage?.clients || 0} / ${account.limits?.clients || 0}</strong></div>`;
         cards.innerHTML = (plans.plans || []).map((plan) => `
           <article class="panel-box">
             <div class="panel-title">${marketplaceValue(plan.name)}${plan.recommended ? " · Recomendado" : ""}</div>
