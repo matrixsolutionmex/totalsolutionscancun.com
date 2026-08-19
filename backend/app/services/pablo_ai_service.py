@@ -28,6 +28,7 @@ def build_pablo_instructions(actor: dict, context: dict) -> str:
         "service_orders": context.get("service_orders", []),
         "tickets": context.get("tickets", []),
         "notifications": context.get("notifications", []),
+        "marketplace": context.get("marketplace", {}),
         "limits": context.get("limits", {}),
     }
 

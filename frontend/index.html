@@ -3618,9 +3618,15 @@
 
   <section class="view" id="view-atendimento">
     <div class="view-grid">
-      <div class="panel-box">
-        <div class="panel-title">Agenda</div>
+      <div class="panel-box" style="grid-column: 1 / -1;">
+        <div class="panel-title">AGENDA OPERACIONAL</div>
         <div class="line">Organiza agenda, visitas, diagnósticos y seguimiento desde el control de servicios.</div>
+        <div class="pablo-action-card-actions" style="margin-top: 16px;">
+          <button type="button" data-marketplace-tab="agenda">Minha agenda</button>
+          <button type="button" data-marketplace-tab="radar">Serviços próximos</button>
+          <button type="button" data-marketplace-tab="accepted">Meus aceitos</button>
+        </div>
+        <div id="marketplacePanel" style="margin-top: 18px;"></div>
       </div>
     </div>
   </section>
@@ -5173,6 +5179,8 @@
     let presenceTimer = null;
     let userRefreshTimer = null;
     let boardClockTimer = null;
+    let marketplaceRefreshTimer = null;
+    let marketplaceTab = "agenda";
     let currentLanguage = localStorage.getItem("totalsolutions_language") || "es";
     let currentTheme = "classic";
 
@@ -5714,6 +5722,9 @@
         loadSupportTickets().catch(() => {});
         loadDeletionRequests().catch(() => {});
       }
+      if (viewName === "atendimento") {
+        loadMarketplace(marketplaceTab).catch(() => {});
+      }
     }
 
     function setText(selector, value) {
@@ -5728,6 +5739,86 @@
       if (element) {
         element.placeholder = value;
       }
+    }
+
+    function marketplaceValue(value) {
+      return value === null || value === undefined || value === "" ? "Não informado" : escapeHtml(String(value));
+    }
+
+    function renderMarketplacePanel(tab, payload = {}) {
+      const panel = document.getElementById("marketplacePanel");
+      if (!panel) return;
+      if (tab === "radar") {
+        const opportunities = payload.opportunities || [];
+        panel.innerHTML = `
+          <div class="panel-title">RADAR DE SERVIÇOS</div>
+          <div class="line">Encontre atendimentos próximos de você</div>
+          <div class="metric-row" style="margin: 14px 0;">
+            <div class="metric">Radar<strong>● Ativo</strong></div>
+            <div class="metric">Disponíveis<strong>${opportunities.length}</strong></div>
+            <div class="metric">Localização<strong>${payload.location_available ? "Ativa" : "Não compartilhada"}</strong></div>
+          </div>
+          <div id="marketplaceOpportunityList" class="view-grid"></div>`;
+        const list = document.getElementById("marketplaceOpportunityList");
+        if (!opportunities.length) {
+          list.innerHTML = '<div class="line">Nenhum serviço disponível no momento.</div>';
+          return;
+        }
+        list.innerHTML = opportunities.map((item) => `
+          <article class="panel-box">
+            <div class="panel-title">⚡ ${marketplaceValue(item.service_type)}</div>
+            <div class="line">📍 ${marketplaceValue(item.city)}${item.distance_km == null ? "" : ` · ${item.distance_km} km de você`}</div>
+            <p>Urgência: <strong>${marketplaceValue(item.urgency)}</strong></p>
+            <p>${marketplaceValue(item.scheduled_for || "Horário a combinar")}</p>
+            <p>Estimativa: <strong>${marketplaceValue(item.estimated_value_range)}</strong></p>
+            <p>${marketplaceValue(item.description)}</p>
+            <div class="pablo-action-card-actions">
+              <button type="button" data-marketplace-details="${marketplaceValue(item.public_id)}">Ver detalhes</button>
+              <button type="button" data-marketplace-claim="${marketplaceValue(item.public_id)}">Aceitar serviço</button>
+            </div>
+          </article>`).join("");
+      } else if (tab === "accepted" || tab === "agenda") {
+        const opportunities = payload.opportunities || [];
+        panel.innerHTML = `<div class="panel-title">${tab === "accepted" ? "MEUS ACEITOS" : "MINHA AGENDA"}</div><div id="marketplaceAcceptedList" class="view-grid"></div>`;
+        const list = document.getElementById("marketplaceAcceptedList");
+        list.innerHTML = opportunities.length ? opportunities.map((item) => `
+          <article class="panel-box"><div class="panel-title">${marketplaceValue(item.service_type)}</div>
+          <p>Cliente: <strong>${marketplaceValue(item.client?.name)}</strong></p>
+          <p>OS: <strong>${marketplaceValue(item.service_order?.order_number)}</strong></p>
+          <p>Status: ${marketplaceValue(item.service_order?.status || item.status)}</p>
+          <p>Cidade: ${marketplaceValue(item.city)}</p></article>`).join("") : '<div class="line">Você ainda não aceitou serviços.</div>';
+      } else {
+        panel.innerHTML = '<div class="panel-title">MINHA AGENDA</div><div class="line">Os atendimentos associados ao seu usuário aparecerão aqui.</div>';
+      }
+    }
+
+    async function loadMarketplace(tab = marketplaceTab) {
+      marketplaceTab = tab;
+      if (marketplaceRefreshTimer) {
+        window.clearTimeout(marketplaceRefreshTimer);
+        marketplaceRefreshTimer = null;
+      }
+      const panel = document.getElementById("marketplacePanel");
+      if (!panel) return;
+      try {
+        const endpoint = tab === "accepted" || tab === "agenda" ? `${API_BASE}/marketplace/my-services` : `${API_BASE}/marketplace/opportunities?sort=distance`;
+        const response = await apiFetch(endpoint);
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || "Não foi possível carregar o radar.");
+        renderMarketplacePanel(tab, data);
+      } catch (error) {
+        panel.innerHTML = `<div class="line">${escapeHtml(error.message || "Não foi possível carregar a Agenda operacional.")}</div>`;
+      } finally {
+        if (tab === "radar" && !document.hidden) marketplaceRefreshTimer = window.setTimeout(() => loadMarketplace(tab), 25000);
+      }
+    }
+
+    async function claimMarketplaceOpportunity(publicId) {
+      const response = await apiFetch(`${API_BASE}/marketplace/opportunities/${encodeURIComponent(publicId)}/claim`, { method: "POST" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Este serviço acabou de ser aceito por outro profissional.");
+      addPabloV2Message(data.message || "Serviço reservado para você.", "ai");
+      await loadMarketplace("accepted");
     }
 
     function normalizeLanguage(value) {
@@ -8278,9 +8369,10 @@
       const action = String(proposal.action || "ACTION").toUpperCase();
       const status = String(proposal.status || "").toUpperCase();
       const isLocationAction = Boolean(proposal.location_id);
+      const isMarketplaceClaim = action === "CLAIM_MARKETPLACE_OPPORTUNITY";
       title.textContent = action === "CREATE_CLIENT"
         ? "Pablo preparou um cadastro"
-        : isLocationAction ? "ATUALIZAÇÃO DE LOCALIZAÇÃO" : `Pablo preparou: ${action}`;
+        : isLocationAction ? "ATUALIZAÇÃO DE LOCALIZAÇÃO" : isMarketplaceClaim ? "ACEITAR SERVIÇO" : `Pablo preparou: ${action}`;
       card.appendChild(title);
 
       const data = proposal.data || {};
@@ -8296,6 +8388,12 @@
       if (action === "CREATE_CLIENT") {
         [["Nome", data.name], ["Telefone", data.phone], ["Email", data.email], ["Serviço", data.service_type], ["Valor", data.service_value]]
           .forEach(([label, value]) => addDetail(label, value));
+      } else if (isMarketplaceClaim) {
+        addDetail("Serviço", proposal.target?.service_type);
+        addDetail("Cidade", proposal.target?.city);
+        addDetail("Distância", proposal.target?.distance_km == null ? "Não informada" : `${proposal.target.distance_km} km`);
+        addDetail("Urgência", proposal.target?.urgency);
+        addDetail("Horário", proposal.target?.scheduled_for || "A combinar");
       } else {
         addDetail("Cliente", proposal.target?.name);
         addDetail("OS", proposal.target?.order_number);
@@ -8317,7 +8415,7 @@
         const actions = document.createElement("div");
         actions.className = "pablo-action-card-actions";
         actions.innerHTML = `
-          <button type="button" data-pablo-confirm-action>${action === "CREATE_CLIENT" ? "Confirmar cadastro" : "Confirmar"}</button>
+          <button type="button" data-pablo-confirm-action>${action === "CREATE_CLIENT" ? "Confirmar cadastro" : isMarketplaceClaim ? "Aceitar serviço" : "Confirmar"}</button>
           <button type="button" data-pablo-correct-action>Corrigir</button>
           <button type="button" data-pablo-cancel-action>Cancelar</button>
         `;
@@ -9906,6 +10004,41 @@
         if (target.matches("[data-pablo-discard-location]")) await discardPabloLocation();
       } catch (error) {
         addPabloV2Message(error.message || "Não foi possível concluir a ação.", "ai");
+      }
+    });
+
+    document.querySelectorAll("[data-marketplace-tab]").forEach((button) => {
+      button.addEventListener("click", () => loadMarketplace(button.dataset.marketplaceTab));
+    });
+
+    document.getElementById("marketplacePanel")?.addEventListener("click", async (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      try {
+        if (target.matches("[data-marketplace-claim]")) {
+          target.disabled = true;
+          target.textContent = "Confirmando disponibilidade...";
+          await claimMarketplaceOpportunity(target.dataset.marketplaceClaim);
+        }
+        if (target.matches("[data-marketplace-details]")) {
+          const response = await apiFetch(`${API_BASE}/marketplace/opportunities/${encodeURIComponent(target.dataset.marketplaceDetails)}`);
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.detail || "Oportunidade não disponível.");
+          const item = data.opportunity || {};
+          addPabloV2Message(`${item.service_type || "Serviço"} em ${item.city || "região não informada"}. Urgência: ${item.urgency || "NORMAL"}.`, "ai");
+        }
+      } catch (error) {
+        addPabloV2Message(error.message || "Não foi possível concluir a operação.", "ai");
+        await loadMarketplace("radar");
+      }
+    });
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden && marketplaceRefreshTimer) {
+        window.clearTimeout(marketplaceRefreshTimer);
+        marketplaceRefreshTimer = null;
+      } else if (!document.hidden && document.getElementById("view-atendimento")?.classList.contains("active") && marketplaceTab === "radar") {
+        loadMarketplace("radar").catch(() => {});
       }
     });
 

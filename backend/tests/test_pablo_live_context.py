@@ -18,6 +18,7 @@ from app.models.lead_document import LeadDocument
 from app.models.notification import Notification
 from app.models.organization import Organization
 from app.models.service_order import ServiceOrder
+from app.models.service_opportunity import ServiceOpportunity
 from app.models.support_ticket import SupportTicket
 from app.models.user import User
 from app.models.notification import WebPushSubscription
@@ -47,6 +48,7 @@ from app.services.pablo_location_service import (
     expire_location_for_test,
     get_active_location,
 )
+from app.services.marketplace_service import claim_opportunity, list_opportunities
 
 
 class PabloLiveContextTest(unittest.TestCase):
@@ -69,6 +71,7 @@ class PabloLiveContextTest(unittest.TestCase):
                 SupportTicket.__table__,
                 Notification.__table__,
                 WebPushSubscription.__table__,
+                ServiceOpportunity.__table__,
             ],
         )
         cls.Session = sessionmaker(bind=cls.engine)
@@ -594,6 +597,61 @@ Observação: Cliente solicitou diagnóstico de 12 aparelhos de ar-condicionado 
         self.assertIn("ATUALIZAÇÃO DE LOCALIZAÇÃO", html)
         self.assertIn("Localização do cliente associado à OS", html)
         self.assertIn("proposal.location_accuracy", html)
+
+    def test_marketplace_feed_is_sanitized_and_available(self):
+        opportunity = ServiceOpportunity(
+            public_id="MKT-SAFE-001", organization_id=self.org.id, source="MARKETPLACE",
+            service_type="AR-CONDICIONADO", segment="HOTEL", city="Cancún", state="Quintana Roo",
+            country="México", approx_latitude=21.16, approx_longitude=-86.85, urgency="ALTA",
+            estimated_value_min=1800, estimated_value_max=2500, description_public="Equipo no enfría.",
+        )
+        self.db.add(opportunity)
+        self.db.commit()
+        feed = list_opportunities(self.db, self.actor)
+        self.assertEqual(feed[0]["public_id"], "MKT-SAFE-001")
+        self.assertNotIn("latitude", feed[0])
+        self.assertNotIn("longitude", feed[0])
+        self.assertNotIn("phone", feed[0])
+        self.assertNotIn("email", feed[0])
+
+    def test_marketplace_claim_is_single_and_exposes_private_data_only_after_claim(self):
+        opportunity = ServiceOpportunity(
+            public_id="MKT-CLAIM-001", organization_id=self.org.id, source="MARKETPLACE",
+            service_type="HIDRAULICA", city="Cancún", country="México", urgency="EMERGENCIA",
+            description_public="Fuga urgente.",
+        )
+        self.db.add(opportunity)
+        self.db.commit()
+        first = claim_opportunity(self.db, self.actor, "MKT-CLAIM-001")
+        self.assertEqual(first["opportunity"]["status"], "CLAIMED")
+        self.assertEqual(first["opportunity"]["client"]["name"], "Oportunidade MKT-CLAIM-001")
+        with self.assertRaises(Exception) as conflict:
+            claim_opportunity(self.db, self.other_user, "MKT-CLAIM-001")
+        self.assertIn("aceita por outro", str(conflict.exception))
+        self.assertEqual(self.db.query(ServiceOpportunity).filter(ServiceOpportunity.public_id == "MKT-CLAIM-001").one().claimed_by_user_id, self.actor.id)
+
+    def test_marketplace_claim_isolated_by_organization_and_pablo_requires_confirmation(self):
+        other = ServiceOpportunity(public_id="MKT-OTHER-001", organization_id=self.other_org.id, source="MARKETPLACE", service_type="ELETRICA", city="Cancún")
+        own = ServiceOpportunity(public_id="MKT-PABLO-001", organization_id=self.org.id, source="MARKETPLACE", service_type="AR-CONDICIONADO", city="Cancún", urgency="ALTA")
+        self.db.add_all([other, own])
+        self.db.commit()
+        self.assertEqual(list_opportunities(self.db, self.actor)[0]["public_id"], "MKT-PABLO-001")
+        proposal = process_operational_message(self.db, self.actor, "Pablo, pega o serviço mais urgente")
+        self.assertEqual(proposal["action"], "CLAIM_MARKETPLACE_OPPORTUNITY")
+        self.assertEqual(proposal["status"], "PENDING_CONFIRMATION")
+        self.assertEqual(self.db.query(ServiceOpportunity).filter(ServiceOpportunity.public_id == "MKT-PABLO-001").one().status, "AVAILABLE")
+        cancel_operational_proposal(self.actor)
+
+    def test_pablo_marketplace_confirmation_uses_atomic_claim_service(self):
+        self.db.add(ServiceOpportunity(public_id="MKT-PABLO-CONFIRM", organization_id=self.org.id, source="MARKETPLACE", service_type="ELETRICA", city="Cancún", urgency="EMERGENCIA"))
+        self.db.commit()
+        proposal = process_operational_message(self.db, self.actor, "Pablo, pega o serviço mais urgente")
+        self.assertEqual(proposal["opportunity_id"], "MKT-PABLO-CONFIRM")
+        self.assertEqual(self.db.query(ServiceOpportunity).filter(ServiceOpportunity.public_id == "MKT-PABLO-CONFIRM").one().status, "AVAILABLE")
+        result = confirm_operational_proposal(self.db, self.actor)
+        self.assertEqual(result["status"], "EXECUTED")
+        self.assertEqual(self.db.query(ServiceOpportunity).filter(ServiceOpportunity.public_id == "MKT-PABLO-CONFIRM").one().status, "CLAIMED")
+        self.assertEqual(self.db.query(LeadEvent).filter(LeadEvent.event_type == "PABLO_MARKETPLACE_CLAIM").count(), 1)
 
 
 if __name__ == "__main__":

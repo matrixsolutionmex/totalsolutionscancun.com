@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.models.lead_event import LeadEvent
 from app.models.lead import Lead
 from app.models.service_order import ServiceOrder
+from app.models.service_opportunity import ServiceOpportunity
 from app.models.lead_document import LeadDocument
 from app.models.user import User
 from app.schemas.lead_schema import LeadCreate
@@ -23,6 +24,7 @@ from app.routes.lead_routes import PIPELINE_STAGES, apply_actor_scope, ensure_le
 from app.services.service_order_service import ensure_service_order, sync_service_order_from_lead
 from app.services.pablo_vision_service import get_active_vision, discard_vision
 from app.services.pablo_location_service import coordinates_for_action, discard_location, get_active_location
+from app.services.marketplace_service import claim_opportunity, list_opportunities
 from app.core.storage import UPLOADS_DIR
 
 
@@ -151,6 +153,20 @@ def _detect_location_action(message: str, has_location: bool) -> str | None:
     if re.search(r"\b(?:os|ordem|orden|service order)\b|\bts[-\s]?\d{4}[-\s]?\d+\b", normalized):
         return "UPDATE_SERVICE_ORDER"
     return "UPDATE_CLIENT"
+
+
+def _detect_marketplace_claim(message: str, db: Session, actor: User) -> dict | None:
+    normalized = unicodedata.normalize("NFKD", message.lower()).encode("ascii", "ignore").decode()
+    if not re.search(r"\b(?:pega|aceita|aceite|aceitar|claim|take|reserve|reservar|assuma|assumir)\b", normalized):
+        return None
+    if not re.search(r"\b(?:servico|serviço|atendimento|oportunidade|mais proximo|mais proxima|mais urgente|near|service)\b", normalized):
+        return None
+    items = list_opportunities(db, actor, sort="urgency" if "urgente" in normalized else "distance")
+    if not items:
+        return {"action": "CLAIM_MARKETPLACE_OPPORTUNITY", "status": "PENDING_INPUT", "missing_fields": ["opportunity"]}
+    selected = items[0]
+    return {"action": "CLAIM_MARKETPLACE_OPPORTUNITY", "status": "PENDING_CONFIRMATION",
+            "target": selected, "opportunity_id": selected["public_id"], "missing_fields": []}
 
 
 def _build_location_proposal(db: Session, actor: User, message: str, action: str, location: dict) -> dict:
@@ -408,6 +424,12 @@ def process_operational_message(db: Session, actor: User, message: str) -> dict 
     with _draft_lock:
         pending = _action_proposals.get(_action_key(actor))
 
+    marketplace_claim = _detect_marketplace_claim(message, db, actor)
+    if marketplace_claim:
+        with _draft_lock:
+            _action_proposals[_action_key(actor)] = marketplace_claim
+        return marketplace_claim
+
     # Conversation state has priority over generic intent detection.
     if pending and pending.get("status") == "PENDING_INPUT":
         missing = pending.get("missing_fields") or []
@@ -520,6 +542,26 @@ def confirm_operational_proposal(db: Session, actor: User) -> dict:
         proposal = _action_proposals.pop(_action_key(actor), None)
     if not proposal:
         raise HTTPException(status_code=404, detail="Nenhuma ação pendente para confirmar")
+    if proposal.get("action") == "CLAIM_MARKETPLACE_OPPORTUNITY":
+        result = claim_opportunity(db, actor, proposal["opportunity_id"])
+        lead = result["opportunity"].get("client") or {}
+        if result["opportunity"].get("client"):
+            claimed_opportunity = db.query(ServiceOpportunity).filter(
+                ServiceOpportunity.public_id == proposal["opportunity_id"],
+                ServiceOpportunity.organization_id == actor.organization_id,
+            ).first()
+            db.add(LeadEvent(
+                organization_id=actor.organization_id,
+                lead_id=claimed_opportunity.lead_id,
+                actor_id=actor.id,
+                actor_name=actor.full_name or actor.username,
+                event_type="PABLO_MARKETPLACE_CLAIM",
+                message=f"Pablo confirmou a oportunidade {proposal['opportunity_id']}",
+            ))
+            db.commit()
+        return {"action": proposal["action"], "status": "EXECUTED",
+                "message": "Serviço reservado para você.", "opportunity": result["opportunity"],
+                "client_name": lead.get("name")}
     lead_id = proposal.get("target", {}).get("lead_id")
     lead = db.query(Lead).filter(Lead.id == lead_id).first()
     if not lead:

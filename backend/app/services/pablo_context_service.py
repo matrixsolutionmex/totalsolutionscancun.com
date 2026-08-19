@@ -12,6 +12,8 @@ from app.models.service_order import ServiceOrder
 from app.models.support_ticket import SupportTicket
 from app.models.user import User
 from app.routes.lead_routes import apply_actor_scope
+from app.services.marketplace_service import list_opportunities
+from app.services.pablo_location_service import get_active_location
 
 
 CLIENT_LIMIT = 30
@@ -210,6 +212,10 @@ def build_context(db: Session, actor: User) -> dict:
         "service_orders": [_order_dict(order, names) for order in orders],
         "tickets": [_ticket_dict(ticket) for ticket in tickets],
         "notifications": [_notification_dict(notification) for notification in notifications],
+        "marketplace": {
+            "available": list_opportunities(db, actor, sort="distance")[:10],
+            "location_available": bool(get_active_location(actor)),
+        },
         "limits": {
             "clients": {"total_available": total_clients, "sent": len(clients)},
             "service_orders": {"total_available": total_orders, "sent": len(orders)},

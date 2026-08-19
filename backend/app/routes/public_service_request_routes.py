@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.auth.jwt_handler import get_db
 from app.models.service_request import ServiceRequest
 from app.services.customer_portal_service import create_customer_request_and_order, service_request_public_status
+from app.services.marketplace_service import create_opportunity_from_service_request
 
 
 router = APIRouter(prefix="/public", tags=["public-service-requests"])
@@ -75,6 +76,7 @@ def create_public_service_request(
     }
     try:
         service_request = create_customer_request_and_order(db, payload, files=files)
+        create_opportunity_from_service_request(db, service_request)
         db.commit()
         db.refresh(service_request)
         return service_request_public_status(service_request)

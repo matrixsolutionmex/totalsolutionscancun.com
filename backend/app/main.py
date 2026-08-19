@@ -16,7 +16,7 @@ from app.core.organization import get_or_create_default_organization
 from app.core.storage import UPLOADS_DIR
 from app.auth.routes import router as auth_router
 from app.database.connection import Base, SessionLocal, engine
-from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, deletion_request, notification, user_lifecycle, auth_security, organization, service_property, service_request
+from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, deletion_request, notification, user_lifecycle, auth_security, organization, service_property, service_request, service_opportunity
 from app.models.lead import Lead
 from app.models.service_order import ServiceOrder
 from app.models.user import User
@@ -29,6 +29,7 @@ from app.routes.notification_routes import router as notification_router
 from app.routes.public_service_request_routes import router as public_service_request_router
 from app.routes.pablo_routes import router as pablo_router
 from app.routes.service_request_routes import router as service_request_router
+from app.routes.marketplace_routes import router as marketplace_router
 from app.routes.support_routes import router as support_router
 from app.routes.user_routes import router as user_router
 from app.routes.contract_routes import router as contract_router
@@ -82,6 +83,7 @@ app.include_router(admin_router)
 app.include_router(contract_router)
 app.include_router(public_service_request_router)
 app.include_router(service_request_router)
+app.include_router(marketplace_router)
 app.include_router(pablo_router)
 
 frontend_dir = Path(__file__).resolve().parents[2] / "frontend"
@@ -303,6 +305,7 @@ def create_database_tables():
             "properties",
             "service_requests",
             "service_request_media",
+            "service_opportunities",
         ):
             add_column_if_missing(db, table_name, "organization_id", "INTEGER")
 
@@ -479,6 +482,7 @@ def create_database_tables():
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_service_orders_property_record_id ON service_orders (property_record_id)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_service_requests_status ON service_requests (status)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_service_requests_idempotency ON service_requests (organization_id, source, idempotency_key)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_service_opportunities_feed ON service_opportunities (organization_id, source, status)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_service_request_media_request ON service_request_media (service_request_id)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_properties_lead ON properties (lead_id)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_web_push_subscriptions_user_active ON web_push_subscriptions (user_id, active)")
