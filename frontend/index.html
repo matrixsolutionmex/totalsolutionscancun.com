@@ -3411,6 +3411,7 @@
       <button class="nav-main" data-view-target="leads">Clientes</button>
       <button class="nav-main" data-view-target="atendimento">Agenda</button>
       <button class="nav-main" data-view-target="relatorios">Reportes</button>
+      <button class="nav-main" data-view-target="planos">Planos</button>
       <button class="nav-main manager-only" data-view-target="suporte">Soporte</button>
       <button class="nav-main" data-view-target="contratos">Documentos</button>
       <button class="nav-main root-only" data-view-target="usuarios">Equipo</button>
@@ -3457,6 +3458,7 @@
       <button type="button" data-mobile-view="leads">Clientes</button>
       <button type="button" data-mobile-view="atendimento">Agenda</button>
       <button type="button" data-mobile-view="relatorios">Reportes</button>
+      <button type="button" data-mobile-view="planos">Planos</button>
       <button type="button" class="manager-only" data-mobile-view="suporte">Soporte</button>
       <button type="button" data-mobile-view="contratos">Documentos</button>
       <button type="button" class="root-only" data-mobile-view="usuarios">Equipo</button>
@@ -3641,6 +3643,17 @@
           <div class="metric">Sin asignar<strong id="metricBank">0</strong></div>
           <div class="metric">Servicio aprobado<strong id="metricWon">0</strong></div>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="view" id="view-planos">
+    <div class="view-grid">
+      <div class="panel-box" style="grid-column: 1 / -1;">
+        <div class="panel-title">PLANOS COMERCIAIS</div>
+        <div class="line">Período de lançamento. Acesso promocional liberado; pagamento online em breve.</div>
+        <div id="commercialAccountSummary" class="metric-row" style="margin: 16px 0;"></div>
+        <div id="commercialPlanCards" class="view-grid"></div>
       </div>
     </div>
   </section>
@@ -5716,7 +5729,7 @@
       document.querySelectorAll(".nav .nav-main[data-view-target]").forEach((button) => {
         button.classList.toggle("active", button.dataset.viewTarget === viewName);
       });
-      document.body.classList.remove("view-vendas", "view-leads", "view-atendimento", "view-relatorios", "view-suporte", "view-usuarios", "view-contratos");
+      document.body.classList.remove("view-vendas", "view-leads", "view-atendimento", "view-relatorios", "view-planos", "view-suporte", "view-usuarios", "view-contratos");
       document.body.classList.add(`view-${viewName}`);
       if (viewName === "suporte") {
         loadSupportTickets().catch(() => {});
@@ -5724,6 +5737,9 @@
       }
       if (viewName === "atendimento") {
         loadMarketplace(marketplaceTab).catch(() => {});
+      }
+      if (viewName === "planos") {
+        loadCommercialPlans().catch(() => {});
       }
     }
 
@@ -5738,6 +5754,36 @@
       const element = document.querySelector(selector);
       if (element) {
         element.placeholder = value;
+      }
+    }
+
+    async function loadCommercialPlans() {
+      const cards = document.getElementById("commercialPlanCards");
+      const summary = document.getElementById("commercialAccountSummary");
+      if (!cards || !summary) return;
+      try {
+        const [plansResponse, accountResponse] = await Promise.all([
+          apiFetch(`${API_BASE}/commercial/plans`),
+          apiFetch(`${API_BASE}/commercial/account`)
+        ]);
+        const plans = await plansResponse.json();
+        const account = await accountResponse.json();
+        if (!plansResponse.ok || !accountResponse.ok) throw new Error("Não foi possível carregar os planos.");
+        summary.innerHTML = `
+          <div class="metric">Plano atual<strong>${marketplaceValue(account.plan)}</strong></div>
+          <div class="metric">Status<strong>${marketplaceValue(account.status)}</strong></div>
+          <div class="metric">Preço de referência<strong>${marketplaceValue(account.reference_price)}</strong></div>
+          <div class="metric">Uso de clientes<strong>${account.usage?.clients || 0} / ${account.limits?.clients || 0}</strong></div>`;
+        cards.innerHTML = (plans.plans || []).map((plan) => `
+          <article class="panel-box">
+            <div class="panel-title">${marketplaceValue(plan.name)}${plan.recommended ? " · Recomendado" : ""}</div>
+            <h3>${marketplaceValue(plan.price)}</h3>
+            <div class="line">${(plan.features || []).slice(0, 6).map((feature) => marketplaceValue(feature)).join(" · ")}</div>
+            <p>Clientes: ${plan.limits?.clients || 0} · Usuários: ${plan.limits?.users || 0}</p>
+            <button type="button" data-commercial-plan="${marketplaceValue(plan.name)}">${plan.name === "FREE" ? "Começar grátis" : "Solicitar acesso promocional"}</button>
+          </article>`).join("");
+      } catch (error) {
+        cards.innerHTML = `<div class="line">${escapeHtml(error.message || "Não foi possível carregar os planos.")}</div>`;
       }
     }
 
@@ -10009,6 +10055,17 @@
 
     document.querySelectorAll("[data-marketplace-tab]").forEach((button) => {
       button.addEventListener("click", () => loadMarketplace(button.dataset.marketplaceTab));
+    });
+
+    document.getElementById("commercialPlanCards")?.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || !target.matches("[data-commercial-plan]")) return;
+      const plan = target.dataset.commercialPlan;
+      if (plan === "FREE") {
+        addPabloV2Message("O plano FREE está disponível para começar. Nenhum pagamento foi realizado.", "ai");
+        return;
+      }
+      addPabloV2Message(`Solicitação de acesso promocional ao plano ${plan} registrada para orientação administrativa. Pagamento online em breve.`, "ai");
     });
 
     document.getElementById("marketplacePanel")?.addEventListener("click", async (event) => {

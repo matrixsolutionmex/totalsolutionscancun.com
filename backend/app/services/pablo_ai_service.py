@@ -29,6 +29,7 @@ def build_pablo_instructions(actor: dict, context: dict) -> str:
         "tickets": context.get("tickets", []),
         "notifications": context.get("notifications", []),
         "marketplace": context.get("marketplace", {}),
+        "commercial": context.get("commercial", {}),
         "limits": context.get("limits", {}),
     }
 

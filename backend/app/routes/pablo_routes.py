@@ -41,6 +41,7 @@ from app.services.pablo_vision_service import (
 )
 from app.services.pablo_location_service import create_location_session, discard_location, get_active_location, public_location
 from app.services.marketplace_service import marketplace_query_reply
+from app.services.entitlement_service import PLANS, current_plan
 
 
 router = APIRouter(prefix="/pablo", tags=["pablo-ai"])
@@ -242,6 +243,13 @@ def pablo_chat(
     marketplace_reply = marketplace_query_reply(db, actor, message)
     if marketplace_reply:
         return PabloChatResponse(reply=marketplace_reply, intent="marketplace", context=context, action_proposal=None)
+
+    normalized = message.lower()
+    if "plano" in normalized or "plan" in normalized:
+        plan = current_plan(db, actor)
+        return PabloChatResponse(reply=f"Seu plano atual é {plan}. Recursos disponíveis: {', '.join(sorted(PLANS[plan]['features']))}.", intent="commercial", context=context, action_proposal=None)
+    if "upgrade" in normalized or "upgrad" in normalized:
+        return PabloChatResponse(reply="Posso orientar sobre os planos. Acesso promocional pode ser liberado por um administrador; pagamento online estará disponível em breve.", intent="commercial", context=context, action_proposal=None)
 
     fallback_reply = build_reply(intent, context)
     reply = fallback_reply

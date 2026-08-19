@@ -14,6 +14,7 @@ from app.models.user import User
 from app.routes.lead_routes import apply_actor_scope
 from app.services.marketplace_service import list_opportunities
 from app.services.pablo_location_service import get_active_location
+from app.services.entitlement_service import PLANS, current_plan
 
 
 CLIENT_LIMIT = 30
@@ -215,6 +216,10 @@ def build_context(db: Session, actor: User) -> dict:
         "marketplace": {
             "available": list_opportunities(db, actor, sort="distance")[:10],
             "location_available": bool(get_active_location(actor)),
+        },
+        "commercial": {
+            "plan": current_plan(db, actor),
+            "features": sorted(PLANS[current_plan(db, actor)]["features"]),
         },
         "limits": {
             "clients": {"total_available": total_clients, "sent": len(clients)},
