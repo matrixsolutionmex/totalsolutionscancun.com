@@ -344,6 +344,29 @@ Observação: Cliente solicitou diagnóstico de 12 aparelhos de ar-condicionado 
             self.assertNotIn(" to ", proposal["changes"][field])
             cancel_operational_proposal(self.actor)
 
+    def test_update_client_conversation_collects_field_target_and_value(self):
+        lead = Lead(
+            organization_id=self.org.id,
+            nome="Javier Edmundo",
+            contato="555-1000",
+            assigned_to_user_id=self.actor.id,
+        )
+        self.db.add(lead)
+        self.db.commit()
+
+        proposal = process_operational_message(self.db, self.actor, "cadastra telefone")
+        self.assertEqual(proposal["action"], "UPDATE_CLIENT")
+        self.assertEqual(proposal["missing_fields"], ["client"])
+
+        proposal = process_operational_message(self.db, self.actor, "Javier Edmundo")
+        self.assertEqual(proposal["target"]["name"], "Javier Edmundo")
+        self.assertEqual(proposal["missing_fields"], ["value"])
+        self.assertEqual(proposal["current"]["contato"], "555-1000")
+
+        proposal = process_operational_message(self.db, self.actor, "+52 555 777 8888")
+        self.assertEqual(proposal["status"], "PENDING_CONFIRMATION")
+        self.assertEqual(proposal["changes"], {"contato": "+52 555 777 8888"})
+
 
 if __name__ == "__main__":
     unittest.main()

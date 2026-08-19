@@ -152,6 +152,7 @@ def action_reply(proposal: dict) -> str:
                 "pipeline_stage": "Qual é a etapa real de destino?",
                 "changes": "Qual campo devo alterar e qual é o novo valor?",
                 "service_order_change": "Qual dado da OS devo atualizar?",
+                "value": "Qual é o novo valor?",
             }
             return prompts.get(field, "Preciso de mais um dado para preparar a ação.")
         target = proposal.get("target", {})

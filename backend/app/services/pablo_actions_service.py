@@ -114,7 +114,7 @@ def _detect_action(message: str) -> str | None:
     normalized = unicodedata.normalize("NFKD", message.lower()).encode("ascii", "ignore").decode()
     if is_create_client_request(message):
         return "CREATE_CLIENT"
-    if re.search(r"\b(?:mude|mudar|troque|trocar|altere|alterar|atualize|actualiza|actualizar|cambia|cambiar|cambie|change|update|edit)\b", normalized) and re.search(r"\b(?:telefone|telefono|phone|email|correo|endereco|direccion|address|urgencia|urgency|valor|value|cidade|city|empresa|company)\b", normalized):
+    if re.search(r"\b(?:mude|mudar|troque|trocar|altere|alterar|atualize|actualiza|actualizar|cambia|cambiar|cambie|change|update|edit|cadastra|cadastre|registre)\b", normalized) and re.search(r"\b(?:telefone|telefono|phone|email|correo|endereco|direccion|address|urgencia|urgency|valor|value|cidade|city|empresa|company)\b", normalized):
         return "UPDATE_CLIENT"
     if re.search(r"\b(?:coloque|colocar|mova|mover|passe|passar|move|put|cambie|cambiar)\b", normalized) and re.search(r"\b(?:diagnostico|diagnosis|diagnostic|atendimento|visita|pipeline|etapa|stage|novo contato|new contact|cotizacao|venda ganha|cancelado)\b", normalized):
         return "CHANGE_PIPELINE"
@@ -123,6 +123,32 @@ def _detect_action(message: str) -> str | None:
     if re.search(r"\b(?:os|ordem de servico|service order|orden de servicio)\b", normalized) and re.search(r"\b(?:atualize|actualiza|update|marque|marca|agende|agenda|defeito|defecto|status|conclu)\b", normalized):
         return "UPDATE_SERVICE_ORDER"
     return None
+
+
+_UPDATE_FIELD_LABELS = {
+    "contato": r"telefone|tel[eé]fono|phone",
+    "email": r"email|e-mail|correo",
+    "endereco": r"endereco|direcao|direccion|address",
+    "cidade": r"cidade|ciudad|city",
+    "urgencia": r"urgencia|urgency|prioridad|priority",
+    "empresa": r"empresa|company",
+}
+
+
+def _update_field_from_message(message: str) -> tuple[str, str] | None:
+    for field, labels in _UPDATE_FIELD_LABELS.items():
+        if re.search(rf"\b(?:{labels})\b", message, re.IGNORECASE):
+            return field, labels
+    return None
+
+
+def _update_value_from_message(message: str, labels: str) -> str | None:
+    target_pattern = rf"(?:{labels})\b.*?\b(?:para|to|a)\s+([^,;\n]+)$"
+    direct_pattern = rf"(?:{labels})\s*(?:é|e|es|is|:)\s*([^,;\n]+)"
+    target_match = re.search(target_pattern, message, re.IGNORECASE)
+    direct_match = re.search(direct_pattern, message, re.IGNORECASE)
+    match = target_match or direct_match
+    return match.group(1).strip(" .,:;?!") if match else None
 
 
 def _lead_reference(message: str) -> str:
@@ -146,7 +172,12 @@ def _build_operational_proposal(db: Session, actor: User, message: str, action: 
     reference = _lead_reference(message)
     lead = _resolve_lead(db, actor, reference) if reference else None
     if not lead:
-        return {"action": action, "status": "PENDING_INPUT", "missing_fields": ["client"], "target": {"reference": reference}}
+        proposal = {"action": action, "status": "PENDING_INPUT", "missing_fields": ["client"], "target": {"reference": reference}}
+        if action == "UPDATE_CLIENT":
+            requested_field = _update_field_from_message(message)
+            if requested_field:
+                proposal["requested_field"] = requested_field[0]
+        return proposal
 
     proposal = {
         "action": action,
@@ -174,27 +205,8 @@ def _build_operational_proposal(db: Session, actor: User, message: str, action: 
         note = (marker.group(1) if marker else message).strip()
         proposal["changes"] = {"note": note}
     elif action == "UPDATE_CLIENT":
-        field_labels = {
-            "contato": r"telefone|tel[eé]fono|phone",
-            "email": r"email|e-mail|correo",
-            "endereco": r"endereco|direcao|direccion|address",
-            "cidade": r"cidade|ciudad|city",
-            "urgencia": r"urgencia|urgency|prioridad|priority",
-            "empresa": r"empresa|company",
-        }
-
-        def update_value(labels: str) -> str | None:
-            # In target-oriented sentences, the value starts after the final
-            # natural-language connector, never after the client's name.
-            target_pattern = rf"(?:{labels})\b.*?\b(?:para|to|a)\s+([^,;\n]+)$"
-            direct_pattern = rf"(?:{labels})\s*(?:é|e|es|is|:)\s*([^,;\n]+)"
-            target_match = re.search(target_pattern, message, re.IGNORECASE)
-            direct_match = re.search(direct_pattern, message, re.IGNORECASE)
-            match = target_match or direct_match
-            return match.group(1).strip(" .,:;?!") if match else None
-
-        for field, labels in field_labels.items():
-            value = update_value(labels)
+        for field, labels in _UPDATE_FIELD_LABELS.items():
+            value = _update_value_from_message(message, labels)
             if value:
                 proposal["changes"][field] = value
 
@@ -219,6 +231,34 @@ def _build_operational_proposal(db: Session, actor: User, message: str, action: 
 
 def process_operational_message(db: Session, actor: User, message: str) -> dict | None:
     action = _detect_action(message)
+    with _draft_lock:
+        pending = _action_proposals.get(_action_key(actor))
+
+    if not action and pending and pending.get("status") == "PENDING_INPUT":
+        missing = pending.get("missing_fields") or []
+        if "client" in missing:
+            lead = _resolve_lead(db, actor, message)
+            if not lead:
+                return dict(pending)
+            pending["target"] = {"lead_id": lead.id, "name": lead.nome}
+            pending.pop("missing_fields", None)
+            if pending.get("action") == "UPDATE_CLIENT" and pending.get("requested_field"):
+                field = pending.pop("requested_field")
+                pending["current"] = {field: getattr(lead, field, None)}
+                pending["changes"] = {"_pending_field": field}
+                pending["missing_fields"] = ["value"]
+            else:
+                pending["missing_fields"] = []
+            return dict(pending)
+        if "value" in missing and pending.get("action") == "UPDATE_CLIENT":
+            field = pending.get("changes", {}).pop("_pending_field", None)
+            if field:
+                pending["changes"][field] = message.strip().strip(" .,:;?!")
+                pending["missing_fields"] = []
+                pending["status"] = "PENDING_CONFIRMATION"
+                logger.info("Pablo action proposal created: action=UPDATE_CLIENT")
+                return dict(pending)
+
     if not action or action == "CREATE_CLIENT":
         return None
     logger.info("Pablo action detected: action=%s actor_id=%s", action, actor.id)
