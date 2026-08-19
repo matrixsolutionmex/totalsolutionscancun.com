@@ -41,6 +41,12 @@ from app.services.pablo_vision_service import (
     expire_vision_for_test,
     get_active_vision,
 )
+from app.services.pablo_location_service import (
+    create_location_session,
+    discard_location,
+    expire_location_for_test,
+    get_active_location,
+)
 
 
 class PabloLiveContextTest(unittest.TestCase):
@@ -471,6 +477,45 @@ Observação: Cliente solicitou diagnóstico de 12 aparelhos de ar-condicionado 
         html = __import__("pathlib").Path(__file__).parents[2].joinpath("frontend", "index.html").read_text(encoding="utf-8")
         self.assertIn("renderPabloVisionResult", html)
         self.assertNotIn("JSON.stringify(analysis.fields)", html)
+
+    def test_location_session_is_scoped_and_expires_without_persisting(self):
+        session = create_location_session(self.actor, 21.1619, -86.8515, 12.4)
+        self.assertTrue(session["location_id"])
+        self.assertNotIn("21.1619", str(session))
+        self.assertIsNotNone(get_active_location(self.actor, session["location_id"]))
+        self.assertIsNone(get_active_location(self.other_user, session["location_id"]))
+        expire_location_for_test(self.actor)
+        self.assertIsNone(get_active_location(self.actor))
+
+    def test_location_client_requires_confirmation_and_persists_only_after_confirm(self):
+        lead = Lead(organization_id=self.org.id, nome="Javier Edmundo", assigned_to_user_id=self.actor.id)
+        self.db.add(lead)
+        self.db.commit()
+        create_location_session(self.actor, 21.1619, -86.8515, 8)
+        proposal = process_operational_message(self.db, self.actor, "usa essa localização no Javier Edmundo")
+        self.assertEqual(proposal["action"], "UPDATE_CLIENT")
+        self.assertEqual(proposal["status"], "PENDING_CONFIRMATION")
+        self.assertIsNone(lead.latitude)
+        confirm_operational_proposal(self.db, self.actor)
+        self.db.refresh(lead)
+        self.assertEqual(lead.latitude, "21.1619")
+        self.assertEqual(self.db.query(LeadEvent).filter(LeadEvent.event_type == "PABLO_ACTION_UPDATE_LOCATION").count(), 1)
+
+    def test_location_os_is_scoped_confirmed_and_cancel_does_not_persist(self):
+        lead = Lead(organization_id=self.org.id, nome="Javier Edmundo", assigned_to_user_id=self.actor.id)
+        self.db.add(lead)
+        self.db.flush()
+        order = ServiceOrder(organization_id=self.org.id, lead_id=lead.id, order_number="TS-LOC-19", status="ABERTA")
+        self.db.add(order)
+        self.db.commit()
+        create_location_session(self.actor, 21.1619, -86.8515, 10)
+        proposal = process_operational_message(self.db, self.actor, "registra onde fiz o atendimento na OS TS-LOC-19")
+        self.assertEqual(proposal["action"], "UPDATE_SERVICE_ORDER")
+        self.assertEqual(proposal["status"], "PENDING_CONFIRMATION")
+        cancel_operational_proposal(self.actor)
+        self.db.refresh(lead)
+        self.assertIsNone(lead.latitude)
+        self.assertIsNone(get_active_location(self.actor))
 
 
 if __name__ == "__main__":

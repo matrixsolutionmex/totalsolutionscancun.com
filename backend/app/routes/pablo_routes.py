@@ -39,6 +39,7 @@ from app.services.pablo_vision_service import (
     public_vision,
     valid_image_bytes,
 )
+from app.services.pablo_location_service import create_location_session, discard_location, get_active_location, public_location
 
 
 router = APIRouter(prefix="/pablo", tags=["pablo-ai"])
@@ -58,6 +59,12 @@ class PabloChatResponse(BaseModel):
 
 class PabloActionMessage(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
+
+
+class PabloLocationRequest(BaseModel):
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    accuracy: float | None = Field(default=None, ge=0, le=100000)
 
 
 def normalize_message(value: str) -> str:
@@ -239,6 +246,23 @@ def pablo_chat(
         context=context,
         action_proposal=None,
     )
+
+
+@router.post("/location")
+def pablo_location(payload: PabloLocationRequest, actor: User = Depends(get_current_user)):
+    location = create_location_session(actor, payload.latitude, payload.longitude, payload.accuracy)
+    logger.info("Pablo location received: actor_id=%s", actor.id)
+    return {"location": location}
+
+
+@router.get("/location/current")
+def pablo_current_location(actor: User = Depends(get_current_user)):
+    return {"location": public_location(get_active_location(actor))}
+
+
+@router.post("/location/discard")
+def pablo_discard_location(actor: User = Depends(get_current_user)):
+    return {"status": "DISCARDED", "discarded": discard_location(actor)}
 
 
 @router.post("/transcribe")

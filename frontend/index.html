@@ -4148,6 +4148,7 @@
             <div class="pablo-v2-audio-controls">
               <input id="pabloV2ImageInput" type="file" accept="image/*" hidden>
               <button id="pabloV2AttachButton" type="button" title="Anexar imagem" aria-label="Anexar imagem">＋</button>
+              <button id="pabloV2LocationButton" type="button" title="Compartilhar localização uma vez" aria-label="Compartilhar localização uma vez">⌖</button>
               <button id="pabloV2MicButton" class="pablo-v2-mic" type="button" title="Gravar mensagem de voz" aria-label="Gravar mensagem de voz">●</button>
               <button id="pabloV2CancelRecording" class="pablo-v2-cancel" type="button" title="Cancelar gravação" aria-label="Cancelar gravação" hidden>×</button>
             </div>
@@ -8299,7 +8300,7 @@
         addDetail("OS", proposal.target?.order_number);
         const labels = { contato: "Telefone", email: "Email", endereco: "Endereço", cidade: "Cidade", urgencia: "Urgência", empresa: "Empresa", pipeline: "Etapa", status: "Status" };
         const changes = proposal.changes || {};
-        Object.keys(changes).forEach((field) => {
+        Object.keys(changes).filter((field) => !["latitude", "longitude"].includes(field)).forEach((field) => {
           if (field === "_pending_field") return;
           addDetail(`${labels[field] || field} atual`, proposal.current?.[field]);
           addDetail(`${labels[field] || field} novo`, changes[field]);
@@ -8319,6 +8320,70 @@
       }
       messages.appendChild(card);
       messages.scrollTop = messages.scrollHeight;
+    }
+
+    function renderPabloLocationResult(location) {
+      const messages = document.getElementById("pabloV2Messages");
+      if (!messages || !location) return;
+      document.querySelectorAll("[data-pablo-location-card]").forEach((card) => card.remove());
+      const card = document.createElement("div");
+      card.className = "pablo-action-card";
+      card.dataset.pabloLocationCard = "true";
+      const title = document.createElement("strong");
+      title.textContent = location.display?.title || "LOCALIZAÇÃO RECEBIDA";
+      card.appendChild(title);
+      const details = document.createElement("dl");
+      const accuracy = location.display?.accuracy_meters;
+      if (accuracy !== null && accuracy !== undefined) {
+        const dt = document.createElement("dt");
+        const dd = document.createElement("dd");
+        dt.textContent = "Precisão aproximada";
+        dd.textContent = `${accuracy} m`;
+        details.append(dt, dd);
+      }
+      card.appendChild(details);
+      const actions = document.createElement("div");
+      actions.className = "pablo-action-card-actions";
+      actions.innerHTML = `
+        <button type="button" data-pablo-location-command="usa essa localização no cliente">Usar no cliente</button>
+        <button type="button" data-pablo-location-command="usa essa localização na OS">Usar na OS</button>
+        <button type="button" data-pablo-discard-location>Descartar</button>`;
+      card.appendChild(actions);
+      messages.appendChild(card);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    async function sharePabloLocation() {
+      const button = document.getElementById("pabloV2LocationButton");
+      const status = document.getElementById("pabloV2AudioStatus");
+      if (!navigator.geolocation) throw new Error("Este navegador não disponibiliza localização.");
+      if (button) { button.disabled = true; button.textContent = "…"; }
+      if (status) status.textContent = "Solicitando localização uma vez...";
+      try {
+        const position = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true, timeout: 10000, maximumAge: 0
+        }));
+        const response = await apiFetch(`${API_BASE}/pablo/location`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ latitude: position.coords.latitude, longitude: position.coords.longitude, accuracy: position.coords.accuracy })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || "Não foi possível compartilhar a localização.");
+        renderPabloLocationResult(data.location);
+        if (status) status.textContent = "Localização disponível por 15 minutos.";
+      } catch (error) {
+        if (status) status.textContent = error.code === 1 ? "Permissão de localização negada." : (error.message || "Erro ao obter localização.");
+        throw error;
+      } finally {
+        if (button) { button.disabled = false; button.textContent = "⌖"; }
+      }
+    }
+
+    async function discardPabloLocation() {
+      const response = await apiFetch(`${API_BASE}/pablo/location/discard`, { method: "POST" });
+      if (!response.ok) throw new Error("Não foi possível descartar a localização.");
+      document.querySelectorAll("[data-pablo-location-card]").forEach((card) => card.remove());
+      addPabloV2Message("Localização descartada. Nada foi salvo.", "ai");
     }
 
     async function confirmPabloClientDraft() {
@@ -9809,6 +9874,10 @@
       document.getElementById("pabloV2ImageInput")?.click();
     });
 
+    document.getElementById("pabloV2LocationButton")?.addEventListener("click", () => {
+      sharePabloLocation().catch((error) => console.warn("Pablo location", error));
+    });
+
     document.getElementById("pabloV2ImageInput")?.addEventListener("change", (event) => {
       const file = event.target.files?.[0];
       if (file) {
@@ -9828,6 +9897,8 @@
         if (target.matches("[data-pablo-correct-action]")) document.getElementById("pabloV2Input")?.focus();
         if (target.matches("[data-pablo-vision-command]")) continuePabloVisionCommand(target.dataset.pabloVisionCommand);
         if (target.matches("[data-pablo-discard-vision]")) await discardPabloVision();
+        if (target.matches("[data-pablo-location-command]")) continuePabloVisionCommand(target.dataset.pabloLocationCommand);
+        if (target.matches("[data-pablo-discard-location]")) await discardPabloLocation();
       } catch (error) {
         addPabloV2Message(error.message || "Não foi possível concluir a ação.", "ai");
       }

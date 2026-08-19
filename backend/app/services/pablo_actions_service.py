@@ -22,6 +22,7 @@ from app.services.notification_service import dispatch_web_push_for_notification
 from app.routes.lead_routes import PIPELINE_STAGES, apply_actor_scope, ensure_lead_visible_to_actor
 from app.services.service_order_service import ensure_service_order, sync_service_order_from_lead
 from app.services.pablo_vision_service import get_active_vision, discard_vision
+from app.services.pablo_location_service import coordinates_for_action, discard_location, get_active_location
 from app.core.storage import UPLOADS_DIR
 
 
@@ -139,6 +140,56 @@ def _detect_vision_action(message: str, has_vision: bool) -> str | None:
     if re.search(r"\b(?:usa|usar|use|aplica|aplicar|coloca|colocar)\b", normalized) and re.search(r"\b(?:esses?|essas?|dados|informacoes|informacao|cadastro|cliente)\b", normalized):
         return "UPDATE_CLIENT"
     return None
+
+
+def _detect_location_action(message: str, has_location: bool) -> str | None:
+    if not has_location:
+        return None
+    normalized = unicodedata.normalize("NFKD", message.lower()).encode("ascii", "ignore").decode()
+    if not re.search(r"\b(?:localizacao|ubicacion|location|local)\b|\b(?:registra|registrar|registre)\s+(?:onde|donde|where)\b|\b(?:estou|estoy|i am)\s+(?:aqui|aqui mesmo|here)\b", normalized):
+        return None
+    if re.search(r"\b(?:os|ordem|orden|service order)\b", normalized):
+        return "UPDATE_SERVICE_ORDER"
+    return "UPDATE_CLIENT"
+
+
+def _build_location_proposal(db: Session, actor: User, message: str, action: str, location: dict) -> dict:
+    reference = _lead_reference(message)
+    lead = _resolve_lead(db, actor, reference) if reference else None
+    if action == "UPDATE_SERVICE_ORDER" and not lead:
+        order_match = re.search(r"\b(?:os|ordem|orden)\s*#?\s*([\w-]+)", message, re.IGNORECASE)
+        order = None
+        if order_match:
+            order = db.query(ServiceOrder).filter(
+                ServiceOrder.organization_id == actor.organization_id,
+                ServiceOrder.order_number.ilike(order_match.group(1)),
+            ).first()
+        if order:
+            candidate = db.query(Lead).filter(Lead.id == order.lead_id).first()
+            if candidate:
+                try:
+                    ensure_lead_visible_to_actor(db, candidate, actor)
+                except HTTPException:
+                    candidate = None
+            lead = candidate
+            if lead:
+                reference = lead.nome
+    if not lead:
+        return {"action": action, "status": "PENDING_INPUT", "missing_fields": ["client"],
+                "target": {"reference": reference}, "location_id": location["location_id"]}
+    target = {"lead_id": lead.id, "name": lead.nome}
+    if action == "UPDATE_SERVICE_ORDER":
+        order = db.query(ServiceOrder).filter(
+            ServiceOrder.organization_id == actor.organization_id,
+            ServiceOrder.lead_id == lead.id,
+        ).order_by(ServiceOrder.id.desc()).first()
+        target.update({"service_order_id": order.id if order else None, "order_number": order.order_number if order else None})
+    return {"action": action, "status": "PENDING_CONFIRMATION", "target": target,
+            "current": {"latitude": lead.latitude, "longitude": lead.longitude},
+            "changes": {"latitude": str(location["latitude"]), "longitude": str(location["longitude"])},
+            "location_id": location["location_id"], "location_accuracy": location.get("accuracy"),
+            "missing_fields": [], "created_at": datetime.utcnow().isoformat(),
+            "expires_at": (datetime.utcnow() + DRAFT_TTL).isoformat()}
 
 
 _UPDATE_FIELD_LABELS = {
@@ -296,8 +347,11 @@ def _build_vision_proposal(db: Session, actor: User, message: str, action: str, 
 
 
 def process_operational_message(db: Session, actor: User, message: str) -> dict | None:
-    action = _detect_action(message)
     vision = get_active_vision(actor)
+    location = get_active_location(actor)
+    action = _detect_location_action(message, bool(location))
+    if not action:
+        action = _detect_action(message)
     if not action:
         action = _detect_vision_action(message, bool(vision))
     with _draft_lock:
@@ -338,7 +392,10 @@ def process_operational_message(db: Session, actor: User, message: str) -> dict 
     if not action or action == "CREATE_CLIENT":
         return None
     logger.info("Pablo action detected: action=%s actor_id=%s", action, actor.id)
-    proposal = _build_vision_proposal(db, actor, message, action, vision) if vision and action in {"ATTACH_EVIDENCE", "UPDATE_CLIENT"} else _build_operational_proposal(db, actor, message, action)
+    if location and action in {"UPDATE_CLIENT", "UPDATE_SERVICE_ORDER"}:
+        proposal = _build_location_proposal(db, actor, message, action, location)
+    else:
+        proposal = _build_vision_proposal(db, actor, message, action, vision) if vision and action in {"ATTACH_EVIDENCE", "UPDATE_CLIENT"} else _build_operational_proposal(db, actor, message, action)
     if proposal:
         with _draft_lock:
             _action_proposals[_action_key(actor)] = proposal
@@ -356,6 +413,8 @@ def cancel_operational_proposal(actor: User) -> bool:
         proposal = _action_proposals.pop(_action_key(actor), None)
     if proposal and proposal.get("vision_id"):
         discard_vision(actor)
+    if proposal and proposal.get("location_id"):
+        discard_location(actor)
     return proposal is not None
 
 
@@ -400,6 +459,7 @@ def confirm_operational_proposal(db: Session, actor: User) -> dict:
     ensure_lead_visible_to_actor(db, lead, actor)
     action = proposal["action"]
     changes = proposal.get("changes", {})
+    location = coordinates_for_action(actor, proposal.get("location_id")) if proposal.get("location_id") else None
     vision = None
     if proposal.get("vision_id"):
         vision = get_active_vision(actor, proposal["vision_id"])
@@ -451,16 +511,22 @@ def confirm_operational_proposal(db: Session, actor: User) -> dict:
     else:
         service_order = ensure_service_order(db, lead, actor=actor)
         for field, value in changes.items():
+            if field in {"latitude", "longitude"}:
+                setattr(lead, field, value)
+                continue
             if field not in {"status", "warranty_days", "checklist_status", "signature_status", "warranty_seal_status"}:
                 raise HTTPException(status_code=400, detail="Campo de OS não permitido")
             setattr(service_order, field, value)
         service_order.updated_at = datetime.utcnow()
-        message = f"Atualizou OS: {', '.join(changes)}"
-    event_type = "NOTA" if action == "ADD_NOTE" else f"PABLO_ACTION_{action}"
+        lead.updated_at = datetime.utcnow()
+        message = f"Atualizou localização da OS {service_order.order_number or service_order.id}" if location else f"Atualizou OS: {', '.join(changes)}"
+    event_type = "NOTA" if action == "ADD_NOTE" else ("PABLO_ACTION_UPDATE_LOCATION" if location else f"PABLO_ACTION_{action}")
     db.add(LeadEvent(organization_id=lead.organization_id or actor.organization_id, lead_id=lead.id, actor_id=actor.id, actor_name=actor.full_name or actor.username, event_type=event_type, message=message))
     db.commit()
     if vision:
         discard_vision(actor)
+    if location:
+        discard_location(actor)
     logger.info("Pablo action completed: action=%s actor_id=%s", action, actor.id)
     return {"action": action, "status": "EXECUTED", "message": "Ação concluída.", "lead_id": lead.id, "lead_name": lead.nome}
 
@@ -556,6 +622,10 @@ def process_client_message(actor: User, message: str) -> dict | None:
             }
             for field, value in vision_data.items():
                 draft["data"].setdefault(field_map.get(field, field), value)
+        location = get_active_location(actor)
+        if location and re.search(r"\b(?:localizacao|ubicacion|location|aqui)\b", message, re.IGNORECASE):
+            draft["data"].setdefault("latitude", str(location["latitude"]))
+            draft["data"].setdefault("longitude", str(location["longitude"]))
         draft["status"] = "PENDING_CONFIRMATION" if not missing_fields(draft) else "PENDING_INPUT"
         proposal = _proposal(draft)
         if proposal["status"] == "PENDING_CONFIRMATION":
@@ -585,6 +655,8 @@ def _lead_payload(data: dict) -> LeadCreate:
         email=data.get("email"),
         empresa=data.get("company"),
         endereco=data.get("address"),
+        latitude=data.get("latitude"),
+        longitude=data.get("longitude"),
         cidade=data.get("city"),
         estado=data.get("state"),
         pais=data.get("country") or "MX",
