@@ -20,6 +20,7 @@ from app.models.organization import Organization
 from app.models.service_order import ServiceOrder
 from app.models.service_opportunity import ServiceOpportunity
 from app.models.commercial_subscription import CommercialSubscription, PlanChangeEvent
+from app.models.commercial_upgrade_intent import CommercialUpgradeIntent
 from app.models.support_ticket import SupportTicket
 from app.models.user import User
 from app.models.notification import WebPushSubscription
@@ -75,6 +76,7 @@ class PabloLiveContextTest(unittest.TestCase):
                 ServiceOpportunity.__table__,
                 CommercialSubscription.__table__,
                 PlanChangeEvent.__table__,
+                CommercialUpgradeIntent.__table__,
             ],
         )
         cls.Session = sessionmaker(bind=cls.engine)

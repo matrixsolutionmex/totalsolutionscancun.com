@@ -42,6 +42,7 @@ from app.services.pablo_vision_service import (
 from app.services.pablo_location_service import create_location_session, discard_location, get_active_location, public_location
 from app.services.marketplace_service import marketplace_query_reply
 from app.services.entitlement_service import PLANS, current_plan
+from app.services.commercial_upgrade_service import get_active_upgrade_intent
 
 
 router = APIRouter(prefix="/pablo", tags=["pablo-ai"])
@@ -245,8 +246,19 @@ def pablo_chat(
         return PabloChatResponse(reply=marketplace_reply, intent="marketplace", context=context, action_proposal=None)
 
     normalized = message.lower()
+    active_upgrade = get_active_upgrade_intent(db, actor)
+    if active_upgrade and ("pendente" in normalized or "compra" in normalized or "contrat" in normalized or "checkout" in normalized or "pagamento" in normalized):
+        if active_upgrade.status in {"PAYMENT_CONFIRMED", "PAID"}:
+            reply = f"O pagamento do plano {active_upgrade.requested_plan} foi confirmado e aguarda ativação administrativa."
+        else:
+            reply = f"O pagamento do plano {active_upgrade.requested_plan} ainda não foi confirmado. A contratação está em {active_upgrade.status.lower().replace('_', ' ')}."
+        return PabloChatResponse(reply=reply, intent="commercial", context=context, action_proposal=None)
+    if "pagamento" in normalized and ("confirm" in normalized or "já" in normalized or "ja" in normalized):
+        return PabloChatResponse(reply="Não há pagamento confirmado pendente no seu escopo.", intent="commercial", context=context, action_proposal=None)
     if "plano" in normalized or "plan" in normalized:
         plan = current_plan(db, actor)
+        if active_upgrade and ("contrat" in normalized or "compr" in normalized):
+            return PabloChatResponse(reply=f"Você está contratando o plano {active_upgrade.requested_plan}, aguardando confirmação administrativa.", intent="commercial", context=context, action_proposal=None)
         return PabloChatResponse(reply=f"Seu plano atual é {plan}. Recursos disponíveis: {', '.join(sorted(PLANS[plan]['features']))}.", intent="commercial", context=context, action_proposal=None)
     if "upgrade" in normalized or "upgrad" in normalized:
         return PabloChatResponse(reply="Posso orientar sobre os planos. Acesso promocional pode ser liberado por um administrador; pagamento online estará disponível em breve.", intent="commercial", context=context, action_proposal=None)

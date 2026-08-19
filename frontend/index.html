@@ -5761,6 +5761,26 @@
       }
     }
 
+    function commercialPlanAction(planName, account) {
+      const currentPlan = String(account.plan || "FREE").toUpperCase();
+      const activeIntent = account.active_intent;
+      const activeStatus = activeIntent ? String(activeIntent.status || "").toUpperCase() : "";
+      const planLabel = marketplaceValue(planName);
+      if (currentPlan === planName) {
+        return `<button type="button" class="ghost" disabled>Plano atual</button>`;
+      }
+      if (currentPlan === "BUSINESS" && planName === "PRO") {
+        return `<span class="line">Downgrade separado do fluxo de upgrade.</span>`;
+      }
+      if (activeIntent && ["PAYMENT_CONFIRMED", "PAID"].includes(activeStatus)) {
+        return `<span class="line">Pagamento confirmado. Aguardando ativação.</span>`;
+      }
+      if (activeIntent && activeIntent.plan === planName && activeIntent.checkout_url) {
+        return `<button class="primary-btn" type="button" data-commercial-plan="${planLabel}">Continuar pagamento ${planLabel}</button>`;
+      }
+      return `<button class="primary-btn" type="button" data-commercial-plan="${planLabel}">${currentPlan === "PRO" && planName === "BUSINESS" ? "Fazer upgrade para BUSINESS" : `Solicitar/Contratar ${planLabel}`}</button>`;
+    }
+
     async function loadCommercialPlans() {
       const cards = document.getElementById("commercialPlanCards");
       const summary = document.getElementById("commercialAccountSummary");
@@ -5784,9 +5804,7 @@
             <h3>${marketplaceValue(plan.price)}</h3>
             <div class="line">${(plan.features || []).slice(0, 6).map((feature) => marketplaceValue(feature)).join(" · ")}</div>
             <p>Clientes: ${plan.limits?.clients || 0} · Usuários: ${plan.limits?.users || 0}</p>
-            ${plan.name === "FREE"
-              ? `<button type="button" data-commercial-plan="FREE">Começar grátis</button>`
-              : `<button class="primary-btn" type="button" data-commercial-plan="${marketplaceValue(plan.name)}">Solicitar/Contratar ${marketplaceValue(plan.name)}</button>`}
+            ${plan.name === "FREE" ? `<button type="button" class="ghost" disabled>Plano incluído</button>` : commercialPlanAction(plan.name, account)}
           </article>`).join("");
         if (currentUser && ["ROOT", "GERENTE"].includes(currentUser.role)) {
           await loadCommercialUpgradeIntents();
@@ -5807,8 +5825,12 @@
           body: JSON.stringify({plan})
         });
         const data = await response.json().catch(() => ({}));
-        if (!response.ok || !data.checkout_url) {
+        if (!response.ok) {
           throw new Error(data.detail || "Não foi possível preparar o checkout.");
+        }
+        if (!data.checkout_url) {
+          addPabloV2Message(data.status === "PAYMENT_CONFIRMED" ? "Pagamento já confirmado. Aguardando ativação administrativa." : "Esta solicitação já está em processamento administrativo.", "ai");
+          return;
         }
         window.open(data.checkout_url, "_blank", "noopener,noreferrer");
         addPabloV2Message(`Solicitei o ${data.plan}. O pagamento ainda precisa ser confirmado por um administrador.`, "ai");
@@ -5838,7 +5860,7 @@
             <div class="inline-actions">
               ${intent.status === "CHECKOUT_OPENED" || intent.status === "PAYMENT_PENDING"
                 ? `<button type="button" data-commercial-intent-action="confirm-payment" data-commercial-intent-id="${intent.id}">Marcar pagamento confirmado</button>` : ""}
-              ${intent.status === "PAID"
+              ${["PAID", "PAYMENT_CONFIRMED"].includes(intent.status)
                 ? `<button type="button" data-commercial-intent-action="activate" data-commercial-intent-id="${intent.id}">Ativar plano</button>` : ""}
               ${!["ACTIVATED", "CANCELLED", "ABANDONED"].includes(intent.status)
                 ? `<button class="ghost" type="button" data-commercial-intent-action="cancel" data-commercial-intent-id="${intent.id}">Cancelar</button>` : ""}

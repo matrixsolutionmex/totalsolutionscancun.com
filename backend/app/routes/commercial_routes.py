@@ -11,9 +11,11 @@ from app.services.commercial_upgrade_service import (
     activate_upgrade_intent,
     cancel_upgrade_intent,
     checkout_url_for,
-    create_upgrade_intent,
+    create_or_reuse_upgrade_intent,
+    get_active_upgrade_intent,
     list_upgrade_intents,
     mark_payment_confirmed,
+    serialize_upgrade_intent,
 )
 
 
@@ -38,7 +40,9 @@ def commercial_plans():
 
 @router.get("/account")
 def commercial_account(db: Session = Depends(get_db), actor=Depends(get_current_user)):
-    return account_snapshot(db, actor)
+    snapshot = account_snapshot(db, actor)
+    snapshot["active_intent"] = serialize_upgrade_intent(get_active_upgrade_intent(db, actor))
+    return snapshot
 
 
 @router.get("/usage")
@@ -54,13 +58,14 @@ def commercial_upgrade_intent(
     db: Session = Depends(get_db),
     actor=Depends(get_current_user),
 ):
-    intent = create_upgrade_intent(db, actor, payload.plan, request=request)
+    intent, reused = create_or_reuse_upgrade_intent(db, actor, payload.plan, request=request)
     return {
         "intent_id": intent.id,
         "plan": intent.requested_plan,
         "provider": intent.provider,
-        "checkout_url": checkout_url_for(intent.requested_plan),
-        "status": intent.status,
+        "checkout_url": checkout_url_for(intent.requested_plan) if intent.status in {"CHECKOUT_OPENED", "PAYMENT_PENDING"} else None,
+        "status": "PAYMENT_CONFIRMED" if intent.status == "PAID" else intent.status,
+        "reused": reused,
     }
 
 

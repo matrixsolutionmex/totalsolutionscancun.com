@@ -36,6 +36,7 @@ from app.routes.user_routes import router as user_router
 from app.routes.contract_routes import router as contract_router
 from app.services.service_order_service import ensure_service_order
 from app.services.notification_service import process_email_outbox
+from app.services.commercial_upgrade_service import normalize_existing_upgrade_intents
 
 app = FastAPI(
     title="Total Solutions CRM",
@@ -314,6 +315,10 @@ def create_database_tables():
         ):
             add_column_if_missing(db, table_name, "organization_id", "INTEGER")
 
+        normalized_upgrade_intents = normalize_existing_upgrade_intents(db)
+        if normalized_upgrade_intents:
+            startup_log(f"Solicitacoes comerciais duplicadas normalizadas: {normalized_upgrade_intents}.")
+
         add_column_if_missing(db, "leads", "valor_negocio", "NUMERIC(12, 2) DEFAULT 0")
         add_column_if_missing(db, "leads", "pipeline_updated_at", "TIMESTAMP")
         add_column_if_missing(db, "leads", "created_at", "TIMESTAMP")
@@ -426,6 +431,11 @@ def create_database_tables():
         db.commit()
 
         startup_log("Criando indices operacionais.")
+        ensure_index(
+            db,
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_commercial_active_intent_org ON commercial_upgrade_intents (organization_id) WHERE status IN ('CHECKOUT_OPENED', 'PAYMENT_PENDING', 'PAYMENT_CONFIRMED', 'PAID')",
+            label="uq_commercial_active_intent_org",
+        )
         try:
             if engine.dialect.name == "postgresql":
                 db.execute(text("ALTER TABLE service_orders DROP CONSTRAINT IF EXISTS service_orders_lead_id_key"))

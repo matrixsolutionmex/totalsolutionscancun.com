@@ -15,6 +15,7 @@ from app.routes.lead_routes import apply_actor_scope
 from app.services.marketplace_service import list_opportunities
 from app.services.pablo_location_service import get_active_location
 from app.services.entitlement_service import PLANS, current_plan
+from app.services.commercial_upgrade_service import get_active_upgrade_intent, serialize_upgrade_intent
 
 
 CLIENT_LIMIT = 30
@@ -220,6 +221,7 @@ def build_context(db: Session, actor: User) -> dict:
         "commercial": {
             "plan": current_plan(db, actor),
             "features": sorted(PLANS[current_plan(db, actor)]["features"]),
+            "active_intent": serialize_upgrade_intent(get_active_upgrade_intent(db, actor)),
         },
         "limits": {
             "clients": {"total_available": total_clients, "sent": len(clients)},
