@@ -40,6 +40,7 @@ from app.services.pablo_vision_service import (
     valid_image_bytes,
 )
 from app.services.pablo_location_service import create_location_session, discard_location, get_active_location, public_location
+from app.services.marketplace_service import marketplace_query_reply
 
 
 router = APIRouter(prefix="/pablo", tags=["pablo-ai"])
@@ -162,6 +163,12 @@ def build_reply(intent: str, context: dict) -> str:
 
 
 def action_reply(proposal: dict) -> str:
+    if proposal.get("action") == "CLAIM_MARKETPLACE_OPPORTUNITY":
+        if proposal.get("status") == "PENDING_INPUT":
+            return "Qual oportunidade devo aceitar?"
+        target = proposal.get("target", {})
+        return (f"Preparei a aceitação do serviço {target.get('service_type')} em {target.get('city') or 'região não informada'}. "
+                f"Urgência: {target.get('urgency')}. Confirme para reservar o atendimento.")
     if proposal.get("action") != "CREATE_CLIENT":
         if proposal.get("status") == "PENDING_INPUT":
             field = (proposal.get("missing_fields") or ["client"])[0]
@@ -231,6 +238,10 @@ def pablo_chat(
             context=context,
             action_proposal=proposal,
         )
+
+    marketplace_reply = marketplace_query_reply(db, actor, message)
+    if marketplace_reply:
+        return PabloChatResponse(reply=marketplace_reply, intent="marketplace", context=context, action_proposal=None)
 
     fallback_reply = build_reply(intent, context)
     reply = fallback_reply
