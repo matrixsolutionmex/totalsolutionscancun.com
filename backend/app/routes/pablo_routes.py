@@ -29,7 +29,16 @@ from app.services.pablo_actions_service import (
 from app.services.pablo_audio_service import MAX_AUDIO_BYTES, transcribe_audio
 from app.services.pablo_context_service import build_context
 from app.services.pablo_ai_service import generate_pablo_reply, pablo_ai_enabled
-from app.services.pablo_vision_service import ALLOWED_IMAGE_TYPES, MAX_IMAGE_BYTES, analyze_image, valid_image_bytes
+from app.services.pablo_vision_service import (
+    ALLOWED_IMAGE_TYPES,
+    MAX_IMAGE_BYTES,
+    analyze_image,
+    create_vision_session,
+    discard_vision,
+    get_active_vision,
+    public_vision,
+    valid_image_bytes,
+)
 
 
 router = APIRouter(prefix="/pablo", tags=["pablo-ai"])
@@ -162,6 +171,8 @@ def action_reply(proposal: dict) -> str:
             return f"Vou mover {target.get('name')} de {proposal.get('current', {}).get('pipeline')} para {proposal.get('changes', {}).get('pipeline')}. Confirme para executar."
         if proposal["action"] == "ADD_NOTE":
             return f"Vou registrar uma nota para {target.get('name')}. Confirme para executar."
+        if proposal["action"] == "ATTACH_EVIDENCE":
+            return f"Vou anexar a evidência de {target.get('name')} à OS {target.get('order_number') or ''}. Confirme para executar."
         return f"Preparei a ação {proposal['action']} para {target.get('name')}. Confira e confirme para executar."
     if proposal["status"] == "PENDING_INPUT":
         questions = {
@@ -254,13 +265,25 @@ async def pablo_vision_analyze(
     file: UploadFile = File(...),
     actor: User = Depends(get_current_user),
 ):
-    del actor
     content = await file.read(MAX_IMAGE_BYTES + 1)
     if len(content) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=413, detail="Imagem excede o tamanho maximo permitido")
     if file.content_type not in ALLOWED_IMAGE_TYPES or not valid_image_bytes(content, file.content_type):
         raise HTTPException(status_code=415, detail="Formato de imagem invalido")
-    return {"status": "ANALYZED", "analysis": analyze_image(content, file.content_type), "persisted": False}
+    analysis = analyze_image(content, file.content_type)
+    vision = create_vision_session(actor, content, file.content_type, file.filename or "pablo-image", analysis)
+    return {"vision": vision, "persisted": False}
+
+
+@router.get("/vision/current")
+def pablo_current_vision(actor: User = Depends(get_current_user)):
+    session = get_active_vision(actor)
+    return {"vision": session and public_vision(session)}
+
+
+@router.post("/vision/discard")
+def pablo_discard_vision(actor: User = Depends(get_current_user)):
+    return {"status": "DISCARDED", "discarded": discard_vision(actor)}
 
 
 @router.post("/actions/evidence")

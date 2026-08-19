@@ -8296,6 +8296,7 @@
           .forEach(([label, value]) => addDetail(label, value));
       } else {
         addDetail("Cliente", proposal.target?.name);
+        addDetail("OS", proposal.target?.order_number);
         const labels = { contato: "Telefone", email: "Email", endereco: "Endereço", cidade: "Cidade", urgencia: "Urgência", empresa: "Empresa", pipeline: "Etapa", status: "Status" };
         const changes = proposal.changes || {};
         Object.keys(changes).forEach((field) => {
@@ -8365,11 +8366,53 @@
       const response = await apiFetch(`${API_BASE}/pablo/vision/analyze`, { method: "POST", body: formData });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || "Não foi possível analisar a imagem.");
-      const analysis = data.analysis || {};
-      const fields = analysis.fields && Object.keys(analysis.fields).length
-        ? JSON.stringify(analysis.fields)
-        : "Nenhum campo confiável foi identificado.";
-      addPabloV2Message(`Análise visual concluída. ${fields}${analysis.notes ? `\n\n${analysis.notes}` : ""}\n\nNada foi salvo automaticamente.`, "ai");
+      renderPabloVisionResult(data.vision);
+    }
+
+    function renderPabloVisionResult(vision) {
+      const messages = document.getElementById("pabloV2Messages");
+      if (!messages || !vision) return;
+      document.querySelectorAll("[data-pablo-vision-card]").forEach((card) => card.remove());
+      const card = document.createElement("div");
+      card.className = "pablo-action-card";
+      card.dataset.pabloVisionCard = "true";
+      const title = document.createElement("strong");
+      title.textContent = vision.display?.title || "Imagem analisada";
+      card.appendChild(title);
+      const details = document.createElement("dl");
+      (vision.display?.fields || []).forEach((field) => {
+        const dt = document.createElement("dt");
+        const dd = document.createElement("dd");
+        dt.textContent = field.label || "Campo";
+        dd.textContent = field.value || "";
+        details.append(dt, dd);
+      });
+      card.appendChild(details);
+      const actions = document.createElement("div");
+      actions.className = "pablo-action-card-actions";
+      actions.innerHTML = `
+        <button type="button" data-pablo-vision-command="anexa isso no cliente">Anexar ao cliente</button>
+        <button type="button" data-pablo-vision-command="anexa isso na OS">Anexar à OS</button>
+        <button type="button" data-pablo-vision-command="usa esses dados no cadastro">Usar no cadastro</button>
+        <button type="button" data-pablo-discard-vision>Descartar</button>
+      `;
+      card.appendChild(actions);
+      messages.appendChild(card);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    async function discardPabloVision() {
+      const response = await apiFetch(`${API_BASE}/pablo/vision/discard`, { method: "POST" });
+      if (!response.ok) throw new Error("Não foi possível descartar a análise.");
+      document.querySelectorAll("[data-pablo-vision-card]").forEach((card) => card.remove());
+      addPabloV2Message("Análise descartada. Nada foi salvo.", "ai");
+    }
+
+    function continuePabloVisionCommand(command) {
+      const input = document.getElementById("pabloV2Input");
+      if (!input) return;
+      input.value = command;
+      document.getElementById("pabloV2Composer")?.requestSubmit();
     }
 
 
@@ -9783,6 +9826,8 @@
         if (target.matches("[data-pablo-cancel-action]")) await cancelPabloAction();
         if (target.matches("[data-pablo-correct-action]")) await correctPabloAction();
         if (target.matches("[data-pablo-correct-action]")) document.getElementById("pabloV2Input")?.focus();
+        if (target.matches("[data-pablo-vision-command]")) continuePabloVisionCommand(target.dataset.pabloVisionCommand);
+        if (target.matches("[data-pablo-discard-vision]")) await discardPabloVision();
       } catch (error) {
         addPabloV2Message(error.message || "Não foi possível concluir a ação.", "ai");
       }

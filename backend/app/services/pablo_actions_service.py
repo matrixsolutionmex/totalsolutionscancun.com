@@ -5,6 +5,8 @@ from threading import RLock
 import re
 import unicodedata
 import logging
+from pathlib import Path
+from uuid import uuid4
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -12,12 +14,15 @@ from sqlalchemy.orm import Session
 from app.models.lead_event import LeadEvent
 from app.models.lead import Lead
 from app.models.service_order import ServiceOrder
+from app.models.lead_document import LeadDocument
 from app.models.user import User
 from app.schemas.lead_schema import LeadCreate
 from app.services.lead_creation_service import create_lead_record
 from app.services.notification_service import dispatch_web_push_for_notification_ids
 from app.routes.lead_routes import PIPELINE_STAGES, apply_actor_scope, ensure_lead_visible_to_actor
 from app.services.service_order_service import ensure_service_order, sync_service_order_from_lead
+from app.services.pablo_vision_service import get_active_vision, discard_vision
+from app.core.storage import UPLOADS_DIR
 
 
 DRAFT_TTL = timedelta(minutes=15)
@@ -125,6 +130,17 @@ def _detect_action(message: str) -> str | None:
     return None
 
 
+def _detect_vision_action(message: str, has_vision: bool) -> str | None:
+    if not has_vision:
+        return None
+    normalized = unicodedata.normalize("NFKD", message.lower()).encode("ascii", "ignore").decode()
+    if re.search(r"\b(?:anexa|anexar|anexe|salva|salvar|registre|registrar|coloca|colocar)\b", normalized) and re.search(r"\b(?:isso|esta|esse|essa|imagem|documento|foto|os|ordem|cliente)\b", normalized):
+        return "ATTACH_EVIDENCE"
+    if re.search(r"\b(?:usa|usar|use|aplica|aplicar|coloca|colocar)\b", normalized) and re.search(r"\b(?:esses?|essas?|dados|informacoes|informacao|cadastro|cliente)\b", normalized):
+        return "UPDATE_CLIENT"
+    return None
+
+
 _UPDATE_FIELD_LABELS = {
     "contato": r"telefone|tel[eé]fono|phone",
     "email": r"email|e-mail|correo",
@@ -159,8 +175,8 @@ def _lead_reference(message: str) -> str:
     )
     if possessive:
         return possessive.group(1).strip()
-    name = r"([A-ZÀ-Ý][\wÀ-ÿ]+(?:\s+[A-ZÀ-Ý][\wÀ-ÿ]+){0,5}?)(?=\s+(?:para|a|to|for|en|status|estado)\b|[?.!,;:]|$)"
-    match = re.search(rf"(?:do|da|de|del|of|for|o|a|el|la)\s+{name}", message)
+    name = r"([A-ZÀ-Ý][\wÀ-ÿ]+(?:\s+[A-ZÀ-Ý][\wÀ-ÿ]+){0,5}?)(?=\s+(?:para|a|to|for|en|no|na|on|in|status|estado)\b|[?.!,;:]|$)"
+    match = re.search(rf"(?:do|da|de|del|of|for|o|a|el|la|no|na|on|in)\s+{name}", message)
     if not match:
         match = re.search(rf"\b(?:mover|move|cambiar|change|atualizar|actualizar|update|colocar|put)\s+{name}", message, re.IGNORECASE)
     if match:
@@ -229,14 +245,74 @@ def _build_operational_proposal(db: Session, actor: User, message: str, action: 
     return proposal
 
 
+def _vision_fields(vision: dict) -> dict:
+    fields = vision.get("analysis", {}).get("fields", {})
+    aliases = {
+        "name": "nome", "full_name": "nome", "phone": "contato", "telephone": "contato",
+        "email": "email", "country": "pais", "city": "cidade", "state": "estado",
+        "company": "empresa", "service_type": "nicho", "urgency": "urgencia",
+    }
+    return {
+        aliases[key]: value
+        for key, value in fields.items()
+        if key in aliases and value not in (None, "") and isinstance(value, (str, int, float))
+    }
+
+
+def _build_vision_proposal(db: Session, actor: User, message: str, action: str, vision: dict) -> dict:
+    reference = _lead_reference(message)
+    lead = _resolve_lead(db, actor, reference) if reference else None
+    base = {
+        "action": action,
+        "status": "PENDING_INPUT",
+        "target": {"reference": reference},
+        "vision_id": vision["vision_id"],
+        "missing_fields": [],
+    }
+    if not lead:
+        base["missing_fields"] = ["client"]
+        return base
+    base["target"] = {"lead_id": lead.id, "name": lead.nome}
+    if action == "UPDATE_CLIENT":
+        changes = _vision_fields(vision)
+        base["current"] = {field: getattr(lead, field, None) for field in changes}
+        base["changes"] = changes
+        if not changes:
+            base["missing_fields"] = ["usable_vision_fields"]
+            return base
+    else:
+        order = db.query(ServiceOrder).filter(
+            ServiceOrder.lead_id == lead.id,
+            ServiceOrder.organization_id == actor.organization_id,
+        ).order_by(ServiceOrder.id.desc()).first()
+        if not order:
+            base["missing_fields"] = ["service_order"]
+            return base
+        base["target"]["service_order_id"] = order.id
+        base["target"]["order_number"] = order.order_number
+        base["changes"] = {"document_type": vision.get("document_type") or "OTROS"}
+    base["status"] = "PENDING_CONFIRMATION"
+    return base
+
+
 def process_operational_message(db: Session, actor: User, message: str) -> dict | None:
     action = _detect_action(message)
+    vision = get_active_vision(actor)
+    if not action:
+        action = _detect_vision_action(message, bool(vision))
     with _draft_lock:
         pending = _action_proposals.get(_action_key(actor))
 
     if not action and pending and pending.get("status") == "PENDING_INPUT":
         missing = pending.get("missing_fields") or []
         if "client" in missing:
+            if pending.get("vision_id"):
+                vision = get_active_vision(actor, pending["vision_id"])
+                if vision:
+                    proposal = _build_vision_proposal(db, actor, message, pending["action"], vision)
+                    with _draft_lock:
+                        _action_proposals[_action_key(actor)] = proposal
+                    return proposal
             lead = _resolve_lead(db, actor, message)
             if not lead:
                 return dict(pending)
@@ -262,7 +338,7 @@ def process_operational_message(db: Session, actor: User, message: str) -> dict 
     if not action or action == "CREATE_CLIENT":
         return None
     logger.info("Pablo action detected: action=%s actor_id=%s", action, actor.id)
-    proposal = _build_operational_proposal(db, actor, message, action)
+    proposal = _build_vision_proposal(db, actor, message, action, vision) if vision and action in {"ATTACH_EVIDENCE", "UPDATE_CLIENT"} else _build_operational_proposal(db, actor, message, action)
     if proposal:
         with _draft_lock:
             _action_proposals[_action_key(actor)] = proposal
@@ -277,7 +353,10 @@ def get_operational_proposal(actor: User) -> dict | None:
 
 def cancel_operational_proposal(actor: User) -> bool:
     with _draft_lock:
-        return _action_proposals.pop(_action_key(actor), None) is not None
+        proposal = _action_proposals.pop(_action_key(actor), None)
+    if proposal and proposal.get("vision_id"):
+        discard_vision(actor)
+    return proposal is not None
 
 
 def correct_operational_proposal(actor: User) -> dict:
@@ -321,6 +400,11 @@ def confirm_operational_proposal(db: Session, actor: User) -> dict:
     ensure_lead_visible_to_actor(db, lead, actor)
     action = proposal["action"]
     changes = proposal.get("changes", {})
+    vision = None
+    if proposal.get("vision_id"):
+        vision = get_active_vision(actor, proposal["vision_id"])
+        if not vision:
+            raise HTTPException(status_code=410, detail="A sessão Vision expirou")
     if action == "CHANGE_PIPELINE":
         stage = changes["pipeline"]
         if stage not in PIPELINE_STAGES:
@@ -339,6 +423,29 @@ def confirm_operational_proposal(db: Session, actor: User) -> dict:
         service_order = ensure_service_order(db, lead, actor=actor)
         sync_service_order_from_lead(db, service_order, lead, actor=actor)
         message = f"Atualizou dados do cliente: {', '.join(changes)}"
+    elif action == "ATTACH_EVIDENCE":
+        content_type = vision["content_type"]
+        extension = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}[content_type]
+        folder = UPLOADS_DIR / "lead_documents" / str(lead.id)
+        folder.mkdir(parents=True, exist_ok=True)
+        safe_name = f"{uuid4().hex}{extension}"
+        destination = folder / safe_name
+        destination.write_bytes(vision["content"])
+        document_type = str(changes.get("document_type") or "OTROS").upper()
+        allowed_types = {"ANTES_SERVICIO", "DURANTE_SERVICIO", "DESPUES_SERVICIO", "PRESUPUESTO", "NOTA_FISCAL", "GARANTIA", "VIDEO", "OTROS"}
+        document = LeadDocument(
+            organization_id=lead.organization_id or actor.organization_id,
+            lead_id=lead.id,
+            uploaded_by_user_id=actor.id,
+            document_type=document_type if document_type in allowed_types else "OTROS",
+            file_name=vision.get("filename") or "pablo-vision-evidence",
+            file_path=f"/uploads/lead_documents/{lead.id}/{safe_name}",
+            file_mime=content_type,
+            file_size=len(vision["content"]),
+        )
+        db.add(document)
+        order_number = proposal.get("target", {}).get("order_number") or "OS"
+        message = f"Anexou evidência da Vision à {order_number}"
     elif action == "ADD_NOTE":
         message = changes["note"]
     else:
@@ -352,6 +459,8 @@ def confirm_operational_proposal(db: Session, actor: User) -> dict:
     event_type = "NOTA" if action == "ADD_NOTE" else f"PABLO_ACTION_{action}"
     db.add(LeadEvent(organization_id=lead.organization_id or actor.organization_id, lead_id=lead.id, actor_id=actor.id, actor_name=actor.full_name or actor.username, event_type=event_type, message=message))
     db.commit()
+    if vision:
+        discard_vision(actor)
     logger.info("Pablo action completed: action=%s actor_id=%s", action, actor.id)
     return {"action": action, "status": "EXECUTED", "message": "Ação concluída.", "lead_id": lead.id, "lead_name": lead.nome}
 
@@ -402,7 +511,7 @@ def _extract_fields(message: str, draft: dict) -> None:
         if email_match:
             data["email"] = email_match.group(0)
 
-    if not data.get("name") and not any(token in lower for token in ("cadastrar", "cadastre", "crear", "criar", "registrar")):
+    if not data.get("name") and not any(token in lower for token in ("cadastrar", "cadastre", "cadastro", "crear", "criar", "registrar")):
         if not missing_fields(draft) or "phone" not in missing_fields(draft):
             data["name"] = text
 
@@ -425,7 +534,10 @@ def process_client_message(actor: User, message: str) -> dict | None:
     with _draft_lock:
         _cleanup_expired()
         draft = _drafts.get(key)
-        create_intent = is_create_client_request(message)
+        vision = get_active_vision(actor)
+        create_intent = is_create_client_request(message) or bool(
+            vision and re.search(r"\b(?:cadastro|cadastrar|registrar)\b", message, re.IGNORECASE)
+        )
         if not draft and not create_intent:
             return None
         if create_intent:
@@ -434,6 +546,16 @@ def process_client_message(actor: User, message: str) -> dict | None:
             draft = _new_draft(actor)
             _drafts[key] = draft
         _extract_fields(message, draft)
+        vision = get_active_vision(actor)
+        if vision:
+            vision_data = _vision_fields(vision)
+            field_map = {
+                "nome": "name", "contato": "phone", "email": "email", "pais": "country",
+                "cidade": "city", "estado": "state", "empresa": "company", "nicho": "service_type",
+                "urgencia": "urgency",
+            }
+            for field, value in vision_data.items():
+                draft["data"].setdefault(field_map.get(field, field), value)
         draft["status"] = "PENDING_CONFIRMATION" if not missing_fields(draft) else "PENDING_INPUT"
         proposal = _proposal(draft)
         if proposal["status"] == "PENDING_CONFIRMATION":
@@ -450,7 +572,10 @@ def get_client_draft(actor: User) -> dict | None:
 
 def cancel_client_draft(actor: User) -> bool:
     with _draft_lock:
-        return _drafts.pop(_key(actor), None) is not None
+        removed = _drafts.pop(_key(actor), None) is not None
+    if removed:
+        discard_vision(actor)
+    return removed
 
 
 def _lead_payload(data: dict) -> LeadCreate:

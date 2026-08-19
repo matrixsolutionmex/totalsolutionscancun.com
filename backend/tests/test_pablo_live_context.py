@@ -1,4 +1,5 @@
 import os
+import tempfile
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
@@ -13,6 +14,7 @@ from app.database.connection import Base
 from app.main import app
 from app.models.lead import Lead
 from app.models.lead_event import LeadEvent
+from app.models.lead_document import LeadDocument
 from app.models.notification import Notification
 from app.models.organization import Organization
 from app.models.service_order import ServiceOrder
@@ -33,6 +35,12 @@ from app.services.pablo_actions_service import (
 )
 from app.services.pablo_audio_service import transcribe_audio
 from app.services.pablo_context_service import build_context
+from app.services.pablo_vision_service import (
+    create_vision_session,
+    discard_vision,
+    expire_vision_for_test,
+    get_active_vision,
+)
 
 
 class PabloLiveContextTest(unittest.TestCase):
@@ -51,6 +59,7 @@ class PabloLiveContextTest(unittest.TestCase):
                 Lead.__table__,
                 LeadEvent.__table__,
                 ServiceOrder.__table__,
+                LeadDocument.__table__,
                 SupportTicket.__table__,
                 Notification.__table__,
                 WebPushSubscription.__table__,
@@ -415,6 +424,53 @@ Observação: Cliente solicitou diagnóstico de 12 aparelhos de ar-condicionado 
         self.assertEqual(corrected["status"], "PENDING_INPUT")
         self.assertEqual(corrected["target"]["name"], "Javier Edmundo")
         self.assertEqual(corrected["missing_fields"], ["value"])
+
+    def test_vision_session_is_actor_org_scoped_and_expires(self):
+        analysis = {"status": "ANALYZED", "fields": {"document_type": "passport", "name": "Pessoa Sensível", "passport_number": "SECRET"}}
+        session = create_vision_session(self.actor, b"image", "image/png", "doc.png", analysis)
+        self.assertTrue(session["vision_id"])
+        self.assertNotIn("SECRET", str(session))
+        self.assertIsNotNone(get_active_vision(self.actor, session["vision_id"]))
+        self.assertIsNone(get_active_vision(self.other_user, session["vision_id"]))
+        expire_vision_for_test(self.actor)
+        self.assertIsNone(get_active_vision(self.actor, session["vision_id"]))
+
+    def test_vision_attach_requires_confirmation_and_persists_after_confirm(self):
+        lead = Lead(organization_id=self.org.id, nome="Javier Edmundo", assigned_to_user_id=self.actor.id)
+        self.db.add(lead)
+        self.db.flush()
+        order = ServiceOrder(organization_id=self.org.id, lead_id=lead.id, order_number="TS-2026-000019", status="ABERTA")
+        self.db.add(order)
+        self.db.commit()
+        create_vision_session(self.actor, b"\x89PNG\r\n\x1a\nvision", "image/png", "passport.png", {"status": "ANALYZED", "fields": {"document_type": "passport"}})
+        with tempfile.TemporaryDirectory() as folder:
+            with patch("app.services.pablo_actions_service.UPLOADS_DIR", __import__("pathlib").Path(folder)):
+                proposal = process_operational_message(self.db, self.actor, "anexa isso na OS do Javier Edmundo")
+                self.assertEqual(proposal["action"], "ATTACH_EVIDENCE")
+                self.assertEqual(proposal["status"], "PENDING_CONFIRMATION")
+                self.assertEqual(self.db.query(LeadDocument).count(), 0)
+                result = confirm_operational_proposal(self.db, self.actor)
+                self.assertEqual(result["action"], "ATTACH_EVIDENCE")
+                self.assertEqual(self.db.query(LeadDocument).count(), 1)
+
+    def test_vision_applies_only_allowed_fields_to_client_and_draft(self):
+        lead = Lead(organization_id=self.org.id, nome="Javier Edmundo", contato="555-1000", assigned_to_user_id=self.actor.id)
+        self.db.add(lead)
+        self.db.commit()
+        create_vision_session(self.actor, b"image", "image/png", "label.png", {"status": "ANALYZED", "fields": {"phone": "+52 555 777 8888", "city": "Cancún", "passport_number": "SECRET"}})
+        proposal = process_operational_message(self.db, self.actor, "usa esses dados no Javier Edmundo")
+        self.assertEqual(proposal["action"], "UPDATE_CLIENT")
+        self.assertEqual(proposal["changes"], {"contato": "+52 555 777 8888", "cidade": "Cancún"})
+        cancel_operational_proposal(self.actor)
+        create_vision_session(self.actor, b"image", "image/png", "label.png", {"status": "ANALYZED", "fields": {"phone": "+52 555 777 8888", "city": "Cancún", "passport_number": "SECRET"}})
+        draft = process_client_message(self.actor, "quero cadastrar este cliente")
+        self.assertEqual(draft["data"]["phone"], "+52 555 777 8888")
+        self.assertNotIn("passport_number", draft["data"])
+
+    def test_frontend_vision_uses_safe_display_not_raw_json(self):
+        html = __import__("pathlib").Path(__file__).parents[2].joinpath("frontend", "index.html").read_text(encoding="utf-8")
+        self.assertIn("renderPabloVisionResult", html)
+        self.assertNotIn("JSON.stringify(analysis.fields)", html)
 
 
 if __name__ == "__main__":
