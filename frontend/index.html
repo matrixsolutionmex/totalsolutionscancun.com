@@ -6284,6 +6284,16 @@
           ? `https://maps.apple.com/?daddr=${encodeURIComponent(`${latitude},${longitude}`)}`
           : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${latitude},${longitude}`)}`)
         : (lead.google_maps_url || "");
+      const terminalOrderStatuses = ["COMPLETED", "CONCLUIDA", "FINALIZADA", "CANCELLED", "CANCELADA", "PERDIDO"];
+      const canControlTracking = Boolean(order.id) && currentUser?.role === "BROKER"
+        && String(order.responsible_user_id || lead.assigned_to_user_id) === String(currentUser.id)
+        && !terminalOrderStatuses.includes(String(order.status || "").toUpperCase());
+      const trackingActions = canControlTracking && order.status === "EN_CAMINO"
+        ? `<div class="card-actions-row">
+            <button class="small-btn" type="button" onclick="stopServiceOrderTracking(${order.id}, 'ARRIVED')">Marcar llegada</button>
+            <button class="small-btn" type="button" onclick="stopServiceOrderTracking(${order.id}, 'MANUAL')">Detener ruta</button>
+          </div>`
+        : (canControlTracking ? `<div class="card-actions-row"><button class="small-btn" type="button" onclick="startServiceOrderTracking(${order.id})">Iniciar ruta</button></div>` : "");
 
       return `
         <article class="card ${stageClass}" draggable="true" data-lead-id="${lead.id}">
@@ -6301,8 +6311,11 @@
           <div class="status">Entrada: <span>${escapeHtml(lead.received_at || lead.created_at || "-")}</span></div>
           <div class="status">Próximo contacto: <span>${escapeHtml(lead.proximo_contacto || "-")}</span></div>
           <div class="status">OS: <span>${escapeHtml(osNumber || "-")}</span></div>
+          <div class="status">Estado de ruta: <span>${escapeHtml(order.status || "Sin iniciar")}</span></div>
+          ${order.status === "EN_CAMINO" ? '<div class="status">Compartiendo ubicación durante este servicio</div>' : ""}
           <div class="status">Local del servicio: <span>${escapeHtml(hasCoordinates ? "Coordenadas confirmadas" : (lead.google_maps_url ? "Enlace de mapa" : "No informado"))}</span></div>
           ${navigationUrl ? `<div class="card-actions-row"><a class="small-btn" href="${escapeHtml(navigationUrl)}" target="_blank" rel="noopener noreferrer">Navegar hasta el cliente</a></div>` : ""}
+          ${trackingActions}
           <div class="lead-country"><span class="flag">${country.flag}</span>${escapeHtml(territory)}</div>
           <div class="status">${t("status")}: <span>${escapeHtml(stageLabel(lead.pipeline))}</span></div>
           <div class="status">${t("score")}: <span>${lead.score ?? 0}</span></div>
@@ -6337,6 +6350,41 @@
       }
 
       return null;
+    }
+
+    async function startServiceOrderTracking(orderId) {
+      if (!orderId || !confirm("¿Aceptas compartir tu ubicación durante este servicio?")) {
+        return;
+      }
+      const response = await apiFetch(`${API_BASE}/service-orders/${orderId}/tracking/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ consent_granted: true })
+      });
+      if (!response.ok) {
+        alert(await responseMessage(response, "No fue posible iniciar la ruta"));
+        return;
+      }
+      await loadBoard();
+    }
+
+    async function stopServiceOrderTracking(orderId, reason) {
+      const message = reason === "ARRIVED"
+        ? "¿Confirmas que llegaste al lugar del servicio?"
+        : "¿Deseas detener la ruta?";
+      if (!orderId || !confirm(message)) {
+        return;
+      }
+      const response = await apiFetch(`${API_BASE}/service-orders/${orderId}/tracking/stop`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason })
+      });
+      if (!response.ok) {
+        alert(await responseMessage(response, "No fue posible detener la ruta"));
+        return;
+      }
+      await loadBoard();
     }
 
     async function openLeadFromRequest(leadId) {
@@ -9954,7 +10002,7 @@
     function bindCardOpen() {
       boardEl.querySelectorAll(".card").forEach((card) => {
         card.addEventListener("click", (event) => {
-          if (event.target.closest("a")) {
+          if (event.target.closest("a, button")) {
             return;
           }
 

@@ -30,6 +30,7 @@ from app.services.dossier_pdf_service import build_service_dossier_pdf
 from app.services.lead_entry_service import property_extra_json, validate_responsible
 from app.services.lead_creation_service import create_lead_record
 from app.services.service_order_service import ensure_service_order, sync_service_order_from_lead
+from app.services.service_order_tracking_service import stop_tracking_for_order
 from app.services.notification_service import dispatch_web_push_for_notification_ids, notify_assignment_change
 
 router = APIRouter(prefix="/leads", tags=["leads"])
@@ -485,6 +486,14 @@ def update_lead_pipeline(
     service_order = ensure_service_order(db, lead, actor=actor)
     sync_service_order_from_lead(db, service_order, lead, actor=actor)
     db.commit()
+    if stage in {"VENDA GANHA", "PERDIDO"}:
+        stop_tracking_for_order(
+            db,
+            service_order,
+            actor=actor,
+            reason="COMPLETED" if stage == "VENDA GANHA" else "CANCELLED",
+            preserve_status=True,
+        )
     db.refresh(lead)
     return lead
 
@@ -694,6 +703,14 @@ def update_lead(
             new_user_id=assignment_new_id,
         )
     db.commit()
+    if lead.pipeline in {"VENDA GANHA", "PERDIDO"}:
+        stop_tracking_for_order(
+            db,
+            service_order,
+            actor=actor,
+            reason="COMPLETED" if lead.pipeline == "VENDA GANHA" else "CANCELLED",
+            preserve_status=True,
+        )
     if assignment_previous_id != assignment_new_id:
         dispatch_web_push_for_notification_ids(db, pending_push_notification_ids)
     db.refresh(lead)

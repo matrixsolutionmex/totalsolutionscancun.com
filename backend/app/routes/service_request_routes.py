@@ -4,12 +4,19 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.auth.jwt_handler import get_db, require_admin_user
+from app.auth.jwt_handler import get_current_user as get_actor, get_db, require_admin_user
 from app.models.lead_event import LeadEvent
 from app.models.service_order import ServiceOrder
 from app.models.service_request import ServiceRequest
 from app.models.user import User
 from app.services.customer_portal_service import service_request_sales_summary
+from app.services.service_order_tracking_service import (
+    get_tracking_for_actor,
+    start_tracking,
+    stop_tracking,
+    stop_tracking_for_order,
+    update_tracking_position,
+)
 
 
 router = APIRouter(tags=["service-requests"])
@@ -22,6 +29,20 @@ class TriagePayload(BaseModel):
 
 class AssignUserPayload(BaseModel):
     user_id: int
+
+
+class TrackingStartPayload(BaseModel):
+    consent_granted: bool = False
+
+
+class TrackingPositionPayload(BaseModel):
+    latitude: float
+    longitude: float
+    accuracy_m: float | None = None
+
+
+class TrackingStopPayload(BaseModel):
+    reason: str = "MANUAL"
 
 
 def _actor_label(actor: User) -> str:
@@ -117,6 +138,14 @@ def triage_service_request(
     order.status = status
     order.updated_at = datetime.utcnow()
     _add_event(db, order, actor, "SERVICE_REQUEST_TRIAGED", f"Solicitud revisada: {status}")
+    if status in {"CANCELADA", "CANCELLED", "COMPLETED", "CONCLUIDA", "FINALIZADA"}:
+        stop_tracking_for_order(
+            db,
+            order,
+            actor=actor,
+            reason="CANCELLED" if status in {"CANCELADA", "CANCELLED"} else "COMPLETED",
+            preserve_status=True,
+        )
     db.commit()
     db.refresh(service_request)
     return service_request_sales_summary(service_request)
@@ -157,3 +186,42 @@ def assign_service_order_technician(
     db.commit()
     db.refresh(order)
     return {"id": order.id, "order_number": order.order_number, "responsible_user_id": order.responsible_user_id}
+
+
+@router.get("/service-orders/{order_id}/tracking")
+def get_service_order_tracking(
+    order_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_actor),
+):
+    return get_tracking_for_actor(db, order_id, actor)
+
+
+@router.post("/service-orders/{order_id}/tracking/start")
+def start_service_order_tracking(
+    order_id: int,
+    payload: TrackingStartPayload,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_actor),
+):
+    return start_tracking(db, order_id, actor, payload.consent_granted)
+
+
+@router.post("/service-orders/{order_id}/tracking/position")
+def update_service_order_tracking_position(
+    order_id: int,
+    payload: TrackingPositionPayload,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_actor),
+):
+    return update_tracking_position(db, order_id, actor, payload.latitude, payload.longitude, payload.accuracy_m)
+
+
+@router.post("/service-orders/{order_id}/tracking/stop")
+def stop_service_order_tracking(
+    order_id: int,
+    payload: TrackingStopPayload,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_actor),
+):
+    return stop_tracking(db, order_id, actor, payload.reason)
