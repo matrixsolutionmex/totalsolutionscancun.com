@@ -82,17 +82,21 @@ def subscription_for_organization(db: Session, organization_id: int | None, *, c
     return subscription
 
 
-def current_plan(db: Session, actor: User) -> str:
+def resolve_plan(db: Session, actor: User) -> dict:
     profile = None
     if inspect(db.get_bind()).has_table(UserCommercialProfile.__tablename__):
         profile = db.query(UserCommercialProfile).filter(UserCommercialProfile.user_id == actor.id).first()
     if profile and profile.status == "ACTIVE":
-        return normalize_plan(profile.plan)
+        return {"plan": normalize_plan(profile.plan), "source": "USER_COMMERCIAL_PROFILE"}
     subscription = subscription_for(db, actor)
     if subscription:
-        return normalize_plan(subscription.plan)
+        return {"plan": normalize_plan(subscription.plan), "source": "ORGANIZATION_SUBSCRIPTION_FALLBACK"}
     organization = db.query(Organization).filter(Organization.id == actor.organization_id).first()
-    return normalize_plan(getattr(organization, "plan", None))
+    return {"plan": normalize_plan(getattr(organization, "plan", None)), "source": "ORGANIZATION_PLAN_FALLBACK"}
+
+
+def current_plan(db: Session, actor: User) -> str:
+    return resolve_plan(db, actor)["plan"]
 
 
 def get_plan_limits(db: Session, actor: User) -> dict:

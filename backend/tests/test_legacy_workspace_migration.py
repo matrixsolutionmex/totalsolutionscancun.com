@@ -20,6 +20,7 @@ from app.models.service_order import ServiceOrder
 from app.models.user import User
 from app.models.user_commercial_profile import UserCommercialProfile
 from app.services.entitlement_service import current_plan
+from app.services.platform_admin_service import list_platform_users
 from app.services.legacy_workspace_migration_service import legacy_workspace_candidates, legacy_workspace_diagnostics, migrate_legacy_user_to_primary
 from app.services.marketplace_service import assign_opportunity, list_opportunities
 from app.routes.admin_routes import LegacyMigrationRequest, admin_legacy_workspace_candidates, admin_migrate_legacy_user
@@ -57,7 +58,7 @@ def make_user(db, *, username, organization_id, role="BROKER", plan="FREE", mana
     return user
 
 
-def setup_realistic_case(db, primary_slug, *, magno_role="GERENTE"):
+def setup_realistic_case(db, primary_slug, *, magno_role="GERENTE", include_profile=True):
     primary = Organization(name="Total Solutions", slug=primary_slug, is_platform_owner=True, plan="BUSINESS")
     legacy = Organization(name="Magno A B", slug=f"magno-a-b-{uuid4().hex[:8]}", plan="PRO")
     db.add_all([primary, legacy])
@@ -68,8 +69,9 @@ def setup_realistic_case(db, primary_slug, *, magno_role="GERENTE"):
     root = make_user(db, username="root", organization_id=primary.id, role="ROOT")
     magno = make_user(db, username="magnoalvesbrasil", organization_id=legacy.id, role=magno_role)
     magno.email = "magnoalvesbrasil@proton.me"
-    profile = UserCommercialProfile(user_id=magno.id, plan="PRO", status="ACTIVE", source="ROOT_ADMIN", granted_by_user_id=root.id)
-    db.add(profile)
+    if include_profile:
+        profile = UserCommercialProfile(user_id=magno.id, plan="PRO", status="ACTIVE", source="ROOT_ADMIN", granted_by_user_id=root.id)
+        db.add(profile)
     for index in range(15):
         db.add(ServiceOpportunity(public_id=f"MKT-LEGACY-{index}", organization_id=primary.id, source="MARKETPLACE", service_type="MANUTENCAO", city="Cancún"))
     db.commit()
@@ -140,6 +142,23 @@ def test_activated_intent_and_legacy_subscription_do_not_block_diagnostic(migrat
     assert row["checks"]["no_active_commercial_intent"] is True
     assert row["historical_intent_statuses"] == ["ACTIVATED"]
     assert row["organization_subscription"] == {"plan": "PRO", "status": "ACTIVE"}
+
+
+def test_migration_uses_same_canonical_plan_source_as_global_directory(migration_db):
+    db, primary_slug = migration_db
+    primary, legacy, root, magno, *_ = setup_realistic_case(db, primary_slug, magno_role="BROKER", include_profile=False)
+    magno.onboarding_source = "INDEPENDENT"
+    db.commit()
+    directory_row = next(item for item in list_platform_users(db, search="magnoalvesbrasil@proton.me") if item["id"] == magno.id)
+    diagnostic = next(item for item in legacy_workspace_diagnostics(db) if item["user_id"] == magno.id)
+    assert directory_row["plan"] == "PRO"
+    assert directory_row["plan_source"] == "ORGANIZATION_SUBSCRIPTION_FALLBACK"
+    assert diagnostic["displayed_plan"] == directory_row["plan"]
+    assert diagnostic["resolved_plan"] == directory_row["plan"]
+    assert diagnostic["plan_source"] == directory_row["plan_source"]
+    assert diagnostic["checks"]["plan_allowed"] is True
+    assert diagnostic["eligible"] is True
+    assert any(item["user_id"] == magno.id for item in legacy_workspace_candidates(db))
     endpoint_response = admin_legacy_workspace_candidates(db, root)
     assert any(item["user_id"] == magno.id for item in endpoint_response["candidates"])
     assert any(item["user_id"] == magno.id and item["eligible"] for item in endpoint_response["diagnostics"])

@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from fastapi import HTTPException
-from sqlalchemy import func, inspect
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.auth_security import audit_auth_event
@@ -12,8 +12,7 @@ from app.models.lead import Lead
 from app.models.organization import Organization
 from app.models.service_order import ServiceOrder
 from app.models.user import User
-from app.models.user_commercial_profile import UserCommercialProfile
-from app.services.entitlement_service import normalize_plan
+from app.services.entitlement_service import resolve_plan
 from app.services.commercial_upgrade_service import ACTIVE_INTENT_STATUSES
 
 
@@ -28,10 +27,8 @@ def legacy_workspace_diagnostics(db: Session) -> list[dict]:
         active_intents = [item for item in intents if item.status in ACTIVE_INTENT_STATUSES]
         subscription = db.query(CommercialSubscription).filter(CommercialSubscription.organization_id == organization.id).first()
         for user in users:
-            profile = None
-            if inspect(db.get_bind()).has_table(UserCommercialProfile.__tablename__):
-                profile = db.query(UserCommercialProfile).filter(UserCommercialProfile.user_id == user.id, UserCommercialProfile.status == "ACTIVE").first()
-            individual_plan = normalize_plan(profile.plan if profile else getattr(user, "plan", "FREE"))
+            resolved_plan = resolve_plan(db, user)
+            individual_plan = resolved_plan["plan"]
             subordinate_count = db.query(User).filter(User.manager_id == user.id, User.organization_id == organization.id, User.role == "BROKER").count()
             checks = {
                 "legacy_workspace": organization.id != primary.id,
@@ -77,6 +74,9 @@ def legacy_workspace_diagnostics(db: Session) -> list[dict]:
                 "status": user.status,
                 "onboarding_source": user.onboarding_source,
                 "individual_plan": individual_plan,
+                "resolved_plan": individual_plan,
+                "plan_source": resolved_plan["source"],
+                "displayed_plan": individual_plan,
                 "clients_count": client_count,
                 "service_orders_count": service_order_count,
                 "subordinates_count": subordinate_count,

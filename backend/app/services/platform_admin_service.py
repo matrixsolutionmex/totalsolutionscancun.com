@@ -7,7 +7,7 @@ from app.models.lead import Lead
 from app.models.organization import Organization
 from app.models.service_order import ServiceOrder
 from app.models.user import User
-from app.services.entitlement_service import current_plan, normalize_plan
+from app.services.entitlement_service import current_plan, normalize_plan, resolve_plan
 
 
 def _subscription(db: Session, organization_id: int):
@@ -33,7 +33,8 @@ def _supervisor(db: Session, manager_id: int | None):
 def _user_row(db: Session, user: User, organization: Organization | None = None) -> dict:
     organization = organization or db.query(Organization).filter(Organization.id == user.organization_id).first()
     supervisor = _supervisor(db, user.manager_id)
-    plan = current_plan(db, user) if organization else "FREE"
+    resolved_plan = resolve_plan(db, user) if organization else {"plan": "FREE", "source": "NO_ORGANIZATION"}
+    plan = resolved_plan["plan"]
     return {
         "id": user.id,
         "full_name": user.full_name or user.username,
@@ -53,6 +54,7 @@ def _user_row(db: Session, user: User, organization: Organization | None = None)
         "created_at": user.registered_at.isoformat() if user.registered_at else None,
         "last_seen_at": user.last_seen_at.isoformat() if user.last_seen_at else None,
         "plan": plan,
+        "plan_source": resolved_plan["source"],
     }
 
 
