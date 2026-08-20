@@ -1029,11 +1029,47 @@ def test_customer_portal_location_is_validated_and_propagated_to_os(db):
     db.refresh(service_request)
     assert service_request.location_lat == pytest.approx(21.1619)
     assert service_request.property_record.location_source == "DEVICE_GPS"
+    assert service_request.location_confirmed_at is not None
+    assert service_request.property_record.location_confirmed_at is not None
     assert service_request.lead.location_source == "DEVICE_GPS"
     assert service_request.lead.latitude == "21.1619"
     assert service_request.service_order.location_lat == pytest.approx(21.1619)
     assert service_request.service_order.location_lng == pytest.approx(-86.8515)
     assert service_request.service_order.location_accuracy_m == pytest.approx(8.5)
+
+
+def test_customer_portal_map_pin_source_and_explicit_confirmation(db):
+    make_organization(db, "portal-map-pin", "Portal Map Pin")
+    service_request = create_customer_request_and_order(
+        db,
+        make_portal_payload(
+            idempotency_key="location-pin-1",
+            location_lat="21.17",
+            location_lng="-86.84",
+            location_source="MAP_PIN",
+            location_confirmed=True,
+        ),
+    )
+    db.commit()
+    assert service_request.location_source == "MAP_PIN"
+    assert service_request.service_order.location_source == "MAP_PIN"
+
+
+def test_customer_portal_rejects_exact_location_without_confirmation(db):
+    make_organization(db, "portal-location-unconfirmed", "Portal Unconfirmed")
+    with pytest.raises(HTTPException) as blocked:
+        create_customer_request_and_order(
+            db,
+            make_portal_payload(
+                idempotency_key="location-unconfirmed-1",
+                location_lat="21.1619",
+                location_lng="-86.8515",
+                location_source="DEVICE_GPS",
+                location_confirmed=False,
+            ),
+        )
+    assert blocked.value.status_code == 400
+    assert "Confirme" in str(blocked.value.detail)
 
 
 @pytest.mark.parametrize(
@@ -1066,6 +1102,13 @@ def test_location_frontend_has_confirmation_and_navigation_controls():
     assert "DEVICE_GPS" in html
     assert "maps.apple.com" in html
     assert "maps.google.com/dir" in html or "www.google.com/maps/dir" in html
+    portal_html = html.split('const isPortal = path === "/solicitar-servico"', 1)[1]
+    assert portal_html.index('document.getElementById("useCurrentLocation").addEventListener("click"') < portal_html.index("navigator.geolocation.getCurrentPosition")
+    assert portal_html.count('locationConfirmed.value = "1"') == 1
+    assert "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" in html
+    security_headers = (Path(__file__).resolve().parents[2] / "backend" / "app" / "main.py").read_text()
+    assert "https://unpkg.com" in security_headers
+    assert "https://*.tile.openstreetmap.org" in security_headers
 
 
 def test_customer_portal_allows_multiple_orders_for_same_client(db):

@@ -117,11 +117,11 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com https://accounts.google.com; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "script-src 'self' 'unsafe-inline' https://unpkg.com https://challenges.cloudflare.com https://accounts.google.com; "
+        "style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
-        "img-src 'self' data: blob: https://lh3.googleusercontent.com; "
-        "connect-src 'self' https://challenges.cloudflare.com https://accounts.google.com; "
+        "img-src 'self' data: blob: https://unpkg.com https://*.tile.openstreetmap.org https://lh3.googleusercontent.com; "
+        "connect-src 'self' https://unpkg.com https://*.tile.openstreetmap.org https://challenges.cloudflare.com https://accounts.google.com; "
         "frame-src https://challenges.cloudflare.com https://accounts.google.com; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; form-action 'self'",

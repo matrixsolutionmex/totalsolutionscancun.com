@@ -4287,7 +4287,7 @@
     </div>
   </aside>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="" onerror="window.leafletLoadFailed = true"></script>
   <script>
     const API_BASE = window.location.protocol === "file:"
       ? "http://127.0.0.1:8010"
@@ -11401,12 +11401,23 @@
           }
         };
         const mapElement = document.getElementById("serviceLocationMap");
-        if (window.L && mapElement) {
-          locationMap = L.map(mapElement).setView([21.1619, -86.8515], 12);
-          L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(locationMap);
-          locationMap.on("click", (event) => setLocation(event.latlng.lat, event.latlng.lng, "MAP_PIN"));
+        const showMapFallback = (text) => {
+          if (!mapElement) return;
+          mapElement.textContent = text;
+          mapElement.classList.add("map-fallback");
+          locationStatus.textContent = "Puedes usar el GPS con el botón o el enlace de mapa legado.";
+        };
+        if (window.L && !window.leafletLoadFailed && mapElement) {
+          try {
+            locationMap = L.map(mapElement).setView([21.1619, -86.8515], 12);
+            const tiles = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(locationMap);
+            tiles.on("tileerror", () => showMapFallback("No se pudieron cargar los mapas. Puedes usar el GPS o el enlace legado."));
+            locationMap.on("click", (event) => setLocation(event.latlng.lat, event.latlng.lng, "MAP_PIN"));
+          } catch (_error) {
+            showMapFallback("El mapa no está disponible. Puedes usar el GPS o el enlace legado.");
+          }
         } else if (mapElement) {
-          mapElement.textContent = "El mapa no está disponible. Puedes usar el enlace de mapa legado.";
+          showMapFallback("El mapa no está disponible. Puedes usar el GPS o el enlace de mapa legado.");
         }
         document.getElementById("useCurrentLocation").addEventListener("click", () => {
           if (!navigator.geolocation) {

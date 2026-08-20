@@ -160,8 +160,9 @@ def create_customer_request_and_order(
         payload.get("location_lng") or payload.get("longitude"),
         payload.get("location_accuracy_m"),
         payload.get("location_source"),
+        confirmed=bool(payload.get("location_confirmed")),
     )
-    if payload.get("location_lat") not in (None, "") and not payload.get("location_confirmed"):
+    if location["location_lat"] is not None and not payload.get("location_confirmed"):
         raise HTTPException(status_code=400, detail="Confirme la ubicacion exacta antes de enviar")
     idempotency_key = clean_text(payload.get("idempotency_key"))
     if idempotency_key and organization_id:

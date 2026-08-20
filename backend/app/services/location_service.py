@@ -9,7 +9,7 @@ from fastapi import HTTPException
 LOCATION_SOURCES = {"MAP_PIN", "DEVICE_GPS"}
 
 
-def normalize_service_location(latitude, longitude, accuracy=None, source=None):
+def normalize_service_location(latitude, longitude, accuracy=None, source=None, *, confirmed=False):
     has_latitude = latitude not in (None, "")
     has_longitude = longitude not in (None, "")
     has_any = has_latitude or has_longitude or accuracy not in (None, "") or source not in (None, "")
@@ -40,5 +40,5 @@ def normalize_service_location(latitude, longitude, accuracy=None, source=None):
         "location_lng": lng,
         "location_accuracy_m": accuracy_value,
         "location_source": normalized_source,
-        "location_confirmed_at": datetime.utcnow(),
+        "location_confirmed_at": datetime.utcnow() if confirmed else None,
     }
