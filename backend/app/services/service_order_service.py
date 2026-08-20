@@ -79,6 +79,11 @@ def ensure_service_order(
         completed_at=lead.updated_at if lead.pipeline == "VENDA GANHA" else None,
         responsible_user_id=lead.assigned_to_user_id,
         supervisor_user_id=supervisor_id_for_responsible(db, lead.assigned_to_user_id, actor),
+        location_lat=(property_record.location_lat if property_record else getattr(lead, "location_lat", None)),
+        location_lng=(property_record.location_lng if property_record else getattr(lead, "location_lng", None)),
+        location_accuracy_m=(property_record.location_accuracy_m if property_record else getattr(lead, "location_accuracy_m", None)),
+        location_source=(property_record.location_source if property_record else getattr(lead, "location_source", None)),
+        location_confirmed_at=(property_record.location_confirmed_at if property_record else getattr(lead, "location_confirmed_at", None)),
     )
     db.add(service_order)
     db.flush()
@@ -103,6 +108,13 @@ def sync_service_order_from_lead(
     service_order.scheduled_at = lead.proximo_contacto
     service_order.responsible_user_id = lead.assigned_to_user_id
     service_order.supervisor_user_id = supervisor_id_for_responsible(db, lead.assigned_to_user_id, actor)
+    request = getattr(service_order, "service_request", None)
+    property_record = getattr(request, "property_record", None) if request else None
+    service_order.location_lat = (property_record.location_lat if property_record else getattr(lead, "location_lat", None))
+    service_order.location_lng = (property_record.location_lng if property_record else getattr(lead, "location_lng", None))
+    service_order.location_accuracy_m = (property_record.location_accuracy_m if property_record else getattr(lead, "location_accuracy_m", None))
+    service_order.location_source = (property_record.location_source if property_record else getattr(lead, "location_source", None))
+    service_order.location_confirmed_at = (property_record.location_confirmed_at if property_record else getattr(lead, "location_confirmed_at", None))
     if lead.pipeline == "VENDA GANHA" and not service_order.completed_at:
         service_order.completed_at = lead.updated_at or datetime.utcnow()
     if lead.pipeline != "VENDA GANHA":

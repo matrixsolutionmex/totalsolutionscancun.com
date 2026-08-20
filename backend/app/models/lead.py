@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, Numeric, String
 from sqlalchemy.orm import relationship
 
 from app.database.connection import Base
@@ -33,6 +33,11 @@ class Lead(Base):
     pessoa_contato = Column(String)
     latitude = Column(String)
     longitude = Column(String)
+    location_lat = Column(Float, nullable=True)
+    location_lng = Column(Float, nullable=True)
+    location_accuracy_m = Column(Float, nullable=True)
+    location_source = Column(String(20), nullable=True)
+    location_confirmed_at = Column(DateTime, nullable=True)
     foto_fachada_url = Column(String)
     property_extra_json = Column(String)
 

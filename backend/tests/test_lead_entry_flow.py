@@ -1012,6 +1012,62 @@ def test_customer_portal_creates_request_property_and_service_order(db, tmp_path
     assert portal_document.file_size == len(b"imagen")
 
 
+def test_customer_portal_location_is_validated_and_propagated_to_os(db):
+    make_organization(db, "portal-location", "Portal Location")
+    service_request = create_customer_request_and_order(
+        db,
+        make_portal_payload(
+            idempotency_key="location-valid-1",
+            location_lat="21.1619",
+            location_lng="-86.8515",
+            location_accuracy_m="8.5",
+            location_source="DEVICE_GPS",
+            location_confirmed=True,
+        ),
+    )
+    db.commit()
+    db.refresh(service_request)
+    assert service_request.location_lat == pytest.approx(21.1619)
+    assert service_request.property_record.location_source == "DEVICE_GPS"
+    assert service_request.lead.location_source == "DEVICE_GPS"
+    assert service_request.lead.latitude == "21.1619"
+    assert service_request.service_order.location_lat == pytest.approx(21.1619)
+    assert service_request.service_order.location_lng == pytest.approx(-86.8515)
+    assert service_request.service_order.location_accuracy_m == pytest.approx(8.5)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [("location_lat", "91", "Latitude invalida"), ("location_lng", "181", "Longitude invalida"), ("location_lat", "NaN", "Coordenadas invalidas")],
+)
+def test_customer_portal_rejects_invalid_location_coordinates(db, field, value, message):
+    make_organization(db, f"portal-location-{field}-{value}", "Portal Invalid Location")
+    with pytest.raises(HTTPException) as blocked:
+        create_customer_request_and_order(
+            db,
+            make_portal_payload(
+                idempotency_key=f"location-invalid-{field}-{value}",
+                location_lat=value if field == "location_lat" else "21.1619",
+                location_lng=value if field == "location_lng" else "-86.8515",
+                location_source="MAP_PIN",
+                location_confirmed=True,
+            ),
+        )
+    assert blocked.value.status_code == 400
+    assert message in str(blocked.value.detail)
+
+
+def test_location_frontend_has_confirmation_and_navigation_controls():
+    html = (Path(__file__).resolve().parents[2] / "frontend" / "index.html").read_text()
+    assert "Usar mi ubicación actual" in html
+    assert "Confirmar ubicación" in html
+    assert "Navegar hasta el cliente" in html
+    assert "MAP_PIN" in html
+    assert "DEVICE_GPS" in html
+    assert "maps.apple.com" in html
+    assert "maps.google.com/dir" in html or "www.google.com/maps/dir" in html
+
+
 def test_customer_portal_allows_multiple_orders_for_same_client(db):
     make_organization(db, "portal-multi-org", "Portal Multi Org")
     first = create_customer_request_and_order(

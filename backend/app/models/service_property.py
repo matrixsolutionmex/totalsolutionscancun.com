@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 
 from app.database.connection import Base
@@ -26,6 +26,11 @@ class ServiceProperty(Base):
     google_maps_url = Column(String, nullable=True)
     latitude = Column(String, nullable=True)
     longitude = Column(String, nullable=True)
+    location_lat = Column(Float, nullable=True)
+    location_lng = Column(Float, nullable=True)
+    location_accuracy_m = Column(Float, nullable=True)
+    location_source = Column(String(20), nullable=True)
+    location_confirmed_at = Column(DateTime, nullable=True)
     access_instructions = Column(String, nullable=True)
     extra_json = Column(String, nullable=True)
 

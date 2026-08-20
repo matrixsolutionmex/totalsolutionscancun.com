@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 
 from app.database.connection import Base
@@ -31,6 +31,11 @@ class ServiceOrder(Base):
     qr_token = Column(String, nullable=True)
     warranty_seal_status = Column(String, default="PENDENTE", nullable=False)
     checklist_status = Column(String, default="PENDENTE", nullable=False)
+    location_lat = Column(Float, nullable=True)
+    location_lng = Column(Float, nullable=True)
+    location_accuracy_m = Column(Float, nullable=True)
+    location_source = Column(String(20), nullable=True)
+    location_confirmed_at = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=True)

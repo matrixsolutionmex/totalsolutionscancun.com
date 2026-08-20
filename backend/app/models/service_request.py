@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from app.database.connection import Base
@@ -24,6 +24,11 @@ class ServiceRequest(Base):
     urgency = Column(String, default="NORMAL", nullable=False)
     preferred_visit_at = Column(DateTime, nullable=True)
     access_instructions = Column(Text, nullable=True)
+    location_lat = Column(Float, nullable=True)
+    location_lng = Column(Float, nullable=True)
+    location_accuracy_m = Column(Float, nullable=True)
+    location_source = Column(String(20), nullable=True)
+    location_confirmed_at = Column(DateTime, nullable=True)
 
     requester_name = Column(String, nullable=False)
     requester_phone = Column(String, nullable=True)

@@ -19,6 +19,7 @@ from app.models.user import User
 from app.services.import_service import clean_text, normalize_email, normalize_phone
 from app.services.lead_entry_service import duplicate_lead, ensure_property_id
 from app.services.service_order_service import ensure_service_order
+from app.services.location_service import normalize_service_location
 
 
 ALLOWED_MEDIA_TYPES = {
@@ -154,6 +155,14 @@ def create_customer_request_and_order(
     actor: User | None = None,
 ) -> ServiceRequest:
     organization_id = actor.organization_id if actor and actor.organization_id else _default_organization_id(db)
+    location = normalize_service_location(
+        payload.get("location_lat") or payload.get("latitude"),
+        payload.get("location_lng") or payload.get("longitude"),
+        payload.get("location_accuracy_m"),
+        payload.get("location_source"),
+    )
+    if payload.get("location_lat") not in (None, "") and not payload.get("location_confirmed"):
+        raise HTTPException(status_code=400, detail="Confirme la ubicacion exacta antes de enviar")
     idempotency_key = clean_text(payload.get("idempotency_key"))
     if idempotency_key and organization_id:
         existing = (
@@ -199,6 +208,9 @@ def create_customer_request_and_order(
             estado=clean_text(payload.get("administrative_area")),
             codigo_postal=clean_text(payload.get("postal_code")),
             google_maps_url=clean_text(payload.get("google_maps_url")),
+            latitude=str(location["location_lat"]) if location["location_lat"] is not None else None,
+            longitude=str(location["location_lng"]) if location["location_lng"] is not None else None,
+            **location,
             tipo_imovel=clean_text(payload.get("property_type")),
             tipo_servico=clean_text(payload.get("service_category")),
             nicho=clean_text(payload.get("service_category")),
@@ -215,6 +227,12 @@ def create_customer_request_and_order(
         db.flush()
         ensure_property_id(lead)
 
+    if location["location_lat"] is not None:
+        lead.latitude = str(location["location_lat"])
+        lead.longitude = str(location["location_lng"])
+        for field, value in location.items():
+            setattr(lead, field, value)
+
     property_record = ServiceProperty(
         organization_id=organization_id,
         lead_id=lead.id,
@@ -229,6 +247,7 @@ def create_customer_request_and_order(
         google_maps_url=clean_text(payload.get("google_maps_url")),
         latitude=clean_text(payload.get("latitude")),
         longitude=clean_text(payload.get("longitude")),
+        **location,
         access_instructions=clean_text(payload.get("access_instructions")),
     )
     db.add(property_record)
@@ -254,6 +273,7 @@ def create_customer_request_and_order(
         public_language=clean_text(payload.get("public_language")) or "es-MX",
         consent_privacy=bool(payload.get("consent_privacy")),
         consent_images=bool(payload.get("consent_images")),
+        **location,
     )
     db.add(service_request)
     db.flush()

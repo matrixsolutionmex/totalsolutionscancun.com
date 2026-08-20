@@ -30,6 +30,7 @@
   <link rel="icon" href="/assets/assets/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/assets/assets/favicon.svg">
   <link rel="manifest" href="/assets/manifest.webmanifest">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
   <style>
     :root {
       --bg: #f3f5f8;
@@ -4286,6 +4287,7 @@
     </div>
   </aside>
 
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script>
     const API_BASE = window.location.protocol === "file:"
       ? "http://127.0.0.1:8010"
@@ -6273,6 +6275,15 @@
       const stageClass = `stage-${(lead.pipeline || "NOVO LEAD").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
       const urgencyClass = `urgency-${String(lead.urgencia || "NORMAL").toLowerCase()}`;
       const staleTime = timeAgo(lead.pipeline_updated_at || lead.updated_at || lead.created_at);
+      const order = lead.service_order || {};
+      const latitude = order.location_lat ?? lead.location_lat;
+      const longitude = order.location_lng ?? lead.location_lng;
+      const hasCoordinates = Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude));
+      const navigationUrl = hasCoordinates
+        ? ((/iPad|iPhone|iPod/.test(navigator.platform) && !window.MSStream)
+          ? `https://maps.apple.com/?daddr=${encodeURIComponent(`${latitude},${longitude}`)}`
+          : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${latitude},${longitude}`)}`)
+        : (lead.google_maps_url || "");
 
       return `
         <article class="card ${stageClass}" draggable="true" data-lead-id="${lead.id}">
@@ -6290,6 +6301,8 @@
           <div class="status">Entrada: <span>${escapeHtml(lead.received_at || lead.created_at || "-")}</span></div>
           <div class="status">Próximo contacto: <span>${escapeHtml(lead.proximo_contacto || "-")}</span></div>
           <div class="status">OS: <span>${escapeHtml(osNumber || "-")}</span></div>
+          <div class="status">Local del servicio: <span>${escapeHtml(hasCoordinates ? "Coordenadas confirmadas" : (lead.google_maps_url ? "Enlace de mapa" : "No informado"))}</span></div>
+          ${navigationUrl ? `<div class="card-actions-row"><a class="small-btn" href="${escapeHtml(navigationUrl)}" target="_blank" rel="noopener noreferrer">Navegar hasta el cliente</a></div>` : ""}
           <div class="lead-country"><span class="flag">${country.flag}</span>${escapeHtml(territory)}</div>
           <div class="status">${t("status")}: <span>${escapeHtml(stageLabel(lead.pipeline))}</span></div>
           <div class="status">${t("score")}: <span>${lead.score ?? 0}</span></div>
@@ -10760,6 +10773,9 @@
           --portal-panel: #ffffff;
           --portal-bg: #e8fff4;
         }
+        .service-location-map { height: 280px; border: 1px solid var(--portal-line); border-radius: 8px; overflow: hidden; }
+        .location-actions { margin-top: 10px; gap: 8px; }
+        .portal-help { color: var(--portal-muted); margin: 0 0 8px; }
         * { box-sizing: border-box; }
         html {
           width: 100%;
@@ -11224,8 +11240,23 @@
                     <input id="postal_code" name="postal_code" />
                   </div>
                   <div class="portal-field full">
-                    <label for="google_maps_url">Google Maps</label>
+                    <label for="google_maps_url">Enlace de mapa (opcional)</label>
                     <input id="google_maps_url" name="google_maps_url" type="url" placeholder="https://maps.google.com/..." />
+                  </div>
+                  <div class="portal-field full">
+                    <label>Ubicación exacta del servicio</label>
+                    <p class="portal-help">Marca el punto exacto en el mapa o usa tu ubicación actual.</p>
+                    <div id="serviceLocationMap" class="service-location-map" aria-label="Mapa para seleccionar la ubicación del servicio"></div>
+                    <div class="portal-actions location-actions">
+                      <button class="portal-button secondary" id="useCurrentLocation" type="button">Usar mi ubicación actual</button>
+                      <button class="portal-button" id="confirmLocation" type="button" disabled>Confirmar ubicación</button>
+                    </div>
+                    <p id="locationStatus" class="portal-message" role="status">Selecciona un punto en el mapa.</p>
+                    <input id="location_lat" name="location_lat" type="hidden" />
+                    <input id="location_lng" name="location_lng" type="hidden" />
+                    <input id="location_accuracy_m" name="location_accuracy_m" type="hidden" />
+                    <input id="location_source" name="location_source" type="hidden" />
+                    <input id="location_confirmed" name="location_confirmed" type="hidden" value="0" />
                   </div>
                 </div>
               </section>
@@ -11336,6 +11367,69 @@
         const message = document.getElementById("portalMessage");
         const filesInput = document.getElementById("files");
         const fileName = document.getElementById("portalFileName");
+        const locationStatus = document.getElementById("locationStatus");
+        const locationLat = document.getElementById("location_lat");
+        const locationLng = document.getElementById("location_lng");
+        const locationAccuracy = document.getElementById("location_accuracy_m");
+        const locationSource = document.getElementById("location_source");
+        const locationConfirmed = document.getElementById("location_confirmed");
+        const confirmLocation = document.getElementById("confirmLocation");
+        let selectedLocation = null;
+        let locationMap = null;
+        let locationMarker = null;
+        const setLocation = (latitude, longitude, source, accuracy = null) => {
+          selectedLocation = { latitude, longitude, source, accuracy };
+          locationLat.value = latitude;
+          locationLng.value = longitude;
+          locationSource.value = source;
+          locationAccuracy.value = accuracy ?? "";
+          locationConfirmed.value = "0";
+          confirmLocation.disabled = false;
+          locationStatus.className = "portal-message";
+          locationStatus.textContent = "Ubicación seleccionada. Confirma para continuar.";
+          if (locationMap) {
+            locationMap.setView([latitude, longitude], Math.max(locationMap.getZoom(), 15));
+            if (!locationMarker) {
+              locationMarker = L.marker([latitude, longitude], { draggable: true }).addTo(locationMap);
+              locationMarker.on("dragend", (event) => {
+                const position = event.target.getLatLng();
+                setLocation(position.lat, position.lng, "MAP_PIN");
+              });
+            } else {
+              locationMarker.setLatLng([latitude, longitude]);
+            }
+          }
+        };
+        const mapElement = document.getElementById("serviceLocationMap");
+        if (window.L && mapElement) {
+          locationMap = L.map(mapElement).setView([21.1619, -86.8515], 12);
+          L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(locationMap);
+          locationMap.on("click", (event) => setLocation(event.latlng.lat, event.latlng.lng, "MAP_PIN"));
+        } else if (mapElement) {
+          mapElement.textContent = "El mapa no está disponible. Puedes usar el enlace de mapa legado.";
+        }
+        document.getElementById("useCurrentLocation").addEventListener("click", () => {
+          if (!navigator.geolocation) {
+            locationStatus.className = "portal-message error";
+            locationStatus.textContent = "Este navegador no permite geolocalización. Selecciona el punto manualmente.";
+            return;
+          }
+          locationStatus.textContent = "Obteniendo ubicación...";
+          navigator.geolocation.getCurrentPosition(
+            (position) => setLocation(position.coords.latitude, position.coords.longitude, "DEVICE_GPS", position.coords.accuracy),
+            () => {
+              locationStatus.className = "portal-message error";
+              locationStatus.textContent = "No fue posible obtener tu ubicación. Selecciona el punto manualmente.";
+            },
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+          );
+        });
+        confirmLocation.addEventListener("click", () => {
+          if (!selectedLocation) return;
+          locationConfirmed.value = "1";
+          locationStatus.className = "portal-message ok";
+          locationStatus.textContent = "Ubicación confirmada.";
+        });
         filesInput.addEventListener("change", () => {
           const files = Array.from(filesInput.files || []);
           if (!files.length) {
@@ -11348,6 +11442,11 @@
         });
         form.addEventListener("submit", async (event) => {
           event.preventDefault();
+          if (!selectedLocation || locationConfirmed.value !== "1") {
+            message.className = "portal-message error";
+            message.textContent = "Confirma la ubicación exacta del servicio antes de enviar.";
+            return;
+          }
           message.className = "portal-message";
           message.textContent = "Enviando solicitud...";
           const formData = new FormData(form);

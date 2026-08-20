@@ -80,6 +80,11 @@ class ServiceOrderResponse(BaseModel):
     qr_token: str | None = None
     warranty_seal_status: str
     checklist_status: str
+    location_lat: float | None = None
+    location_lng: float | None = None
+    location_accuracy_m: float | None = None
+    location_source: str | None = None
+    location_confirmed_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -111,6 +116,11 @@ class LeadResponse(BaseModel):
     pessoa_contato: str | None = None
     latitude: str | None = None
     longitude: str | None = None
+    location_lat: float | None = None
+    location_lng: float | None = None
+    location_accuracy_m: float | None = None
+    location_source: str | None = None
+    location_confirmed_at: datetime | None = None
     foto_fachada_url: str | None = None
     property_extra_json: str | None = None
     nicho: str | None = None
