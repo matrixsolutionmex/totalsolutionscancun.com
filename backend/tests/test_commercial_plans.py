@@ -17,6 +17,7 @@ from app.models.service_request import ServiceRequest
 from app.models.service_property import ServiceProperty
 from app.models.user import User
 from app.routes.commercial_routes import MockPlanChangeRequest, UpgradeIntentRequest, commercial_mock_plan, commercial_upgrade_intent
+from app.auth.jwt_handler import require_root_user
 from app.services.commercial_upgrade_service import (
     activate_upgrade_intent,
     create_or_reuse_upgrade_intent,
@@ -28,6 +29,13 @@ from app.services.commercial_upgrade_service import (
     normalize_existing_upgrade_intents,
 )
 from app.services.entitlement_service import account_snapshot, can_use_feature, get_plan_limits, plan_catalog
+from app.services.platform_admin_service import (
+    get_platform_organization,
+    get_platform_user,
+    list_platform_organizations,
+    list_platform_users,
+    platform_directory_metrics,
+)
 
 
 @pytest.fixture()
@@ -289,3 +297,60 @@ def test_non_root_cannot_confirm_global_commercial_intent(commercial_db):
         mark_payment_confirmed(db, broker, intent.id, global_scope=True)
     assert getattr(error.value, "status_code", None) == 403
     assert intent.status == "CHECKOUT_OPENED"
+
+
+def test_root_platform_directory_finds_other_organization_user_without_mutation(commercial_db):
+    db, actor, broker, other = commercial_db
+    other.email = "magnoalvesbrasil@proton.me"
+    other.telefone = "+52 998 555 7821"
+    other.manager_id = None
+    intent = create_upgrade_intent(db, other, "PRO")
+    db.commit()
+    organization_id = other.organization_id
+    manager_id = other.manager_id
+    intent_status = intent.status
+
+    rows = list_platform_users(db, search="magnoalvesbrasil@proton.me")
+    assert len(rows) == 1
+    assert rows[0]["organization_id"] == organization_id
+    assert rows[0]["email"] == "magnoalvesbrasil@proton.me"
+    assert rows[0]["telefone"].endswith("7821")
+    assert db.query(CommercialUpgradeIntent).filter_by(id=intent.id).one().status == intent_status
+    assert other.organization_id == organization_id
+    assert other.manager_id == manager_id
+
+
+def test_platform_directory_uses_organization_subscription_and_supports_details(commercial_db):
+    db, actor, broker, other = commercial_db
+    subscription = CommercialSubscription(organization_id=other.organization_id, plan="PRO", status="ACTIVE", provider="CLIP")
+    db.add(subscription)
+    db.commit()
+
+    organizations = list_platform_organizations(db, search=str(other.organization_id))
+    assert len(organizations) == 1
+    assert organizations[0]["plan"] == "PRO"
+    assert organizations[0]["subscription_status"] == "ACTIVE"
+    detail = get_platform_organization(db, other.organization_id)
+    assert detail["plan"] == "PRO"
+    assert any(user["id"] == other.id for user in detail["users"])
+    user_detail = get_platform_user(db, other.id)
+    assert user_detail["plan"] == "PRO"
+
+
+def test_platform_metrics_are_backend_calculated_and_global(commercial_db):
+    db, actor, broker, other = commercial_db
+    db.add(CommercialSubscription(organization_id=other.organization_id, plan="BUSINESS", status="ACTIVE", provider="CLIP"))
+    db.commit()
+    metrics = platform_directory_metrics(db)
+    assert metrics["organizations_total"] == 2
+    assert metrics["organizations_free"] == 1
+    assert metrics["organizations_business"] == 1
+    assert metrics["users_total"] == 3
+    assert metrics["technicians_total"] == 2
+
+
+def test_platform_directory_guard_rejects_non_root_roles(commercial_db):
+    db, actor, broker, other = commercial_db
+    with pytest.raises(Exception) as error:
+        require_root_user(broker)
+    assert getattr(error.value, "status_code", None) == 403

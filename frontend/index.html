@@ -3776,6 +3776,47 @@
         <div class="panel-title">Supervisores y técnicos</div>
         <div class="broker-list" id="brokerList"></div>
       </div>
+      <div class="panel-box root-only" style="grid-column: 1 / -1;">
+        <div class="panel-title">Directorio global ROOT</div>
+        <div class="line">Equipo de mi organización permanece separado de los usuarios de toda la plataforma.</div>
+        <div class="metric-row" id="platformDirectoryMetrics" style="margin: 14px 0;"></div>
+        <div class="admin-grid">
+          <input id="platformOrganizationSearch" placeholder="Buscar organización por nombre, slug o ID">
+          <select id="platformOrganizationPlan" aria-label="Plan de organización">
+            <option value="ALL">Todos los planes</option>
+            <option value="FREE">FREE</option>
+            <option value="PRO">PRO</option>
+            <option value="BUSINESS">BUSINESS</option>
+          </select>
+          <button class="ghost" id="platformOrganizationSearchButton" type="button">Buscar organizaciones</button>
+          <input id="platformUserSearch" placeholder="Buscar usuario por nombre, e-mail, teléfono u organización">
+          <select id="platformUserRole" aria-label="Rol del usuario">
+            <option value="ALL">Todos los roles</option>
+            <option value="ROOT">ROOT</option>
+            <option value="GERENTE">Supervisor</option>
+            <option value="BROKER">Técnico</option>
+          </select>
+          <select id="platformUserStatus" aria-label="Estado del usuario">
+            <option value="ALL">Todos los estados</option>
+            <option value="ACTIVE">Activo</option>
+            <option value="PENDING_ADMIN">Pendiente</option>
+            <option value="SUSPENDED">Suspendido</option>
+            <option value="ARCHIVED">Archivado</option>
+          </select>
+          <button class="ghost" id="platformUserSearchButton" type="button">Buscar usuarios</button>
+        </div>
+        <div class="view-grid" style="margin-top: 18px;">
+          <div>
+            <div class="panel-title">Organizaciones de la plataforma</div>
+            <div class="broker-list" id="platformOrganizationList"></div>
+          </div>
+          <div>
+            <div class="panel-title">Usuarios de la plataforma</div>
+            <div class="broker-list" id="platformUserList"></div>
+          </div>
+        </div>
+        <div class="panel-box" id="platformDirectoryDetail" style="margin-top: 18px;" hidden></div>
+      </div>
     </div>
   </section>
   </div>
@@ -5771,6 +5812,12 @@
       }
       if (viewName === "planos") {
         loadCommercialPlans().catch(() => {});
+      }
+      if (viewName === "usuarios" && currentUser?.role === "ROOT") {
+        loadPlatformDirectory().catch((error) => {
+          const list = document.getElementById("platformUserList");
+          if (list) list.innerHTML = `<div class="empty-state">${escapeHtml(error.message || "No fue posible cargar el directorio global.")}</div>`;
+        });
       }
     }
 
@@ -9166,6 +9213,107 @@
       await loadBrokers();
     }
 
+    function renderPlatformDirectoryMetrics(metrics) {
+      const container = document.getElementById("platformDirectoryMetrics");
+      if (!container) return;
+      const items = [
+        ["Organizaciones", metrics.organizations_total],
+        ["FREE", metrics.organizations_free],
+        ["PRO", metrics.organizations_pro],
+        ["BUSINESS", metrics.organizations_business],
+        ["Usuarios", metrics.users_total],
+        ["Técnicos", metrics.technicians_total],
+        ["Supervisores", metrics.supervisors_total],
+        ["Activos", metrics.users_active],
+        ["Pendientes", metrics.users_pending]
+      ];
+      container.innerHTML = items.map(([label, value]) => `<div class="metric">${escapeHtml(label)}<strong>${escapeHtml(String(value ?? 0))}</strong></div>`).join("");
+    }
+
+    function renderPlatformOrganizations(organizations) {
+      const list = document.getElementById("platformOrganizationList");
+      if (!list) return;
+      list.innerHTML = organizations.length ? organizations.map((organization) => `
+        <div class="broker-row">
+          <div>
+            <strong>${escapeHtml(organization.name)}</strong>
+            <span>${escapeHtml(organization.slug || "")} · ${escapeHtml(organization.plan)} · ${escapeHtml(organization.status)}</span>
+            <small>${organization.users_count} usuarios · ${organization.technicians_count} técnicos · ${organization.clients_count} clientes · ${organization.service_orders_count} OS</small>
+          </div>
+          <button class="ghost" type="button" data-platform-organization-id="${organization.id}">Ver organización</button>
+        </div>`).join("") : `<div class="empty-state">Ninguna organización encontrada.</div>`;
+    }
+
+    function renderPlatformUsers(users) {
+      const list = document.getElementById("platformUserList");
+      if (!list) return;
+      list.innerHTML = users.length ? users.map((user) => `
+        <div class="broker-row">
+          <div>
+            <strong>${escapeHtml(user.full_name)} · ${escapeHtml(user.role)}</strong>
+            <span>${escapeHtml(user.email || "Sem e-mail")} · ${escapeHtml(user.organization_name || "Sem organização")}</span>
+            <small>${escapeHtml(user.plan)} · ${escapeHtml(user.status)} · ${escapeHtml(user.telefone || "Telefone não informado")}</small>
+          </div>
+          <button class="ghost" type="button" data-platform-user-id="${user.id}">Ver usuário</button>
+        </div>`).join("") : `<div class="empty-state">Ningún usuario encontrado.</div>`;
+    }
+
+    function renderPlatformOrganizationDetail(organization) {
+      const detail = document.getElementById("platformDirectoryDetail");
+      if (!detail) return;
+      detail.hidden = false;
+      detail.innerHTML = `
+        <div class="panel-title">Organización: ${escapeHtml(organization.name)}</div>
+        <div class="line">ID ${organization.id} · ${escapeHtml(organization.slug || "")} · ${escapeHtml(organization.status)} · Plan ${escapeHtml(organization.plan)} · Suscripción ${escapeHtml(organization.subscription_status || "sin registro")}</div>
+        <div class="metric-row" style="margin: 14px 0;">
+          <div class="metric">Usuarios<strong>${organization.users_count}</strong></div>
+          <div class="metric">Técnicos<strong>${organization.technicians_count}</strong></div>
+          <div class="metric">Clientes<strong>${organization.clients_count}</strong></div>
+          <div class="metric">OS<strong>${organization.service_orders_count}</strong></div>
+        </div>
+        <div class="line">Responsable: ${escapeHtml(organization.owner || "No informado")}</div>
+        <div class="line">Intento comercial activo: ${organization.active_intent ? `${escapeHtml(organization.active_intent.plan)} · ${escapeHtml(organization.active_intent.status)} · ${escapeHtml(organization.active_intent.confirmation_source || "sin confirmación")}` : "ninguno"}</div>
+        <div class="broker-list">${(organization.users || []).map((user) => `<div class="broker-row"><span><strong>${escapeHtml(user.full_name)}</strong><small>${escapeHtml(user.role)} · ${escapeHtml(user.status)} · ${escapeHtml(user.email || "")}</small></span><span>${escapeHtml(user.plan)}</span></div>`).join("") || `<div class="empty-state">Ningún usuario en esta organización.</div>`}</div>`;
+    }
+
+    function renderPlatformUserDetail(user) {
+      const detail = document.getElementById("platformDirectoryDetail");
+      if (!detail) return;
+      detail.hidden = false;
+      detail.innerHTML = `
+        <div class="panel-title">Usuario: ${escapeHtml(user.full_name)}</div>
+        <div class="line">${escapeHtml(user.email || "Sem e-mail")} · ${escapeHtml(user.role)} · ${escapeHtml(user.status)} · ${escapeHtml(user.email_verified ? "E-mail verificado" : "E-mail pendiente")}</div>
+        <div class="line">Organización: ${escapeHtml(user.organization_name || "Sem organização")} (ID ${user.organization_id ?? "-"}) · Plan ${escapeHtml(user.plan)}</div>
+        <div class="line">Supervisor: ${escapeHtml(user.supervisor || "No informado")} · Onboarding: ${escapeHtml(user.onboarding_source || "-")} · Última actividad: ${escapeHtml(user.last_seen_at ? new Date(user.last_seen_at).toLocaleString() : "No informada")}</div>`;
+    }
+
+    async function loadPlatformDirectory() {
+      if (currentUser?.role !== "ROOT") return;
+      const params = new URLSearchParams({
+        search: document.getElementById("platformOrganizationSearch")?.value.trim() || "",
+        plan: document.getElementById("platformOrganizationPlan")?.value || "ALL"
+      });
+      const userParams = new URLSearchParams({
+        search: document.getElementById("platformUserSearch")?.value.trim() || "",
+        role: document.getElementById("platformUserRole")?.value || "ALL",
+        status: document.getElementById("platformUserStatus")?.value || "ALL"
+      });
+      const [metricsResponse, organizationsResponse, usersResponse] = await Promise.all([
+        apiFetch(`${API_BASE}/admin/platform/metrics`),
+        apiFetch(`${API_BASE}/admin/platform/organizations?${params}`),
+        apiFetch(`${API_BASE}/admin/platform/users?${userParams}`)
+      ]);
+      const metrics = await metricsResponse.json().catch(() => ({}));
+      const organizations = await organizationsResponse.json().catch(() => ({}));
+      const users = await usersResponse.json().catch(() => ({}));
+      if (!metricsResponse.ok || !organizationsResponse.ok || !usersResponse.ok) {
+        throw new Error(metrics.detail || organizations.detail || users.detail || "No fue posible cargar el directorio global.");
+      }
+      renderPlatformDirectoryMetrics(metrics);
+      renderPlatformOrganizations(organizations.organizations || []);
+      renderPlatformUsers(users.users || []);
+    }
+
     async function loadBrokers() {
       const response = await apiFetch(`${API_BASE}/users/brokers/summary`);
 
@@ -10264,6 +10412,27 @@
     });
     document.getElementById("commercialAdminStatusFilter")?.addEventListener("change", () => {
       loadCommercialUpgradeIntents().catch(() => {});
+    });
+
+    document.getElementById("platformOrganizationSearchButton")?.addEventListener("click", () => {
+      loadPlatformDirectory().catch(() => {});
+    });
+    document.getElementById("platformUserSearchButton")?.addEventListener("click", () => {
+      loadPlatformDirectory().catch(() => {});
+    });
+    document.getElementById("platformOrganizationList")?.addEventListener("click", async (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || !target.matches("[data-platform-organization-id]")) return;
+      const response = await apiFetch(`${API_BASE}/admin/platform/organizations/${target.dataset.platformOrganizationId}`);
+      const data = await response.json().catch(() => ({}));
+      if (response.ok) renderPlatformOrganizationDetail(data);
+    });
+    document.getElementById("platformUserList")?.addEventListener("click", async (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || !target.matches("[data-platform-user-id]")) return;
+      const response = await apiFetch(`${API_BASE}/admin/platform/users/${target.dataset.platformUserId}`);
+      const data = await response.json().catch(() => ({}));
+      if (response.ok) renderPlatformUserDetail(data);
     });
 
     document.getElementById("marketplacePanel")?.addEventListener("click", async (event) => {

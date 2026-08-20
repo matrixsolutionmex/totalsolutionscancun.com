@@ -33,6 +33,13 @@ from app.services.commercial_upgrade_service import (
     mark_payment_confirmed,
 )
 from app.services.user_lifecycle_service import record_user_lifecycle_event, revoke_user_access, transition_user_status
+from app.services.platform_admin_service import (
+    get_platform_organization,
+    get_platform_user,
+    list_platform_organizations,
+    list_platform_users,
+    platform_directory_metrics,
+)
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -338,6 +345,61 @@ def admin_commercial_metrics(
     actor: User = Depends(require_root_user),
 ):
     return global_commercial_metrics(db)
+
+
+@router.get("/platform/metrics")
+def admin_platform_metrics(
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    return platform_directory_metrics(db)
+
+
+@router.get("/platform/organizations")
+def admin_platform_organizations(
+    search: str | None = Query(default=None),
+    plan: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    return {"organizations": list_platform_organizations(db, search=search, plan=plan, status=status)}
+
+
+@router.get("/platform/organizations/{organization_id}")
+def admin_platform_organization(
+    organization_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    organization = get_platform_organization(db, organization_id)
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organização não encontrada")
+    return organization
+
+
+@router.get("/platform/users")
+def admin_platform_users(
+    search: str | None = Query(default=None),
+    role: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    organization_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    return {"users": list_platform_users(db, search=search, role=role, status=status, organization_id=organization_id)}
+
+
+@router.get("/platform/users/{user_id}")
+def admin_platform_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    user = get_platform_user(db, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    return user
 
 
 @router.get("/commercial/intents")
