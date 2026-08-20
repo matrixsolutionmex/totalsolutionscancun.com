@@ -1,4 +1,5 @@
 from uuid import uuid4
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -11,6 +12,7 @@ from app.core.security import hash_password
 from app.database.connection import Base
 from app.models.auth_security import AuthAuditEvent
 from app.models.commercial_subscription import CommercialSubscription
+from app.models.commercial_upgrade_intent import CommercialUpgradeIntent
 from app.models.lead import Lead
 from app.models.organization import Organization
 from app.models.service_opportunity import ServiceOpportunity
@@ -18,9 +20,9 @@ from app.models.service_order import ServiceOrder
 from app.models.user import User
 from app.models.user_commercial_profile import UserCommercialProfile
 from app.services.entitlement_service import current_plan
-from app.services.legacy_workspace_migration_service import legacy_workspace_candidates, migrate_legacy_user_to_primary
+from app.services.legacy_workspace_migration_service import legacy_workspace_candidates, legacy_workspace_diagnostics, migrate_legacy_user_to_primary
 from app.services.marketplace_service import assign_opportunity, list_opportunities
-from app.routes.admin_routes import LegacyMigrationRequest, admin_migrate_legacy_user
+from app.routes.admin_routes import LegacyMigrationRequest, admin_legacy_workspace_candidates, admin_migrate_legacy_user
 
 
 @pytest.fixture()
@@ -117,6 +119,33 @@ def test_real_magno_broker_pro_independent_state_is_migration_candidate(migratio
     assert magno.organization_id == primary.id
     assert magno.role == "BROKER"
     assert current_plan(db, magno) == "PRO"
+
+
+def test_activated_intent_and_legacy_subscription_do_not_block_diagnostic(migration_db):
+    db, primary_slug = migration_db
+    primary, legacy, root, magno, primary_sub, legacy_sub = setup_realistic_case(db, primary_slug, magno_role="GERENTE")
+    db.add(CommercialUpgradeIntent(
+        organization_id=legacy.id,
+        user_id=magno.id,
+        requested_plan="PRO",
+        provider="CLIP",
+        status="ACTIVATED",
+        source="PLANS_UI",
+    ))
+    db.commit()
+    diagnostics = legacy_workspace_diagnostics(db)
+    row = next(item for item in diagnostics if item["user_id"] == magno.id)
+    assert row["eligible"] is True
+    assert row["blocking_reasons"] == []
+    assert row["checks"]["no_active_commercial_intent"] is True
+    assert row["historical_intent_statuses"] == ["ACTIVATED"]
+    assert row["organization_subscription"] == {"plan": "PRO", "status": "ACTIVE"}
+    endpoint_response = admin_legacy_workspace_candidates(db, root)
+    assert any(item["user_id"] == magno.id for item in endpoint_response["candidates"])
+    assert any(item["user_id"] == magno.id and item["eligible"] for item in endpoint_response["diagnostics"])
+    frontend = Path(__file__).parents[2].joinpath("frontend/index.html").read_text()
+    assert "Migrar para Total Solutions" in frontend
+    assert "data-platform-migrate-legacy" in frontend
 
 
 def test_legacy_migration_is_root_only_and_blocks_real_data(migration_db):

@@ -5266,6 +5266,7 @@
     let editingOwnProfile = false;
     let currentUser = { id: 1, username: "root", role: "ROOT" };
     let legacyMigrationCandidates = [];
+    let legacyMigrationDiagnostics = [];
     let cachedBoard = null;
     let queuedLeadFiles = [];
     let cachedLeadDocuments = [];
@@ -9317,12 +9318,28 @@
     function renderPlatformUserDetail(user) {
       const detail = document.getElementById("platformDirectoryDetail");
       if (!detail) return;
+      const migrationDiagnostic = legacyMigrationDiagnostics.find((item) => String(item.user_id) === String(user.id));
+      const migrationReasonLabels = {
+        MULTIPLE_USERS: "possui mais de um usuário",
+        ROLE_NOT_ALLOWED: "função não elegível",
+        USER_NOT_ACTIVE: "usuário não está ativo",
+        PLAN_NOT_ELIGIBLE: "plano individual não elegível",
+        HAS_CLIENTS: "possui clientes",
+        HAS_SERVICE_ORDERS: "possui OS",
+        ACTIVE_COMMERCIAL_INTENT: "possui contratação comercial ativa",
+        HAS_SUBORDINATES: "possui subordinados",
+        NOT_LEGACY_WORKSPACE: "workspace não é legado"
+      };
+      const migrationStatus = migrationDiagnostic && !migrationDiagnostic.eligible
+        ? `<div class="line">Migração indisponível: ${migrationDiagnostic.blocking_reasons.map((reason) => escapeHtml(migrationReasonLabels[reason] || reason)).join("; ")}</div>`
+        : "";
       detail.hidden = false;
       detail.innerHTML = `
         <div class="panel-title">Usuario: ${escapeHtml(user.full_name)}</div>
         <div class="line">${escapeHtml(user.email || "Sem e-mail")} · ${escapeHtml(user.role)} · ${escapeHtml(user.status)} · ${escapeHtml(user.email_verified ? "E-mail verificado" : "E-mail pendiente")}</div>
         <div class="line">Organización: ${escapeHtml(user.organization_name || "Sem organização")} (ID ${user.organization_id ?? "-"}) · Plan ${escapeHtml(user.plan)}</div>
         <div class="line">Supervisor: ${escapeHtml(user.supervisor || "No informado")} · Subordinados: ${user.subordinates_count || 0} · Onboarding: ${escapeHtml(user.onboarding_source || "-")} · Última actividad: ${escapeHtml(user.last_seen_at ? new Date(user.last_seen_at).toLocaleString() : "No informada")}</div>
+        ${migrationStatus}
         <div class="inline-actions" style="margin-top: 12px;">
           ${legacyMigrationCandidates.some((candidate) => String(candidate.user_id) === String(user.id)) ? `<button type="button" data-platform-migrate-legacy="${user.id}">Migrar para Total Solutions</button>` : ""}
           ${user.role === "BROKER" && ["PRO", "BUSINESS"].includes(String(user.plan).toUpperCase()) ? `<button type="button" data-platform-promote-user="${user.id}">Promover a Supervisor</button>` : ""}
@@ -9366,6 +9383,7 @@
       }
       const migrationData = await migrationsResponse.json().catch(() => ({}));
       legacyMigrationCandidates = migrationData.candidates || [];
+      legacyMigrationDiagnostics = migrationData.diagnostics || [];
       renderPlatformDirectoryMetrics(metrics);
       renderPlatformOrganizations(organizations.organizations || []);
       renderPlatformUsers(users.users || []);

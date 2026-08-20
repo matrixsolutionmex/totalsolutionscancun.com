@@ -14,45 +14,80 @@ from app.models.service_order import ServiceOrder
 from app.models.user import User
 from app.models.user_commercial_profile import UserCommercialProfile
 from app.services.entitlement_service import normalize_plan
+from app.services.commercial_upgrade_service import ACTIVE_INTENT_STATUSES
 
 
-def legacy_workspace_candidates(db: Session) -> list[dict]:
+def legacy_workspace_diagnostics(db: Session) -> list[dict]:
     primary = get_platform_primary_organization(db)
-    rows = []
+    diagnostics = []
     for organization in db.query(Organization).filter(Organization.id != primary.id).all():
         users = db.query(User).filter(User.organization_id == organization.id).all()
+        client_count = int(db.query(func.count(Lead.id)).filter(Lead.organization_id == organization.id).scalar() or 0)
+        service_order_count = int(db.query(func.count(ServiceOrder.id)).filter(ServiceOrder.organization_id == organization.id).scalar() or 0)
+        intents = db.query(CommercialUpgradeIntent).filter(CommercialUpgradeIntent.organization_id == organization.id).all()
+        active_intents = [item for item in intents if item.status in ACTIVE_INTENT_STATUSES]
         subscription = db.query(CommercialSubscription).filter(CommercialSubscription.organization_id == organization.id).first()
-        leads = db.query(func.count(Lead.id)).filter(Lead.organization_id == organization.id).scalar() or 0
-        orders = db.query(func.count(ServiceOrder.id)).filter(ServiceOrder.organization_id == organization.id).scalar() or 0
-        active_intent = db.query(CommercialUpgradeIntent).filter(
-            CommercialUpgradeIntent.organization_id == organization.id,
-            CommercialUpgradeIntent.status.in_(["CHECKOUT_OPENED", "PAYMENT_PENDING", "PAYMENT_CONFIRMED", "PAID"]),
-        ).first()
-        user = users[0] if len(users) == 1 else None
-        profile = None
-        if user and inspect(db.get_bind()).has_table(UserCommercialProfile.__tablename__):
-            profile = db.query(UserCommercialProfile).filter(UserCommercialProfile.user_id == user.id, UserCommercialProfile.status == "ACTIVE").first()
-        individual_plan = normalize_plan(profile.plan if profile else getattr(user, "plan", "FREE")) if user else "FREE"
-        # Migration moves the workspace only. Promotion to GERENTE remains a separate ROOT action.
-        eligible_role = bool(user and user.role in {"BROKER", "GERENTE"})
-        eligible_user = bool(user and user.is_active and user.status == "ACTIVE" and eligible_role and individual_plan in {"PRO", "BUSINESS"})
-        if user and leads == 0 and orders == 0 and eligible_user and not active_intent:
-            rows.append({
+        for user in users:
+            profile = None
+            if inspect(db.get_bind()).has_table(UserCommercialProfile.__tablename__):
+                profile = db.query(UserCommercialProfile).filter(UserCommercialProfile.user_id == user.id, UserCommercialProfile.status == "ACTIVE").first()
+            individual_plan = normalize_plan(profile.plan if profile else getattr(user, "plan", "FREE"))
+            subordinate_count = db.query(User).filter(User.manager_id == user.id, User.organization_id == organization.id, User.role == "BROKER").count()
+            checks = {
+                "legacy_workspace": organization.id != primary.id,
+                "single_user_workspace": len(users) == 1,
+                "role_allowed": user.role in {"BROKER", "GERENTE"},
+                "active_user": bool(user.is_active and user.status == "ACTIVE"),
+                "plan_allowed": individual_plan in {"PRO", "BUSINESS"},
+                "zero_clients": client_count == 0,
+                "zero_service_orders": service_order_count == 0,
+                "no_active_commercial_intent": not active_intents,
+                "no_subordinates": subordinate_count == 0,
+            }
+            reasons = []
+            reason_checks = (
+                ("NOT_LEGACY_WORKSPACE", "legacy_workspace"),
+                ("MULTIPLE_USERS", "single_user_workspace"),
+                ("ROLE_NOT_ALLOWED", "role_allowed"),
+                ("USER_NOT_ACTIVE", "active_user"),
+                ("PLAN_NOT_ELIGIBLE", "plan_allowed"),
+                ("HAS_CLIENTS", "zero_clients"),
+                ("HAS_SERVICE_ORDERS", "zero_service_orders"),
+                ("ACTIVE_COMMERCIAL_INTENT", "no_active_commercial_intent"),
+                ("HAS_SUBORDINATES", "no_subordinates"),
+            )
+            for code, check_name in reason_checks:
+                if not checks[check_name]:
+                    reasons.append(code)
+            diagnostics.append({
+                "eligible": not reasons,
+                "blocking_reasons": reasons,
+                "checks": checks,
                 "organization_id": organization.id,
                 "organization_name": organization.name,
                 "organization_status": organization.status,
+                "organization_user_count": len(users),
+                "organization_subscription": {"plan": subscription.plan, "status": subscription.status} if subscription else None,
+                "historical_intent_statuses": sorted({item.status for item in intents}),
+                "active_intent_statuses": sorted({item.status for item in active_intents}),
                 "user_id": user.id,
                 "user": user.full_name or user.username,
                 "email": user.email,
                 "role": user.role,
                 "status": user.status,
+                "onboarding_source": user.onboarding_source,
                 "individual_plan": individual_plan,
-                "clients_count": int(leads),
-                "service_orders_count": int(orders),
+                "clients_count": client_count,
+                "service_orders_count": service_order_count,
+                "subordinates_count": subordinate_count,
                 "target_organization_id": primary.id,
                 "target_organization_name": primary.name,
             })
-    return rows
+    return diagnostics
+
+
+def legacy_workspace_candidates(db: Session) -> list[dict]:
+    return [item for item in legacy_workspace_diagnostics(db) if item["eligible"]]
 
 
 def migrate_legacy_user_to_primary(db: Session, *, user_id: int, actor: User, reason: str | None = None) -> User:

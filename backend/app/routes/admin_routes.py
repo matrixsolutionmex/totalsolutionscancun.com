@@ -34,7 +34,7 @@ from app.services.commercial_upgrade_service import (
 )
 from app.services.user_lifecycle_service import record_user_lifecycle_event, revoke_user_access, transition_user_status
 from app.services.entitlement_service import current_plan, ensure_user_commercial_profile, set_user_entitlement_plan
-from app.services.legacy_workspace_migration_service import legacy_workspace_candidates, migrate_legacy_user_to_primary
+from app.services.legacy_workspace_migration_service import legacy_workspace_candidates, legacy_workspace_diagnostics, migrate_legacy_user_to_primary
 from app.services.platform_admin_service import (
     get_platform_organization,
     get_platform_user,
@@ -557,7 +557,7 @@ def admin_legacy_workspace_candidates(
     db: Session = Depends(get_db),
     actor: User = Depends(require_root_user),
 ):
-    return {"candidates": legacy_workspace_candidates(db)}
+    return {"candidates": legacy_workspace_candidates(db), "diagnostics": legacy_workspace_diagnostics(db)}
 
 
 @router.post("/platform/migrations/legacy-users/{user_id}")
