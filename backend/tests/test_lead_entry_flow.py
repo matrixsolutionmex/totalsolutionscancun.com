@@ -1122,8 +1122,33 @@ def test_tracking_controls_are_explicit_and_not_automatic():
     assert "Iniciar ruta" in html
     assert "Compartiendo ubicación durante este servicio" in html
     assert "/tracking/start" in html
+    assert "/tracking/position" in html
     assert "/tracking/stop" in html
-    assert "watchPosition" not in html
+    assert "navigator.geolocation.watchPosition" in html
+    assert "navigator.geolocation.clearWatch" in html
+    assert "activeTrackingWatcherId" in html
+    assert html.index("function beginTrackingPublisher") < html.index("navigator.geolocation.watchPosition")
+    start_flow = html.split("async function startServiceOrderTracking", 1)[1].split("async function stopServiceOrderTracking", 1)[0]
+    assert start_flow.index("/tracking/start") < start_flow.index("beginTrackingPublisher")
+    assert "TRACKING_MIN_INTERVAL_MS = 15000" in html
+    assert "TRACKING_MIN_DISTANCE_M = 50" in html
+    assert "captured_at" in html
+    assert "Permiso de ubicación denegado. Ruta detenida" in html
+    assert "Sin conexión. Ubicación pendiente" in html
+    assert "await stopTrackingPublisher({ notifyBackend: true, reason: \"MANUAL\" })" in html
+
+
+def test_tracking_watcher_is_started_only_by_explicit_start_flow():
+    html = (Path(__file__).resolve().parents[2] / "frontend" / "index.html").read_text()
+    before_publisher = html.split("function beginTrackingPublisher", 1)[0]
+    assert "navigator.geolocation.watchPosition" not in before_publisher
+    assert html.count("navigator.geolocation.watchPosition") == 1
+    assert html.count("navigator.geolocation.clearWatch") == 1
+    assert "clearTrackingWatcher();" in html
+    assert 'window.addEventListener("pagehide"' in html
+    assert "activeTrackingOrderId && activeTrackingOrderId !== orderId" in html
+    assert "stopTrackingPublisher({ notifyBackend: true })" in html
+    assert "if (activeTrackingOrderId !== orderId || activeTrackingGeneration !== generation) return;" in html
 
 
 def test_reverse_geocode_normalizes_osm_address_fields():

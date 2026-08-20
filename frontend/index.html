@@ -5280,6 +5280,14 @@
     let marketplaceRefreshTimer = null;
     let marketplaceTab = "agenda";
     let marketplaceAssignableUsers = [];
+    let activeTrackingOrderId = null;
+    let activeTrackingWatcherId = null;
+    let activeTrackingGeneration = 0;
+    let activeTrackingLastSentAt = 0;
+    let activeTrackingLastPosition = null;
+    let trackingPublisherStatus = { orderId: null, message: "", kind: "" };
+    const TRACKING_MIN_INTERVAL_MS = 15000;
+    const TRACKING_MIN_DISTANCE_M = 50;
     let currentLanguage = localStorage.getItem("totalsolutions_language") || "es";
     let currentTheme = "classic";
 
@@ -6313,6 +6321,7 @@
           <div class="status">OS: <span>${escapeHtml(osNumber || "-")}</span></div>
           <div class="status">Estado de ruta: <span>${escapeHtml(order.status || "Sin iniciar")}</span></div>
           ${order.status === "EN_CAMINO" ? '<div class="status">Compartiendo ubicación durante este servicio</div>' : ""}
+          ${trackingPublisherStatus.orderId === order.id && trackingPublisherStatus.message ? `<div class="status tracking-publisher-status ${escapeHtml(trackingPublisherStatus.kind)}">${escapeHtml(trackingPublisherStatus.message)}</div>` : ""}
           <div class="status">Local del servicio: <span>${escapeHtml(hasCoordinates ? "Coordenadas confirmadas" : (lead.google_maps_url ? "Enlace de mapa" : "No informado"))}</span></div>
           ${navigationUrl ? `<div class="card-actions-row"><a class="small-btn" href="${escapeHtml(navigationUrl)}" target="_blank" rel="noopener noreferrer">Navegar hasta el cliente</a></div>` : ""}
           ${trackingActions}
@@ -6352,9 +6361,165 @@
       return null;
     }
 
-    async function startServiceOrderTracking(orderId) {
-      if (!orderId || !confirm("¿Aceptas compartir tu ubicación durante este servicio?")) {
+    function setTrackingPublisherStatus(orderId, message, kind = "") {
+      trackingPublisherStatus = { orderId, message, kind };
+      if (cachedBoard) {
+        renderBoard(cachedBoard);
+      }
+    }
+
+    function clearTrackingWatcher() {
+      activeTrackingGeneration += 1;
+      if (activeTrackingWatcherId !== null && navigator.geolocation) {
+        navigator.geolocation.clearWatch(activeTrackingWatcherId);
+      }
+      activeTrackingWatcherId = null;
+      activeTrackingOrderId = null;
+      activeTrackingLastSentAt = 0;
+      activeTrackingLastPosition = null;
+    }
+
+    function haversineDistanceMeters(first, second) {
+      if (!first || !second) return Number.POSITIVE_INFINITY;
+      const radians = (value) => value * Math.PI / 180;
+      const latitudeDelta = radians(second.latitude - first.latitude);
+      const longitudeDelta = radians(second.longitude - first.longitude);
+      const latitudeA = radians(first.latitude);
+      const latitudeB = radians(second.latitude);
+      const value = Math.sin(latitudeDelta / 2) ** 2
+        + Math.cos(latitudeA) * Math.cos(latitudeB) * Math.sin(longitudeDelta / 2) ** 2;
+      return 6371000 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+    }
+
+    function validTrackingPosition(position) {
+      const coords = position?.coords || {};
+      const latitude = Number(coords.latitude);
+      const longitude = Number(coords.longitude);
+      const accuracy = coords.accuracy == null ? null : Number(coords.accuracy);
+      return Number.isFinite(latitude) && Number.isFinite(longitude)
+        && latitude >= -90 && latitude <= 90
+        && longitude >= -180 && longitude <= 180
+        && (accuracy === null || (Number.isFinite(accuracy) && accuracy >= 0))
+        ? { latitude, longitude, accuracy, capturedAt: position.timestamp || Date.now() }
+        : null;
+    }
+
+    async function publishTrackingPosition(orderId, generation, position) {
+      if (activeTrackingOrderId !== orderId || activeTrackingGeneration !== generation) return;
+      const normalized = validTrackingPosition(position);
+      if (!normalized) {
+        setTrackingPublisherStatus(orderId, "Ubicación temporalmente no disponible", "error");
         return;
+      }
+      const now = Date.now();
+      const movedEnough = haversineDistanceMeters(activeTrackingLastPosition, normalized) >= TRACKING_MIN_DISTANCE_M;
+      if (activeTrackingLastSentAt && now - activeTrackingLastSentAt < TRACKING_MIN_INTERVAL_MS && !movedEnough) {
+        return;
+      }
+      activeTrackingLastSentAt = now;
+      activeTrackingLastPosition = normalized;
+      if (navigator.onLine === false) {
+        setTrackingPublisherStatus(orderId, "Sin conexión. Ubicación pendiente", "error");
+        return;
+      }
+      setTrackingPublisherStatus(orderId, normalized.accuracy !== null && normalized.accuracy > 1000
+        ? "Compartiendo ubicación · precisión baja"
+        : "Compartiendo ubicación");
+      try {
+        const response = await apiFetch(`${API_BASE}/service-orders/${orderId}/tracking/position`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            latitude: normalized.latitude,
+            longitude: normalized.longitude,
+            accuracy_m: normalized.accuracy,
+            captured_at: new Date(normalized.capturedAt).toISOString()
+          })
+        });
+        if (!response.ok) {
+          if ([401, 403, 409].includes(response.status)) {
+            clearTrackingWatcher();
+            setTrackingPublisherStatus(orderId, "Ruta detenida", "error");
+            return;
+          }
+          setTrackingPublisherStatus(orderId, "Ubicación temporalmente no disponible", "error");
+        }
+      } catch (_error) {
+        setTrackingPublisherStatus(orderId, "Sin conexión. Reintentando ubicación", "error");
+      }
+    }
+
+    async function handleTrackingGeolocationError(orderId, generation, error) {
+      if (activeTrackingOrderId !== orderId || activeTrackingGeneration !== generation) return;
+      if (error?.code === 1) {
+        clearTrackingWatcher();
+        setTrackingPublisherStatus(orderId, "Permiso de ubicación denegado. Ruta detenida", "error");
+        await stopTrackingBackend(orderId);
+        return;
+      }
+      setTrackingPublisherStatus(orderId, error?.code === 3
+        ? "GPS buscando señal"
+        : "Ubicación temporalmente no disponible", "error");
+    }
+
+    function beginTrackingPublisher(orderId) {
+      if (!navigator.geolocation) {
+        setTrackingPublisherStatus(orderId, "GPS no disponible en este navegador", "error");
+        return false;
+      }
+      clearTrackingWatcher();
+      activeTrackingOrderId = orderId;
+      const generation = ++activeTrackingGeneration;
+      setTrackingPublisherStatus(orderId, "GPS buscando señal");
+      try {
+        activeTrackingWatcherId = navigator.geolocation.watchPosition(
+          (position) => publishTrackingPosition(orderId, generation, position),
+          (error) => handleTrackingGeolocationError(orderId, generation, error),
+          { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 }
+        );
+      } catch (_error) {
+        clearTrackingWatcher();
+        setTrackingPublisherStatus(orderId, "GPS no disponible. Ruta detenida", "error");
+        return false;
+      }
+      return true;
+    }
+
+    async function stopTrackingBackend(orderId, reason = "MANUAL") {
+      if (!orderId) return true;
+      try {
+        const response = await apiFetch(`${API_BASE}/service-orders/${orderId}/tracking/stop`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason })
+        });
+        return response.ok || [404, 409].includes(response.status);
+      } catch (_error) {
+        return false;
+      }
+    }
+
+    async function stopTrackingPublisher({ orderId = activeTrackingOrderId, notifyBackend = false, reason = "MANUAL" } = {}) {
+      if (!orderId) return true;
+      const wasActive = activeTrackingOrderId === orderId;
+      if (wasActive) {
+        clearTrackingWatcher();
+      }
+      const backendStopped = notifyBackend ? await stopTrackingBackend(orderId, reason) : true;
+      if (wasActive) {
+        setTrackingPublisherStatus(orderId, "Ruta detenida");
+      }
+      return backendStopped;
+    }
+
+    async function startServiceOrderTracking(orderId) {
+      if (!orderId || !confirm("¿Aceptas compartir tu ubicación durante este servicio?")) return;
+      if (activeTrackingOrderId && activeTrackingOrderId !== orderId) {
+        const previousStopped = await stopTrackingPublisher({ notifyBackend: true });
+        if (!previousStopped) {
+          alert("No fue posible detener la ruta anterior. Inicia esta ruta después.");
+          return;
+        }
       }
       const response = await apiFetch(`${API_BASE}/service-orders/${orderId}/tracking/start`, {
         method: "POST",
@@ -6365,6 +6530,9 @@
         alert(await responseMessage(response, "No fue posible iniciar la ruta"));
         return;
       }
+      if (!beginTrackingPublisher(orderId)) {
+        await stopTrackingBackend(orderId);
+      }
       await loadBoard();
     }
 
@@ -6372,20 +6540,29 @@
       const message = reason === "ARRIVED"
         ? "¿Confirmas que llegaste al lugar del servicio?"
         : "¿Deseas detener la ruta?";
-      if (!orderId || !confirm(message)) {
-        return;
-      }
+      if (!orderId || !confirm(message)) return;
       const response = await apiFetch(`${API_BASE}/service-orders/${orderId}/tracking/stop`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reason })
       });
+      await stopTrackingPublisher({ orderId, notifyBackend: false });
       if (!response.ok) {
         alert(await responseMessage(response, "No fue posible detener la ruta"));
         return;
       }
       await loadBoard();
     }
+
+    window.addEventListener("offline", () => {
+      if (activeTrackingOrderId) setTrackingPublisherStatus(activeTrackingOrderId, "Sin conexión. Ubicación pendiente", "error");
+    });
+    window.addEventListener("online", () => {
+      if (activeTrackingOrderId) setTrackingPublisherStatus(activeTrackingOrderId, "GPS buscando señal");
+    });
+    window.addEventListener("pagehide", () => {
+      clearTrackingWatcher();
+    });
 
     async function openLeadFromRequest(leadId) {
       let lead = findLeadInCache(leadId);
@@ -7755,6 +7932,16 @@
       const limitPerStage = selectedBroker ? 100 : 25;
       const response = await apiFetch(`${API_BASE}/leads/kanban?limit_per_stage=${limitPerStage}${brokerParam}${unassignedParam}`);
       const data = await response.json();
+      if (activeTrackingOrderId) {
+        const visibleLead = Object.values(data.board || {})
+          .flat()
+          .find((lead) => Number(lead.service_order?.id) === Number(activeTrackingOrderId));
+        if (!visibleLead || visibleLead.service_order?.status !== "EN_CAMINO") {
+          const stoppedOrderId = activeTrackingOrderId;
+          clearTrackingWatcher();
+          setTrackingPublisherStatus(stoppedOrderId, "Ruta detenida");
+        }
+      }
       renderBoard(data);
     }
 
@@ -8322,6 +8509,7 @@
     }
 
     async function logout() {
+      await stopTrackingPublisher({ notifyBackend: true, reason: "MANUAL" });
       await markOffline();
       saveThemePreference(currentTheme, null);
       localStorage.removeItem("totalsolutions_user");
