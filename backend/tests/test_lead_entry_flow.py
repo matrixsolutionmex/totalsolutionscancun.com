@@ -21,6 +21,7 @@ from app.models.lead_event import LeadEvent
 from app.models.notification import EmailOutbox, Notification, NotificationPreference, WebPushSubscription
 from app.models.organization import Organization
 from app.models.service_order import ServiceOrder
+from app.models.service_order_tracking import ServiceOrderTracking
 from app.models.service_property import ServiceProperty
 from app.models.service_request import ServiceRequest, ServiceRequestMedia
 from app.models.user import User
@@ -77,6 +78,7 @@ def db():
             ServiceRequest.__table__,
             ServiceRequestMedia.__table__,
             ServiceOrder.__table__,
+            ServiceOrderTracking.__table__,
             LeadEvent.__table__,
             LeadDocument.__table__,
             DeletionRequest.__table__,
@@ -1113,6 +1115,15 @@ def test_location_frontend_has_confirmation_and_navigation_controls():
     assert "https://nominatim.openstreetmap.org" in security_headers
     assert "/public/geocode/reverse" in portal_html
     assert "seguimiento/" in portal_html
+
+
+def test_tracking_controls_are_explicit_and_not_automatic():
+    html = (Path(__file__).resolve().parents[2] / "frontend" / "index.html").read_text()
+    assert "Iniciar ruta" in html
+    assert "Compartiendo ubicación durante este servicio" in html
+    assert "/tracking/start" in html
+    assert "/tracking/stop" in html
+    assert "watchPosition" not in html
 
 
 def test_reverse_geocode_normalizes_osm_address_fields():
