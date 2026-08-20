@@ -12,6 +12,7 @@ from app.models.user import User
 from app.services.customer_portal_service import service_request_sales_summary
 from app.services.service_order_tracking_service import (
     get_tracking_for_actor,
+    list_active_tracking_for_actor,
     start_tracking,
     stop_tracking,
     stop_tracking_for_order,
@@ -186,6 +187,14 @@ def assign_service_order_technician(
     db.commit()
     db.refresh(order)
     return {"id": order.id, "order_number": order.order_number, "responsible_user_id": order.responsible_user_id}
+
+
+@router.get("/service-orders/tracking/active")
+def list_active_service_order_tracking(
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_user),
+):
+    return {"routes": list_active_tracking_for_actor(db, actor)}
 
 
 @router.get("/service-orders/{order_id}/tracking")

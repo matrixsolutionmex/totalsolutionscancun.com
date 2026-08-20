@@ -107,6 +107,50 @@ def get_tracking_for_actor(db: Session, order_id: int, actor: User) -> dict:
     return {"service_order_id": order.id, "order_number": order.order_number, "status": order.status, "tracking": serialize_tracking(tracking)}
 
 
+def list_active_tracking_for_actor(db: Session, actor: User) -> list[dict]:
+    """Return only active routes visible in the actor's operational scope."""
+    if actor.role not in {"ROOT", "GERENTE"} or actor.organization_id is None:
+        raise HTTPException(status_code=403, detail="Central de tracking fora do seu escopo")
+
+    rows = (
+        db.query(ServiceOrder, ServiceOrderTracking, User)
+        .join(ServiceOrderTracking, ServiceOrderTracking.service_order_id == ServiceOrder.id)
+        .join(User, User.id == ServiceOrderTracking.technician_id)
+        .filter(
+            ServiceOrder.organization_id == actor.organization_id,
+            ServiceOrderTracking.tracking_active.is_(True),
+            ServiceOrder.status == "EN_CAMINO",
+        )
+        .order_by(ServiceOrderTracking.updated_at.desc(), ServiceOrder.id)
+        .all()
+    )
+
+    active_routes = []
+    for order, tracking, technician in rows:
+        if not _is_visible_to_actor(db, order, actor):
+            continue
+        lead = order.lead
+        active_routes.append({
+            "service_order_id": order.id,
+            "order_number": order.order_number,
+            "status": order.status,
+            "client_name": lead.nome if lead else None,
+            "technician": {
+                "id": technician.id,
+                "name": _actor_name(technician),
+            },
+            "tracking": serialize_tracking(tracking),
+            "service_location": {
+                "latitude": order.location_lat,
+                "longitude": order.location_lng,
+                "accuracy_m": order.location_accuracy_m,
+                "source": order.location_source,
+                "confirmed_at": order.location_confirmed_at,
+            },
+        })
+    return active_routes
+
+
 def start_tracking(db: Session, order_id: int, actor: User, consent_granted: bool) -> dict:
     order = _order_for_actor(db, order_id, actor)
     _require_assigned_technician(order, actor)

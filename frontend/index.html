@@ -971,6 +971,38 @@
       margin-bottom: 10px;
     }
 
+    .tracking-operations-map {
+      min-height: 420px;
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      overflow: hidden;
+      background: #eef3f7;
+    }
+
+    .tracking-route-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .tracking-route-row {
+      display: grid;
+      gap: 4px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+    }
+
+    .tracking-route-row strong {
+      color: var(--text);
+    }
+
+    .tracking-status-muted {
+      color: var(--muted);
+    }
+
     .inline-form {
       display: grid;
       grid-template-columns: 1fr 1fr auto;
@@ -3628,6 +3660,12 @@
 
   <section class="view" id="view-atendimento">
     <div class="view-grid">
+      <div class="panel-box manager-only" style="grid-column: 1 / -1;">
+        <div class="panel-title">Técnicos en ruta</div>
+        <div class="line" id="trackingOperationsStatus">Esperando ubicación...</div>
+        <div id="trackingOperationsMap" class="tracking-operations-map" aria-label="Mapa de técnicos en ruta"></div>
+        <div id="trackingOperationsRoutes" class="tracking-route-list"></div>
+      </div>
       <div class="panel-box" style="grid-column: 1 / -1;">
         <div class="panel-title">AGENDA OPERACIONAL</div>
         <div class="line">Organiza agenda, visitas, diagnósticos y seguimiento desde el control de servicios.</div>
@@ -5280,6 +5318,10 @@
     let marketplaceRefreshTimer = null;
     let marketplaceTab = "agenda";
     let marketplaceAssignableUsers = [];
+    let trackingOperationsMap = null;
+    let trackingOperationsTimer = null;
+    const trackingOperationsMarkers = new Map();
+    const TRACKING_OPERATIONS_POLL_MS = 12000;
     let activeTrackingOrderId = null;
     let activeTrackingWatcherId = null;
     let activeTrackingGeneration = 0;
@@ -5817,6 +5859,9 @@
     }
 
     function showView(viewName) {
+      if (viewName !== "atendimento") {
+        stopTrackingOperationsMonitoring();
+      }
       document.querySelectorAll(".view").forEach((view) => {
         view.classList.toggle("active", view.id === `view-${viewName}`);
       });
@@ -5831,6 +5876,12 @@
       }
       if (viewName === "atendimento") {
         loadMarketplace(marketplaceTab).catch(() => {});
+        if (["ROOT", "GERENTE"].includes(currentUser?.role)) {
+          loadActiveTrackingOperations().catch((error) => {
+            const statusElement = document.getElementById("trackingOperationsStatus");
+            if (statusElement) statusElement.textContent = error.message || "No fue posible actualizar el mapa operativo.";
+          });
+        }
       }
       if (viewName === "planos") {
         loadCommercialPlans().catch(() => {});
@@ -6020,6 +6071,147 @@
 
     function marketplaceValue(value) {
       return value === null || value === undefined || value === "" ? "Não informado" : escapeHtml(String(value));
+    }
+
+    function trackingOperationsDate(value) {
+      if (!value) return "-";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
+    }
+
+    function trackingOperationsStatus(route) {
+      const updatedAt = route?.tracking?.updated_at;
+      const ageMs = updatedAt ? Date.now() - new Date(updatedAt).getTime() : Infinity;
+      if (!Number.isFinite(ageMs) || ageMs > 60000) return "Ubicación desactualizada";
+      if (route?.tracking?.accuracy_m != null && Number(route.tracking.accuracy_m) > 1000) return "Señal GPS débil";
+      return "En camino";
+    }
+
+    function renderTrackingOperationsRoutes(routes) {
+      const list = document.getElementById("trackingOperationsRoutes");
+      if (!list) return;
+      if (!routes.length) {
+        list.innerHTML = '<div class="tracking-status-muted">No hay técnicos compartiendo ubicación en este momento.</div>';
+        return;
+      }
+      list.innerHTML = routes.map((route) => {
+        const tracking = route.tracking || {};
+        return `<article class="tracking-route-row">
+          <strong>${escapeHtml(route.order_number || `OS ${route.service_order_id}`)} · ${escapeHtml(route.technician?.name || "Técnico")}</strong>
+          <span>Cliente: ${escapeHtml(route.client_name || "-")}</span>
+          <span>${trackingOperationsStatus(route)} · Inicio: ${escapeHtml(trackingOperationsDate(tracking.started_at))}</span>
+          <span>Última actualización: ${escapeHtml(trackingOperationsDate(tracking.updated_at))} · Precisión: ${tracking.accuracy_m == null ? "-" : `${escapeHtml(tracking.accuracy_m)} m`}</span>
+        </article>`;
+      }).join("");
+    }
+
+    function clearTrackingOperationsMarkers() {
+      trackingOperationsMarkers.forEach((markers) => {
+        markers.technician.remove();
+        markers.destination.remove();
+      });
+      trackingOperationsMarkers.clear();
+    }
+
+    function renderTrackingOperationsMap(routes) {
+      const mapElement = document.getElementById("trackingOperationsMap");
+      const statusElement = document.getElementById("trackingOperationsStatus");
+      if (!mapElement || !statusElement) return;
+      if (!window.L || window.leafletLoadFailed) {
+        statusElement.textContent = "El mapa no está disponible. El estado de las rutas sigue visible abajo.";
+        renderTrackingOperationsRoutes(routes);
+        return;
+      }
+      if (!trackingOperationsMap) {
+        trackingOperationsMap = L.map(mapElement).setView([21.1619, -86.8515], 12);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(trackingOperationsMap);
+      }
+      const activeIds = new Set();
+      const bounds = [];
+      routes.forEach((route) => {
+        const tracking = route.tracking || {};
+        const technicianLat = Number(tracking.current_lat);
+        const technicianLng = Number(tracking.current_lng);
+        const destinationLat = Number(route.service_location?.latitude);
+        const destinationLng = Number(route.service_location?.longitude);
+        const hasTechnician = Number.isFinite(technicianLat) && Number.isFinite(technicianLng);
+        const hasDestination = Number.isFinite(destinationLat) && Number.isFinite(destinationLng);
+        const routeId = String(route.service_order_id);
+        activeIds.add(routeId);
+        let markers = trackingOperationsMarkers.get(routeId);
+        if (!markers) {
+          markers = {
+            technician: L.circleMarker([0, 0], { radius: 9, color: "#2563eb", fillColor: "#2563eb", fillOpacity: 0.95 }),
+            destination: L.circleMarker([0, 0], { radius: 8, color: "#16a34a", fillColor: "#16a34a", fillOpacity: 0.9 }),
+          };
+          markers.technician.bindTooltip("Técnico");
+          markers.destination.bindTooltip("Destino del servicio");
+          trackingOperationsMarkers.set(routeId, markers);
+        }
+        if (hasTechnician) {
+          markers.technician.setLatLng([technicianLat, technicianLng]).addTo(trackingOperationsMap);
+          markers.technician.bindPopup(`<strong>${escapeHtml(route.order_number || `OS ${route.service_order_id}`)}</strong><br>${escapeHtml(route.technician?.name || "Técnico")}<br>${escapeHtml(trackingOperationsStatus(route))}`);
+          bounds.push([technicianLat, technicianLng]);
+        } else {
+          markers.technician.remove();
+        }
+        if (hasDestination) {
+          markers.destination.setLatLng([destinationLat, destinationLng]).addTo(trackingOperationsMap);
+          bounds.push([destinationLat, destinationLng]);
+        } else {
+          markers.destination.remove();
+        }
+      });
+      trackingOperationsMarkers.forEach((markers, routeId) => {
+        if (!activeIds.has(routeId)) {
+          markers.technician.remove();
+          markers.destination.remove();
+          trackingOperationsMarkers.delete(routeId);
+        }
+      });
+      if (bounds.length && routes.length === 1) trackingOperationsMap.fitBounds(bounds, { padding: [30, 30], maxZoom: 16 });
+      statusElement.textContent = routes.length === 1 ? trackingOperationsStatus(routes[0]) : `${routes.length} técnicos en camino`;
+      renderTrackingOperationsRoutes(routes);
+    }
+
+    function stopTrackingOperationsMonitoring() {
+      if (trackingOperationsTimer) {
+        window.clearTimeout(trackingOperationsTimer);
+        trackingOperationsTimer = null;
+      }
+      clearTrackingOperationsMarkers();
+      if (trackingOperationsMap) {
+        trackingOperationsMap.remove();
+        trackingOperationsMap = null;
+      }
+    }
+
+    async function loadActiveTrackingOperations() {
+      if (trackingOperationsTimer) {
+        window.clearTimeout(trackingOperationsTimer);
+        trackingOperationsTimer = null;
+      }
+      if (!document.getElementById("view-atendimento")?.classList.contains("active") || !["ROOT", "GERENTE"].includes(currentUser?.role)) {
+        stopTrackingOperationsMonitoring();
+        return;
+      }
+      const response = await apiFetch(`${API_BASE}/service-orders/tracking/active`);
+      if (response.status === 401 || response.status === 403) {
+        stopTrackingOperationsMonitoring();
+        const statusElement = document.getElementById("trackingOperationsStatus");
+        if (statusElement) statusElement.textContent = "No autorizado para consultar rutas.";
+        return;
+      }
+      if (!response.ok) throw new Error("No fue posible actualizar el mapa operativo.");
+      const data = await response.json();
+      if (!document.getElementById("view-atendimento")?.classList.contains("active") || !["ROOT", "GERENTE"].includes(currentUser?.role)) {
+        stopTrackingOperationsMonitoring();
+        return;
+      }
+      renderTrackingOperationsMap(data.routes || []);
+      if (document.getElementById("view-atendimento")?.classList.contains("active") && !document.hidden) {
+        trackingOperationsTimer = window.setTimeout(() => loadActiveTrackingOperations().catch(() => {}), TRACKING_OPERATIONS_POLL_MS);
+      }
     }
 
     async function loadMarketplaceAssignableUsers() {
@@ -10877,11 +11069,15 @@
     });
 
     document.addEventListener("visibilitychange", () => {
-      if (document.hidden && marketplaceRefreshTimer) {
-        window.clearTimeout(marketplaceRefreshTimer);
-        marketplaceRefreshTimer = null;
-      } else if (!document.hidden && document.getElementById("view-atendimento")?.classList.contains("active") && marketplaceTab === "radar") {
-        loadMarketplace("radar").catch(() => {});
+      if (document.hidden) {
+        if (marketplaceRefreshTimer) {
+          window.clearTimeout(marketplaceRefreshTimer);
+          marketplaceRefreshTimer = null;
+        }
+        stopTrackingOperationsMonitoring();
+      } else if (document.getElementById("view-atendimento")?.classList.contains("active")) {
+        if (marketplaceTab === "radar") loadMarketplace("radar").catch(() => {});
+        if (["ROOT", "GERENTE"].includes(currentUser?.role)) loadActiveTrackingOperations().catch(() => {});
       }
     });
 

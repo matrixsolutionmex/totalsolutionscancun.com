@@ -1151,6 +1151,22 @@ def test_tracking_watcher_is_started_only_by_explicit_start_flow():
     assert "if (activeTrackingOrderId !== orderId || activeTrackingGeneration !== generation) return;" in html
 
 
+def test_tracking_operations_map_polls_only_for_authorized_operational_view():
+    html = (Path(__file__).resolve().parents[2] / "frontend" / "index.html").read_text()
+    assert "/service-orders/tracking/active" in html
+    assert "TRACKING_OPERATIONS_POLL_MS = 12000" in html
+    assert "function renderTrackingOperationsMap" in html
+    assert "trackingOperationsMap" in html
+    assert "setLatLng" in html
+    assert "Técnico" in html
+    assert "Destino del servicio" in html
+    assert "Última actualización" in html
+    assert "Ubicación desactualizada" in html
+    assert "Señal GPS débil" in html
+    assert "stopTrackingOperationsMonitoring();" in html
+    assert "![\"ROOT\", \"GERENTE\"].includes(currentUser?.role)" in html
+
+
 def test_reverse_geocode_normalizes_osm_address_fields():
     result = _normalize_result({
         "address": {

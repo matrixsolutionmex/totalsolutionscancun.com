@@ -18,6 +18,7 @@ from app.models.service_request import ServiceRequest
 from app.models.user import User
 from app.services.service_order_tracking_service import (
     get_tracking_for_actor,
+    list_active_tracking_for_actor,
     start_tracking,
     stop_tracking,
     stop_tracking_for_order,
@@ -206,4 +207,40 @@ def test_root_and_supervisor_can_consult_but_regular_user_cannot(db):
     assert get_tracking_for_actor(db, order.id, manager)["tracking"]["technician_id"] == technician.id
     with pytest.raises(HTTPException) as blocked:
         get_tracking_for_actor(db, order.id, outsider)
+    assert blocked.value.status_code == 403
+
+
+def test_operations_tracking_list_is_scoped_and_excludes_finished_routes(db):
+    org_a = make_org(db, "tracking-operations-a")
+    org_b = make_org(db, "tracking-operations-b")
+    root = make_user(db, "root-operations", "ROOT", org_a)
+    manager = make_user(db, "manager-operations", "GERENTE", org_a)
+    technician = make_user(db, "technician-operations", "BROKER", org_a, manager_id=manager.id)
+    foreign_technician = make_user(db, "foreign-operations", "BROKER", org_b)
+    visible = make_order(db, org_a, technician, manager, status="EN_CAMINO")
+    visible.location_lat = 21.16
+    visible.location_lng = -86.85
+    hidden_org = make_order(db, org_b, foreign_technician, status="EN_CAMINO")
+    finished = make_order(db, org_a, technician, manager, status="COMPLETED")
+    db.commit()
+    start_tracking(db, visible.id, technician, True)
+    start_tracking(db, hidden_org.id, foreign_technician, True)
+    tracking = db.query(ServiceOrderTracking).filter_by(service_order_id=visible.id).one()
+    tracking.current_lat = 21.17
+    tracking.current_lng = -86.86
+    db.commit()
+
+    root_routes = list_active_tracking_for_actor(db, root)
+    manager_routes = list_active_tracking_for_actor(db, manager)
+    assert [item["service_order_id"] for item in root_routes] == [visible.id]
+    assert [item["service_order_id"] for item in manager_routes] == [visible.id]
+    assert root_routes[0]["technician"]["name"] == technician.full_name
+    assert root_routes[0]["service_location"]["latitude"] == pytest.approx(21.16)
+    assert root_routes[0]["tracking"]["current_lat"] == pytest.approx(21.17)
+
+    stop_tracking_for_order(db, visible, actor=manager, reason="COMPLETED", preserve_status=True)
+    assert list_active_tracking_for_actor(db, root) == []
+
+    with pytest.raises(HTTPException) as blocked:
+        list_active_tracking_for_actor(db, make_user(db, "client-operations", "CLIENTE", org_a))
     assert blocked.value.status_code == 403
