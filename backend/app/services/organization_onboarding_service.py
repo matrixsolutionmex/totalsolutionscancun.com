@@ -14,6 +14,7 @@ from app.models.organization import Organization
 from app.models.organization_invitation import OrganizationInvitation
 from app.models.referral_attribution import ReferralAttribution
 from app.models.user import User
+from app.services.entitlement_service import ensure_user_commercial_profile
 
 INVITATION_TTL_DAYS = 7
 INVITATION_ROLES = {"BROKER", "GERENTE"}
@@ -90,6 +91,9 @@ def accept_invitation(db: Session, *, raw_token: str, user: User) -> Organizatio
     user.role = invitation.role
     user.manager_id = invitation.supervisor_user_id
     user.onboarding_source = "TEAM"
+    profile = ensure_user_commercial_profile(db, user, plan="FREE", source="TEAM_INVITATION")
+    if profile.source != "ROOT_ADMIN":
+        profile.plan = "FREE"
     invitation.status = "ACCEPTED"
     invitation.accepted_at = datetime.utcnow()
     db.flush()

@@ -48,6 +48,7 @@ def _user_row(db: Session, user: User, organization: Organization | None = None)
         "organization_name": organization.name if organization else None,
         "supervisor": supervisor.full_name or supervisor.username if supervisor else None,
         "supervisor_id": supervisor.id if supervisor else None,
+        "subordinates_count": db.query(User).filter(User.manager_id == user.id, User.organization_id == user.organization_id, User.role == "BROKER").count(),
         "onboarding_source": user.onboarding_source,
         "created_at": user.registered_at.isoformat() if user.registered_at else None,
         "last_seen_at": user.last_seen_at.isoformat() if user.last_seen_at else None,
@@ -140,6 +141,8 @@ def get_platform_user(db: Session, user_id: int) -> dict | None:
         return None
     row = _user_row(db, user)
     row["active_intent"] = next((item for item in list_platform_organizations(db) if item["id"] == user.organization_id), {}).get("active_intent")
+    row["team"] = list_platform_users(db, organization_id=user.organization_id) if user.role == "GERENTE" else []
+    row["team"] = [item for item in row["team"] if item["supervisor_id"] == user.id]
     return row
 
 

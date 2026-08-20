@@ -3592,6 +3592,15 @@
         <button class="warning" id="returnBulkButton">Liberar selección</button>
       </div>
     </div>
+    <div class="panel-box manager-only" id="supervisorTeamPanel">
+      <div class="panel-title">Minha equipe</div>
+      <div class="line">Técnicos vinculados ao seu supervisor e dentro da sua organização.</div>
+      <div class="inline-form" style="margin-top: 12px;">
+        <input id="teamInviteEmail" type="email" placeholder="E-mail do técnico">
+        <button type="button" id="teamInviteButton">Convidar técnico</button>
+      </div>
+      <div class="broker-list" id="supervisorTeamList"></div>
+    </div>
   </section>
 
   <section class="view active" id="view-vendas">
@@ -5812,6 +5821,9 @@
       }
       if (viewName === "planos") {
         loadCommercialPlans().catch(() => {});
+      }
+      if (viewName === "vendas" && currentUser?.role === "GERENTE") {
+        loadSupervisorTeam().catch(() => {});
       }
       if (viewName === "usuarios" && currentUser?.role === "ROOT") {
         loadPlatformDirectory().catch((error) => {
@@ -9284,8 +9296,13 @@
         <div class="panel-title">Usuario: ${escapeHtml(user.full_name)}</div>
         <div class="line">${escapeHtml(user.email || "Sem e-mail")} · ${escapeHtml(user.role)} · ${escapeHtml(user.status)} · ${escapeHtml(user.email_verified ? "E-mail verificado" : "E-mail pendiente")}</div>
         <div class="line">Organización: ${escapeHtml(user.organization_name || "Sem organização")} (ID ${user.organization_id ?? "-"}) · Plan ${escapeHtml(user.plan)}</div>
-        <div class="line">Supervisor: ${escapeHtml(user.supervisor || "No informado")} · Onboarding: ${escapeHtml(user.onboarding_source || "-")} · Última actividad: ${escapeHtml(user.last_seen_at ? new Date(user.last_seen_at).toLocaleString() : "No informada")}</div>
-        ${user.role === "BROKER" ? `<div class="inline-actions" style="margin-top: 12px;"><select id="platformSupervisorSelect"><option value="">No definido</option></select><button type="button" data-platform-assign-supervisor="${user.id}">Atribuir supervisor</button></div>` : ""}`;
+        <div class="line">Supervisor: ${escapeHtml(user.supervisor || "No informado")} · Subordinados: ${user.subordinates_count || 0} · Onboarding: ${escapeHtml(user.onboarding_source || "-")} · Última actividad: ${escapeHtml(user.last_seen_at ? new Date(user.last_seen_at).toLocaleString() : "No informada")}</div>
+        <div class="inline-actions" style="margin-top: 12px;">
+          ${user.role === "BROKER" && ["PRO", "BUSINESS"].includes(String(user.plan).toUpperCase()) ? `<button type="button" data-platform-promote-user="${user.id}">Promover a Supervisor</button>` : ""}
+          ${user.role === "GERENTE" ? `<button class="ghost" type="button" data-platform-demote-user="${user.id}">Alterar função</button>` : ""}
+          ${user.role === "BROKER" ? `<select id="platformSupervisorSelect"><option value="">No definido</option></select><button type="button" data-platform-assign-supervisor="${user.id}">Atribuir supervisor</button>` : ""}
+        </div>
+        ${user.role === "GERENTE" ? `<div class="panel-title" style="margin-top: 16px;">Equipo del supervisor</div><div class="broker-list">${(user.team || []).map((member) => `<div class="broker-row"><span><strong>${escapeHtml(member.full_name)}</strong><small>${escapeHtml(member.email || "")} · ${escapeHtml(member.plan)} · ${escapeHtml(member.status)}</small></span></div>`).join("") || `<div class="empty-state">Ningún técnico asignado.</div>`}</div><div class="inline-actions" style="margin-top: 12px;"><input id="platformTeamInviteEmail" type="email" placeholder="E-mail del técnico"><button type="button" data-platform-team-invite="${user.id}">Generar invitación</button></div>` : ""}`;
       if (user.role === "BROKER") {
         apiFetch(`${API_BASE}/admin/platform/users?organization_id=${encodeURIComponent(user.organization_id)}&role=GERENTE&status=ACTIVE`)
           .then((response) => response.json())
@@ -9412,6 +9429,18 @@
           openUserModal(user);
         });
       });
+    }
+
+    async function loadSupervisorTeam() {
+      const list = document.getElementById("supervisorTeamList");
+      if (!list || currentUser?.role !== "GERENTE") return;
+      const response = await apiFetch(`${API_BASE}/organization/team`);
+      const data = await response.json().catch(() => ([]));
+      if (!response.ok) {
+        list.innerHTML = `<div class="empty-state">${escapeHtml(data.detail || "No fue posible cargar el equipo.")}</div>`;
+        return;
+      }
+      list.innerHTML = data.length ? data.map((member) => `<div class="broker-row"><span><strong>${escapeHtml(member.full_name)}</strong><small>${escapeHtml(member.email || "")} · ${escapeHtml(member.plan)} · ${escapeHtml(member.status)}</small></span></div>`).join("") : `<div class="empty-state">Ningún técnico asignado.</div>`;
     }
 
     function pendingManagerOptions() {
@@ -10458,6 +10487,47 @@
       const userResponse = await apiFetch(`${API_BASE}/admin/platform/users/${target.dataset.platformAssignSupervisor}`);
       if (userResponse.ok) renderPlatformUserDetail(await userResponse.json());
       await loadPlatformDirectory();
+    });
+    document.getElementById("teamInviteButton")?.addEventListener("click", async () => {
+      const input = document.getElementById("teamInviteEmail");
+      const email = input?.value.trim();
+      if (!email) return;
+      const response = await apiFetch(`${API_BASE}/organization/team/invitations`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({invited_email: email})});
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        addPabloV2Message(data.detail || "No fue posible generar la invitación.", "ai");
+        return;
+      }
+      if (input) input.value = "";
+      addPabloV2Message(`Convite gerado: ${data.invite_url}`, "ai");
+    });
+    document.getElementById("platformDirectoryDetail")?.addEventListener("click", async (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (target.matches("[data-platform-promote-user]")) {
+        const response = await apiFetch(`${API_BASE}/admin/platform/users/${target.dataset.platformPromoteUser}/role`, {method: "PATCH", headers: {"Content-Type": "application/json"}, body: JSON.stringify({role: "SUPERVISOR"})});
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || "No fue posible promover el usuario.");
+        const userResponse = await apiFetch(`${API_BASE}/admin/platform/users/${target.dataset.platformPromoteUser}`);
+        if (userResponse.ok) renderPlatformUserDetail(await userResponse.json());
+        await loadPlatformDirectory();
+      }
+      if (target.matches("[data-platform-demote-user]")) {
+        const action = prompt("Para rebaixar: CLEAR remove supervisores dos técnicos ou TRANSFER envia para outro supervisor.", "CLEAR");
+        if (!action) return;
+        const response = await apiFetch(`${API_BASE}/admin/platform/users/${target.dataset.platformDemoteUser}/role`, {method: "PATCH", headers: {"Content-Type": "application/json"}, body: JSON.stringify({role: "BROKER", subordinate_action: action.toUpperCase()})});
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || "No fue posible alterar la función.");
+        await loadPlatformDirectory();
+      }
+      if (target.matches("[data-platform-team-invite]")) {
+        const email = document.getElementById("platformTeamInviteEmail")?.value.trim();
+        if (!email) return;
+        const response = await apiFetch(`${API_BASE}/organization/team/invitations`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({invited_email: email, supervisor_user_id: Number(target.dataset.platformTeamInvite)})});
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || "No fue posible generar la invitación.");
+        addPabloV2Message(`Convite gerado: ${data.invite_url}`, "ai");
+      }
     });
 
     document.getElementById("marketplacePanel")?.addEventListener("click", async (event) => {

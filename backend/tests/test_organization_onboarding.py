@@ -22,7 +22,8 @@ from app.models import service_order, service_property
 from app.services.entitlement_service import current_plan, ensure_user_commercial_profile
 from app.services.organization_onboarding_service import accept_invitation, create_invitation, record_referral
 from app import main as _app_main  # registers the application's relationship models
-from app.routes.admin_routes import PlatformSupervisorRequest, admin_platform_assign_supervisor, approve_pending_user, pending_onboarding_users, pending_users
+from app.routes.admin_routes import PlatformRoleRequest, PlatformSupervisorRequest, admin_platform_assign_supervisor, admin_platform_change_role, approve_pending_user, pending_onboarding_users, pending_users
+from app.routes.organization_routes import current_team
 from app.schemas.auth_schema import UserApprovalRequest
 
 
@@ -79,7 +80,7 @@ def test_independent_workspace_is_free_and_does_not_inherit_paid_plan(onboarding
     assert current_plan(db, user) == "FREE"
 
 
-def test_invitation_is_explicit_single_use_and_preserves_org_plan(onboarding_db):
+def test_invitation_is_explicit_single_use_and_starts_member_free(onboarding_db):
     db = onboarding_db
     organization = create_independent_organization(db, name="Equipe PRO")
     organization.plan = "PRO"
@@ -92,7 +93,8 @@ def test_invitation_is_explicit_single_use_and_preserves_org_plan(onboarding_db)
     db.commit()
     assert accepted.status == "ACCEPTED"
     assert member.organization_id == organization.id
-    assert current_plan(db, member) == "PRO"
+    assert current_plan(db, member) == "FREE"
+    assert db.query(CommercialSubscription).filter_by(organization_id=organization.id).one().plan == "PRO"
     assert db.query(CommercialSubscription).filter_by(organization_id=organization.id).count() == 1
     with pytest.raises(HTTPException) as reused:
         accept_invitation(db, raw_token=raw_token, user=member)
@@ -253,3 +255,61 @@ def test_root_can_assign_same_org_supervisor_but_cross_org_is_rejected(onboardin
     with pytest.raises(HTTPException) as error:
         admin_platform_assign_supervisor(technician.id, PlatformSupervisorRequest(supervisor_id=manager_b.id), db, root)
     assert error.value.status_code == 400
+
+
+def test_root_promotes_pro_without_changing_plan_or_subscription(onboarding_db):
+    db = onboarding_db
+    organization = create_independent_organization(db, name="Promotion")
+    root = make_user(db, username="promotion-root", organization_id=organization.id, role="ROOT")
+    pro_technician = make_user(db, username="pro-tech", organization_id=organization.id, role="BROKER")
+    free_technician = make_user(db, username="free-tech", organization_id=organization.id, role="BROKER")
+    profile = ensure_user_commercial_profile(db, pro_technician, plan="PRO", source="ROOT_ADMIN", granted_by_user_id=root.id)
+    db.commit()
+    subscription_plan = db.query(CommercialSubscription).filter_by(organization_id=organization.id).one().plan
+
+    with pytest.raises(HTTPException) as free_error:
+        admin_platform_change_role(free_technician.id, PlatformRoleRequest(role="SUPERVISOR"), db, root)
+    assert free_error.value.status_code == 403
+    promoted = admin_platform_change_role(pro_technician.id, PlatformRoleRequest(role="SUPERVISOR"), db, root)
+    db.refresh(pro_technician)
+    assert promoted["role"] == "GERENTE"
+    assert current_plan(db, pro_technician) == "PRO"
+    assert pro_technician.organization_id == organization.id
+    assert db.query(CommercialSubscription).filter_by(organization_id=organization.id).one().plan == subscription_plan
+    assert profile.plan == "PRO"
+
+
+def test_supervisor_invitation_creates_free_technician_in_same_team(onboarding_db):
+    db = onboarding_db
+    organization = create_independent_organization(db, name="Team")
+    root = make_user(db, username="team-root", organization_id=organization.id, role="ROOT")
+    supervisor = make_user(db, username="team-supervisor", organization_id=organization.id, role="GERENTE")
+    ensure_user_commercial_profile(db, supervisor, plan="PRO", source="ROOT_ADMIN", granted_by_user_id=root.id)
+    invite, token = create_invitation(db, organization=organization, invited_by=supervisor, invited_email="new-tech@example.com", role="BROKER", supervisor_user_id=supervisor.id)
+    pending = make_user(db, username="new-tech@example.com", email="new-tech@example.com")
+    accepted = accept_invitation(db, raw_token=token, user=pending)
+    db.commit()
+    assert accepted.status == "ACCEPTED"
+    assert pending.organization_id == organization.id
+    assert pending.manager_id == supervisor.id
+    assert pending.role == "BROKER"
+    assert current_plan(db, pending) == "FREE"
+    assert [item["id"] for item in current_team(db, supervisor)] == [pending.id]
+
+
+def test_demoting_supervisor_with_team_requires_explicit_treatment(onboarding_db):
+    db = onboarding_db
+    organization = create_independent_organization(db, name="Demotion")
+    root = make_user(db, username="demotion-root", organization_id=organization.id, role="ROOT")
+    supervisor = make_user(db, username="demotion-supervisor", organization_id=organization.id, role="GERENTE")
+    technician = make_user(db, username="demotion-tech", organization_id=organization.id, role="BROKER",)
+    supervisor.manager_id = None
+    technician.manager_id = supervisor.id
+    db.commit()
+    with pytest.raises(HTTPException) as error:
+        admin_platform_change_role(supervisor.id, PlatformRoleRequest(role="BROKER"), db, root)
+    assert error.value.status_code == 409
+    result = admin_platform_change_role(supervisor.id, PlatformRoleRequest(role="BROKER", subordinate_action="CLEAR"), db, root)
+    db.refresh(technician)
+    assert result["role"] == "BROKER"
+    assert technician.manager_id is None

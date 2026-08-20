@@ -33,7 +33,7 @@ from app.services.commercial_upgrade_service import (
     mark_payment_confirmed,
 )
 from app.services.user_lifecycle_service import record_user_lifecycle_event, revoke_user_access, transition_user_status
-from app.services.entitlement_service import ensure_user_commercial_profile, set_user_entitlement_plan
+from app.services.entitlement_service import current_plan, ensure_user_commercial_profile, set_user_entitlement_plan
 from app.services.legacy_workspace_migration_service import legacy_workspace_candidates, migrate_legacy_user_to_primary
 from app.services.platform_admin_service import (
     get_platform_organization,
@@ -63,6 +63,12 @@ class PlatformSupervisorRequest(BaseModel):
 
 class PlatformEntitlementRequest(BaseModel):
     plan: str
+
+
+class PlatformRoleRequest(BaseModel):
+    role: str
+    subordinate_action: str | None = None
+    transfer_to_supervisor_id: int | None = None
 
 
 def require_reason(reason: str) -> str:
@@ -420,6 +426,68 @@ def admin_platform_user(
     if not user:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
     return user
+
+
+@router.patch("/platform/users/{user_id}/role")
+def admin_platform_change_role(
+    user_id: int,
+    payload: PlatformRoleRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    if not user.is_active or user.status != "ACTIVE":
+        raise HTTPException(status_code=409, detail="Usuário não está ativo")
+    requested_role = payload.role.strip().upper()
+    if requested_role == "SUPERVISOR":
+        requested_role = "GERENTE"
+    if requested_role not in {"BROKER", "GERENTE"}:
+        raise HTTPException(status_code=400, detail="Role permitida: TÉCNICO ou SUPERVISOR")
+    if requested_role == "GERENTE" and current_plan(db, user) not in {"PRO", "BUSINESS"}:
+        raise HTTPException(status_code=403, detail="Supervisor exige entitlement PRO ou BUSINESS")
+    if requested_role == user.role:
+        return {"user_id": user.id, "role": user.role, "organization_id": user.organization_id, "plan": current_plan(db, user)}
+
+    old_role = user.role
+    subordinates = db.query(User).filter(User.manager_id == user.id, User.organization_id == user.organization_id, User.role == "BROKER").all()
+    if old_role == "GERENTE" and requested_role == "BROKER" and subordinates:
+        action = (payload.subordinate_action or "").strip().upper()
+        if action not in {"CLEAR", "TRANSFER"}:
+            raise HTTPException(status_code=409, detail="Trate os subordinados com CLEAR ou TRANSFER antes do rebaixamento")
+        new_supervisor = None
+        if action == "TRANSFER":
+            if payload.transfer_to_supervisor_id is None or payload.transfer_to_supervisor_id == user.id:
+                raise HTTPException(status_code=400, detail="Supervisor de destino obrigatório")
+            new_supervisor = db.query(User).filter(
+                User.id == payload.transfer_to_supervisor_id,
+                User.role == "GERENTE",
+                User.is_active.is_(True),
+                User.status == "ACTIVE",
+                User.organization_id == user.organization_id,
+            ).first()
+            if not new_supervisor:
+                raise HTTPException(status_code=400, detail="Supervisor de destino inválido")
+        for subordinate in subordinates:
+            subordinate.manager_id = new_supervisor.id if new_supervisor else None
+    if requested_role == "GERENTE":
+        user.manager_id = None
+    user.role = requested_role
+    event_type = "USER_PROMOTED_TO_SUPERVISOR" if requested_role == "GERENTE" else "USER_ROLE_CHANGED"
+    audit_auth_event(
+        db,
+        request=None,
+        event_type=event_type,
+        outcome="SUCCESS",
+        user=user,
+        actor=actor,
+        detail={"old_role": old_role, "new_role": requested_role, "organization_id": user.organization_id, "subordinate_action": payload.subordinate_action},
+    )
+    if old_role == "GERENTE" and requested_role == "BROKER" and subordinates:
+        audit_auth_event(db, request=None, event_type="SUPERVISOR_TEAM_REASSIGNED", outcome="SUCCESS", user=user, actor=actor, detail={"subordinate_count": len(subordinates), "subordinate_action": payload.subordinate_action, "transfer_to_supervisor_id": payload.transfer_to_supervisor_id})
+    db.commit()
+    return {"user_id": user.id, "role": user.role, "organization_id": user.organization_id, "plan": current_plan(db, user)}
 
 
 @router.patch("/platform/users/{user_id}/supervisor")

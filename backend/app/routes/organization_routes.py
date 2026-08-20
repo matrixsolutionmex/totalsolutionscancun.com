@@ -9,6 +9,7 @@ from app.models.organization import Organization
 from app.models.organization_invitation import OrganizationInvitation
 from app.models.user import User
 from app.services.organization_onboarding_service import accept_invitation, create_invitation, invitation_for_token, send_invitation_email
+from app.services.entitlement_service import current_plan
 
 router = APIRouter(prefix="/organization", tags=["organization"])
 
@@ -46,6 +47,12 @@ def create_organization_invitation(
     if not actor.organization_id:
         raise HTTPException(status_code=400, detail="Usuário sem organização")
     organization = db.query(Organization).filter(Organization.id == actor.organization_id).first()
+    if actor.role == "GERENTE":
+        if current_plan(db, actor) not in {"PRO", "BUSINESS"}:
+            raise HTTPException(status_code=403, detail="Convites de equipe exigem entitlement PRO ou BUSINESS")
+        if payload.role.strip().upper() != "BROKER":
+            raise HTTPException(status_code=403, detail="Supervisor pode convidar apenas técnicos")
+        payload = payload.model_copy(update={"role": "BROKER", "supervisor_user_id": actor.id})
     invitation, raw_token = create_invitation(
         db,
         organization=organization,
@@ -68,6 +75,60 @@ def create_organization_invitation(
         "invite_url": invite_url,
         "email_delivery_status": "sent" if email_sent else "unavailable",
     }
+
+
+@router.get("/team")
+def current_team(
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_user),
+):
+    if actor.role == "GERENTE":
+        if current_plan(db, actor) not in {"PRO", "BUSINESS"}:
+            raise HTTPException(status_code=403, detail="Acesso à equipe exige entitlement PRO ou BUSINESS")
+        users = db.query(User).filter(User.organization_id == actor.organization_id, User.manager_id == actor.id, User.role == "BROKER").order_by(User.full_name, User.id).all()
+    else:
+        users = db.query(User).filter(User.organization_id == actor.organization_id, User.role == "BROKER").order_by(User.full_name, User.id).all()
+    return [{
+        "id": user.id,
+        "full_name": user.full_name or user.username,
+        "email": user.email,
+        "role": user.role,
+        "status": user.status,
+        "organization_id": user.organization_id,
+        "supervisor_id": user.manager_id,
+        "plan": current_plan(db, user),
+    } for user in users]
+
+
+@router.post("/team/invitations")
+def create_team_invitation(
+    payload: InvitationCreateRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_user),
+):
+    if actor.role == "GERENTE":
+        if current_plan(db, actor) not in {"PRO", "BUSINESS"}:
+            raise HTTPException(status_code=403, detail="Convites de equipe exigem entitlement PRO ou BUSINESS")
+        supervisor_user_id = actor.id
+    else:
+        supervisor_user_id = payload.supervisor_user_id
+    if not supervisor_user_id:
+        raise HTTPException(status_code=400, detail="Supervisor obrigatório")
+    supervisor_query = db.query(User).filter(User.id == supervisor_user_id, User.role == "GERENTE", User.is_active.is_(True), User.status == "ACTIVE")
+    if actor.role == "GERENTE":
+        supervisor_query = supervisor_query.filter(User.organization_id == actor.organization_id)
+    supervisor = supervisor_query.first()
+    if not supervisor:
+        raise HTTPException(status_code=400, detail="Supervisor fora da organização ou inválido")
+    if current_plan(db, supervisor) not in {"PRO", "BUSINESS"}:
+        raise HTTPException(status_code=403, detail="Convites de equipe exigem entitlement PRO ou BUSINESS")
+    organization = db.query(Organization).filter(Organization.id == supervisor.organization_id).first()
+    invitation, raw_token = create_invitation(db, organization=organization, invited_by=actor, invited_email=payload.invited_email, role="BROKER", supervisor_user_id=supervisor.id)
+    db.commit()
+    base_url = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    invite_url = f"{base_url}/invite/{raw_token}" if base_url else f"/invite/{raw_token}"
+    email_sent = send_invitation_email(to_email=payload.invited_email, organization_name=organization.name, role=invitation.role, invite_url=invite_url)
+    return {**invitation_payload(invitation, organization), "invite_url": invite_url, "email_delivery_status": "sent" if email_sent else "unavailable"}
 
 
 @router.get("/available")
