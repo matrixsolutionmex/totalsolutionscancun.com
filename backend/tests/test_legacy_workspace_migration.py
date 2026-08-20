@@ -55,7 +55,7 @@ def make_user(db, *, username, organization_id, role="BROKER", plan="FREE", mana
     return user
 
 
-def setup_realistic_case(db, primary_slug):
+def setup_realistic_case(db, primary_slug, *, magno_role="GERENTE"):
     primary = Organization(name="Total Solutions", slug=primary_slug, is_platform_owner=True, plan="BUSINESS")
     legacy = Organization(name="Magno A B", slug=f"magno-a-b-{uuid4().hex[:8]}", plan="PRO")
     db.add_all([primary, legacy])
@@ -64,7 +64,7 @@ def setup_realistic_case(db, primary_slug):
     legacy_sub = CommercialSubscription(organization_id=legacy.id, plan="PRO", status="ACTIVE")
     db.add_all([primary_sub, legacy_sub])
     root = make_user(db, username="root", organization_id=primary.id, role="ROOT")
-    magno = make_user(db, username="magnoalvesbrasil", organization_id=legacy.id, role="GERENTE")
+    magno = make_user(db, username="magnoalvesbrasil", organization_id=legacy.id, role=magno_role)
     magno.email = "magnoalvesbrasil@proton.me"
     profile = UserCommercialProfile(user_id=magno.id, plan="PRO", status="ACTIVE", source="ROOT_ADMIN", granted_by_user_id=root.id)
     db.add(profile)
@@ -100,6 +100,23 @@ def test_legacy_supervisor_migration_preserves_identity_plan_and_moves_marketpla
     assert db.query(Organization).filter_by(id=legacy.id).count() == 1
     assert len(list_opportunities(db, magno)) == 15
     assert db.query(AuthAuditEvent).filter_by(event_type="LEGACY_USER_MIGRATED_TO_PRIMARY_ORGANIZATION").count() == 1
+
+
+def test_real_magno_broker_pro_independent_state_is_migration_candidate(migration_db):
+    db, primary_slug = migration_db
+    primary, legacy, root, magno, *_ = setup_realistic_case(db, primary_slug, magno_role="BROKER")
+    magno.onboarding_source = "INDEPENDENT"
+    db.commit()
+    candidates = legacy_workspace_candidates(db)
+    assert len(candidates) == 1
+    assert candidates[0]["user_id"] == magno.id
+    assert candidates[0]["role"] == "BROKER"
+    assert candidates[0]["individual_plan"] == "PRO"
+    migrate_legacy_user_to_primary(db, user_id=magno.id, actor=root)
+    db.refresh(magno)
+    assert magno.organization_id == primary.id
+    assert magno.role == "BROKER"
+    assert current_plan(db, magno) == "PRO"
 
 
 def test_legacy_migration_is_root_only_and_blocks_real_data(migration_db):

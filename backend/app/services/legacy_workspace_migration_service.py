@@ -33,7 +33,8 @@ def legacy_workspace_candidates(db: Session) -> list[dict]:
         if user and inspect(db.get_bind()).has_table(UserCommercialProfile.__tablename__):
             profile = db.query(UserCommercialProfile).filter(UserCommercialProfile.user_id == user.id, UserCommercialProfile.status == "ACTIVE").first()
         individual_plan = normalize_plan(profile.plan if profile else getattr(user, "plan", "FREE")) if user else "FREE"
-        eligible_role = bool(user and user.role == "GERENTE")
+        # Migration moves the workspace only. Promotion to GERENTE remains a separate ROOT action.
+        eligible_role = bool(user and user.role in {"BROKER", "GERENTE"})
         eligible_user = bool(user and user.is_active and user.status == "ACTIVE" and eligible_role and individual_plan in {"PRO", "BUSINESS"})
         if user and leads == 0 and orders == 0 and eligible_user and not active_intent:
             rows.append({
