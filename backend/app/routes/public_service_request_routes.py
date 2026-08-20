@@ -7,6 +7,7 @@ from app.auth.jwt_handler import get_db
 from app.models.service_request import ServiceRequest
 from app.services.customer_portal_service import create_customer_request_and_order, service_request_public_status
 from app.services.marketplace_service import create_opportunity_from_service_request
+from app.services.reverse_geocode_service import reverse_geocode
 
 
 router = APIRouter(prefix="/public", tags=["public-service-requests"])
@@ -19,6 +20,12 @@ def _parse_datetime(value: str | None):
         return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Fecha preferida invalida") from exc
+
+
+@router.get("/geocode/reverse")
+def public_reverse_geocode(latitude: float, longitude: float):
+    """Return only editable address fields for the public location picker."""
+    return reverse_geocode(latitude, longitude)
 
 
 @router.post("/service-requests", status_code=201)

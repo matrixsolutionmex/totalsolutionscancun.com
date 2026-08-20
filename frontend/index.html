@@ -10745,7 +10745,7 @@
     (() => {
       const path = window.location.pathname;
       const isPortal = path === "/solicitar-servico";
-      const isTracking = path.startsWith("/acompanhar/");
+      const isTracking = path.startsWith("/acompanhar/") || path.startsWith("/seguimiento/");
       if (!isPortal && !isTracking) {
         return;
       }
@@ -11377,6 +11377,34 @@
         let selectedLocation = null;
         let locationMap = null;
         let locationMarker = null;
+        let reverseGeocodePromise = null;
+        let lastGeocodedLocation = null;
+        const addressFields = {
+          address_line1: document.getElementById("address_line1"),
+          district: document.getElementById("district"),
+          locality: document.getElementById("locality"),
+          administrative_area: document.getElementById("administrative_area"),
+          postal_code: document.getElementById("postal_code"),
+        };
+        const reverseGeocodeLocation = async (latitude, longitude) => {
+          const key = `${Number(latitude).toFixed(6)},${Number(longitude).toFixed(6)}`;
+          if (lastGeocodedLocation === key) return;
+          reverseGeocodePromise = fetch(`${apiBase}/public/geocode/reverse?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}`, {
+            headers: { Accept: "application/json" },
+          }).then(async (response) => {
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(data.detail || "No fue posible sugerir la dirección");
+            Object.entries(addressFields).forEach(([field, input]) => {
+              if (input && data[field]) input.value = data[field];
+            });
+            lastGeocodedLocation = key;
+          }).catch(() => {
+            // The pin and manual address fields remain usable if the provider is unavailable.
+          }).finally(() => {
+            reverseGeocodePromise = null;
+          });
+          await reverseGeocodePromise;
+        };
         const setLocation = (latitude, longitude, source, accuracy = null) => {
           selectedLocation = { latitude, longitude, source, accuracy };
           locationLat.value = latitude;
@@ -11427,7 +11455,10 @@
           }
           locationStatus.textContent = "Obteniendo ubicación...";
           navigator.geolocation.getCurrentPosition(
-            (position) => setLocation(position.coords.latitude, position.coords.longitude, "DEVICE_GPS", position.coords.accuracy),
+            (position) => {
+              setLocation(position.coords.latitude, position.coords.longitude, "DEVICE_GPS", position.coords.accuracy);
+              reverseGeocodeLocation(position.coords.latitude, position.coords.longitude);
+            },
             () => {
               locationStatus.className = "portal-message error";
               locationStatus.textContent = "No fue posible obtener tu ubicación. Selecciona el punto manualmente.";
@@ -11435,11 +11466,14 @@
             { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
           );
         });
-        confirmLocation.addEventListener("click", () => {
+        confirmLocation.addEventListener("click", async () => {
           if (!selectedLocation) return;
+          confirmLocation.disabled = true;
           locationConfirmed.value = "1";
           locationStatus.className = "portal-message ok";
-          locationStatus.textContent = "Ubicación confirmada.";
+          locationStatus.textContent = "Ubicación confirmada. Puedes revisar la dirección sugerida.";
+          await reverseGeocodeLocation(selectedLocation.latitude, selectedLocation.longitude);
+          confirmLocation.disabled = false;
         });
         filesInput.addEventListener("change", () => {
           const files = Array.from(filesInput.files || []);

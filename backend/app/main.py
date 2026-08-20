@@ -105,7 +105,7 @@ app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
     no_store_paths = {"/", "/sw.js", "/solicitar-servico"}
-    if request.url.path in no_store_paths or request.url.path.startswith("/acompanhar/"):
+    if request.url.path in no_store_paths or request.url.path.startswith(("/acompanhar/", "/seguimiento/")):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
@@ -121,7 +121,7 @@ async def security_headers(request: Request, call_next):
         "style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
         "img-src 'self' data: blob: https://unpkg.com https://*.tile.openstreetmap.org https://lh3.googleusercontent.com; "
-        "connect-src 'self' https://unpkg.com https://*.tile.openstreetmap.org https://challenges.cloudflare.com https://accounts.google.com; "
+        "connect-src 'self' https://unpkg.com https://*.tile.openstreetmap.org https://nominatim.openstreetmap.org https://challenges.cloudflare.com https://accounts.google.com; "
         "frame-src https://challenges.cloudflare.com https://accounts.google.com; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; form-action 'self'",
@@ -632,6 +632,11 @@ def service_request_tracking(tracking_token: str):
             },
         )
     return {"status": "tracking-not-found", "tracking_token": tracking_token}
+
+
+@app.get("/seguimiento/{tracking_token}", include_in_schema=False)
+def service_request_tracking_spanish(tracking_token: str):
+    return service_request_tracking(tracking_token)
 
 
 @app.get("/sw.js", include_in_schema=False)

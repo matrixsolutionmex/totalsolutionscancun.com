@@ -57,6 +57,7 @@ from app.schemas.notification_schema import WebPushDeactivateRequest, WebPushKey
 from app.services.customer_portal_service import create_customer_request_and_order, service_request_public_status
 from app.services.import_service import import_lead_records
 from app.services.notification_service import notification_push_payload, notify_client_created
+from app.services.reverse_geocode_service import _normalize_result, reverse_geocode
 
 
 @pytest.fixture()
@@ -1109,6 +1110,44 @@ def test_location_frontend_has_confirmation_and_navigation_controls():
     security_headers = (Path(__file__).resolve().parents[2] / "backend" / "app" / "main.py").read_text()
     assert "https://unpkg.com" in security_headers
     assert "https://*.tile.openstreetmap.org" in security_headers
+    assert "https://nominatim.openstreetmap.org" in security_headers
+    assert "/public/geocode/reverse" in portal_html
+    assert "seguimiento/" in portal_html
+
+
+def test_reverse_geocode_normalizes_osm_address_fields():
+    result = _normalize_result({
+        "address": {
+            "road": "Punta Yoquen",
+            "house_number": "20",
+            "suburb": "Supermanzana 2",
+            "city": "Cancún",
+            "state": "Quintana Roo",
+            "postcode": "77509",
+            "country_code": "mx",
+        }
+    })
+    assert result == {
+        "address_line1": "Punta Yoquen 20",
+        "district": "Supermanzana 2",
+        "locality": "Cancún",
+        "administrative_area": "Quintana Roo",
+        "postal_code": "77509",
+        "country_code": "MX",
+    }
+
+
+def test_reverse_geocode_rejects_invalid_coordinates():
+    with pytest.raises(HTTPException) as blocked:
+        reverse_geocode(91, -86.8)
+    assert blocked.value.status_code == 400
+
+
+def test_customer_portal_status_uses_spanish_tracking_route(db):
+    make_organization(db, "portal-tracking", "Portal Tracking")
+    request = create_customer_request_and_order(db, make_portal_payload(idempotency_key="tracking-route-1"))
+    status = service_request_public_status(request)
+    assert "/seguimiento/" in status["tracking_url"]
 
 
 def test_customer_portal_allows_multiple_orders_for_same_client(db):
@@ -1202,7 +1241,7 @@ def test_public_request_status_does_not_expose_private_customer_data(db):
 
     assert status["tracking_token"] == service_request.tracking_token
     assert status["order_number"] == "TS-2026-000001"
-    assert status["tracking_url"].endswith(f"/acompanhar/{service_request.tracking_token}")
+    assert status["tracking_url"].endswith(f"/seguimiento/{service_request.tracking_token}")
     assert "requester_email" not in status
     assert "requester_phone" not in status
     assert "client_name" not in status

@@ -311,7 +311,7 @@ def service_request_public_status(request: ServiceRequest) -> dict[str, Any]:
         "urgency": request.urgency,
         "created_at": request.created_at,
         "order_number": order.order_number if order else None,
-        "tracking_url": f"{_public_base_url()}/acompanhar/{request.tracking_token}",
+        "tracking_url": f"{_public_base_url()}/seguimiento/{request.tracking_token}",
     }
 
 
