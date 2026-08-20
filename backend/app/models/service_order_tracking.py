@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer
+from sqlalchemy.orm import relationship
 
 from app.database.connection import Base
 
@@ -19,3 +20,5 @@ class ServiceOrderTracking(Base):
     started_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=True)
     stopped_at = Column(DateTime, nullable=True)
+
+    service_order = relationship("ServiceOrder", back_populates="tracking")

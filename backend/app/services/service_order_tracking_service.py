@@ -7,12 +7,12 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.lead_event import LeadEvent
-from app.models.service_order import ServiceOrder
+from app.models.service_order import ServiceOrder, TRACKING_STARTABLE_ORDER_STATUSES
 from app.models.service_order_tracking import ServiceOrderTracking
 from app.models.user import User
 
 
-STARTABLE_ORDER_STATUSES = {"ABERTA", "AGENDADA", "APROVADA", "ASSIGNED", "ACCEPTED"}
+STARTABLE_ORDER_STATUSES = TRACKING_STARTABLE_ORDER_STATUSES
 TERMINAL_ORDER_STATUSES = {"COMPLETED", "CONCLUIDA", "FINALIZADA", "CANCELLED", "CANCELADA", "PERDIDO"}
 
 
@@ -158,7 +158,13 @@ def start_tracking(db: Session, order_id: int, actor: User, consent_granted: boo
         raise HTTPException(status_code=400, detail="Consentimento obrigatorio para compartilhar a localizacao")
     if (order.status or "").upper() in TERMINAL_ORDER_STATUSES:
         raise HTTPException(status_code=409, detail="A OS ja foi encerrada")
-    if (order.status or "").upper() not in STARTABLE_ORDER_STATUSES and order.status != "EN_CAMINO":
+    normalized_status = (order.status or "").strip().upper()
+    if normalized_status == "EN_CAMINO":
+        existing_tracking = db.query(ServiceOrderTracking).filter(ServiceOrderTracking.service_order_id == order.id).first()
+        if existing_tracking and existing_tracking.tracking_active:
+            return {"service_order_id": order.id, "order_number": order.order_number, "status": order.status, "tracking": serialize_tracking(existing_tracking)}
+        raise HTTPException(status_code=409, detail="A OS esta em rota, mas o tracking nao esta ativo")
+    if not order.tracking_start_allowed:
         raise HTTPException(status_code=409, detail="A OS nao esta pronta para iniciar a rota")
     now = datetime.utcnow()
     tracking = db.query(ServiceOrderTracking).filter(ServiceOrderTracking.service_order_id == order.id).first()

@@ -87,6 +87,8 @@ class ServiceOrderResponse(BaseModel):
     location_confirmed_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    tracking_active: bool = False
+    tracking_start_allowed: bool = False
 
     model_config = {
         "from_attributes": True,

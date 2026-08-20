@@ -45,6 +45,7 @@ from app.routes.notification_routes import (
     register_web_push_subscription,
     unread_notification_count,
 )
+from app.routes.public_service_request_routes import public_service_request_tracking
 from app.routes.service_request_routes import (
     AssignUserPayload,
     TriagePayload,
@@ -55,7 +56,8 @@ from app.routes.service_request_routes import (
 )
 from app.schemas.lead_schema import IntegrationLeadCreate, LeadAssignUpdate, LeadCreate, LeadPipelineUpdate, LeadUpdate
 from app.schemas.notification_schema import WebPushDeactivateRequest, WebPushKeys, WebPushSubscriptionCreate
-from app.services.customer_portal_service import create_customer_request_and_order, service_request_public_status
+from app.services.customer_portal_service import create_customer_request_and_order, service_request_public_status, service_request_public_tracking
+from app.services.service_order_tracking_service import start_tracking, stop_tracking, update_tracking_position
 from app.services.import_service import import_lead_records
 from app.services.notification_service import notification_push_payload, notify_client_created
 from app.services.reverse_geocode_service import _normalize_result, reverse_geocode
@@ -1136,6 +1138,9 @@ def test_tracking_controls_are_explicit_and_not_automatic():
     assert "Permiso de ubicación denegado. Ruta detenida" in html
     assert "Sin conexión. Ubicación pendiente" in html
     assert "await stopTrackingPublisher({ notifyBackend: true, reason: \"MANUAL\" })" in html
+    assert "order.tracking_active === true" in html
+    assert "const canStartTracking = canControlTracking && order.tracking_start_allowed === true" in html
+    assert "const navigationLabel = trackingActive ? \"Abrir navegación\"" in html
 
 
 def test_tracking_watcher_is_started_only_by_explicit_start_flow():
@@ -1165,6 +1170,18 @@ def test_tracking_operations_map_polls_only_for_authorized_operational_view():
     assert "Señal GPS débil" in html
     assert "stopTrackingOperationsMonitoring();" in html
     assert "![\"ROOT\", \"GERENTE\"].includes(currentUser?.role)" in html
+
+
+def test_public_tracking_portal_uses_safe_statuses_and_live_leaflet_polling():
+    html = (Path(__file__).resolve().parents[2] / "frontend" / "index.html").read_text()
+    assert "/public/service-requests/${encodeURIComponent(token)}/tracking" in html
+    assert "publicTrackingMap" in html
+    assert "Tu técnico está en camino" in html
+    assert "Esperando ubicación del técnico" in html
+    assert "Última actualización hace" in html
+    assert "setLatLng" in html
+    assert "setTimeout(pollTracking, 12000)" in html
+    assert "SALES_QUEUE" not in html.split("async function renderTracking", 1)[1].split("function bindForm", 1)[0]
 
 
 def test_reverse_geocode_normalizes_osm_address_fields():
@@ -1302,6 +1319,72 @@ def test_public_request_status_does_not_expose_private_customer_data(db):
     assert "confidencial@example.com" not in serialized
     assert "9985550101" not in serialized
     assert "Direccion Privada" not in serialized
+
+
+def test_public_tracking_exposes_only_current_active_position_and_hides_it_after_stop(db):
+    organization = make_organization(db, "portal-live-tracking", "Portal Live Tracking")
+    technician = make_user(db, "tecnico-live", "BROKER", organization_id=organization.id)
+    service_request = create_customer_request_and_order(
+        db,
+        make_portal_payload(idempotency_key="public-live-tracking-1", requester_name="Cliente Privado"),
+    )
+    order = service_request.service_order
+    order.responsible_user_id = technician.id
+    order.location_lat = 21.1619
+    order.location_lng = -86.8515
+    db.commit()
+
+    before_start = service_request_public_tracking(service_request)
+    assert before_start["tracking_active"] is False
+    assert before_start["technician_lat"] is None
+    assert before_start["destination_lat"] == pytest.approx(21.1619)
+
+    started = start_tracking(db, order.id, technician, True)
+    assert started["status"] == "EN_CAMINO"
+    assert started["tracking"]["tracking_active"] is True
+    assert order.status == "EN_CAMINO"
+    update_tracking_position(db, order.id, technician, 21.1620, -86.8516, 12)
+    active = service_request_public_tracking(service_request)
+    assert active["tracking_active"] is True
+    assert active["operational_status"] == "Técnico en camino"
+    assert active["technician_display_name"] == technician.full_name
+    assert active["technician_lat"] == pytest.approx(21.1620)
+    assert active["accuracy_m"] == pytest.approx(12)
+    serialized = json.dumps(active, default=str, ensure_ascii=False)
+    assert "organization_id" not in serialized
+    assert "technician_id" not in serialized
+    assert "SALES_QUEUE" not in serialized
+
+    stop_tracking(db, order.id, technician, "MANUAL")
+    after_stop = service_request_public_tracking(service_request)
+    assert after_stop["tracking_active"] is False
+    assert after_stop["technician_lat"] is None
+    assert after_stop["technician_lng"] is None
+    assert after_stop["operational_status"] == "Ruta finalizada"
+    assert after_stop["destination_lat"] == pytest.approx(21.1619)
+
+
+@pytest.mark.parametrize("reason", ["ARRIVED", "COMPLETED", "CANCELLED"])
+def test_public_tracking_hides_position_after_terminal_or_arrival_stop(db, reason):
+    organization = make_organization(db, f"portal-public-stop-{reason.lower()}", f"Portal Public Stop {reason}")
+    technician = make_user(db, f"tecnico-stop-{reason.lower()}", "BROKER", organization_id=organization.id)
+    service_request = create_customer_request_and_order(db, make_portal_payload(idempotency_key=f"public-stop-{reason}"))
+    order = service_request.service_order
+    order.responsible_user_id = technician.id
+    db.commit()
+    start_tracking(db, order.id, technician, True)
+    update_tracking_position(db, order.id, technician, 21.1620, -86.8516, 12)
+    stop_tracking(db, order.id, technician, reason)
+    public_state = service_request_public_tracking(service_request)
+    assert public_state["tracking_active"] is False
+    assert public_state["technician_lat"] is None
+    assert public_state["technician_lng"] is None
+
+
+def test_public_tracking_rejects_invalid_token(db):
+    with pytest.raises(HTTPException) as blocked:
+        public_service_request_tracking("invalid-token", db)
+    assert blocked.value.status_code == 404
 
 
 def test_sales_queue_triage_and_assignments_are_org_scoped(db):

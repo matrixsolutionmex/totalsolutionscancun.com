@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.jwt_handler import get_db
 from app.models.service_request import ServiceRequest
-from app.services.customer_portal_service import create_customer_request_and_order, service_request_public_status
+from app.services.customer_portal_service import create_customer_request_and_order, service_request_public_status, service_request_public_tracking
 from app.services.marketplace_service import create_opportunity_from_service_request
 from app.services.reverse_geocode_service import reverse_geocode
 
@@ -115,3 +115,15 @@ def public_service_request_status(tracking_token: str, db: Session = Depends(get
     if not service_request:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
     return service_request_public_status(service_request)
+
+
+@router.get("/service-requests/{tracking_token}/tracking")
+def public_service_request_tracking(tracking_token: str, db: Session = Depends(get_db)):
+    service_request = (
+        db.query(ServiceRequest)
+        .filter(ServiceRequest.tracking_token == tracking_token)
+        .first()
+    )
+    if not service_request:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    return service_request_public_tracking(service_request)

@@ -304,14 +304,77 @@ def create_customer_request_and_order(
 
 def service_request_public_status(request: ServiceRequest) -> dict[str, Any]:
     order = request.service_order
+    operational_status = _public_operational_status(request, order)
     return {
         "tracking_token": request.tracking_token,
-        "status": request.status,
+        "status": operational_status,
+        "operational_status": operational_status,
         "service_category": request.service_category,
         "urgency": request.urgency,
         "created_at": request.created_at,
         "order_number": order.order_number if order else None,
         "tracking_url": f"{_public_base_url()}/seguimiento/{request.tracking_token}",
+    }
+
+
+PUBLIC_OPERATIONAL_STATUS_LABELS = {
+    "SALES_QUEUE": "Solicitud recibida",
+    "ASSIGNED": "Técnico asignado",
+    "ACCEPTED": "Técnico asignado",
+    "EN_CAMINO": "Técnico en camino",
+    "ARRIVED": "El técnico llegó",
+    "EM_ATENDIMENTO": "Servicio en ejecución",
+    "IN_PROGRESS": "Servicio en ejecución",
+    "COMPLETED": "Servicio finalizado",
+    "CONCLUIDA": "Servicio finalizado",
+    "FINALIZADA": "Servicio finalizado",
+    "CANCELLED": "Servicio cancelado",
+    "CANCELADA": "Servicio cancelado",
+}
+
+
+def _public_operational_status(request: ServiceRequest, order) -> str:
+    internal_status = (getattr(order, "status", None) or request.status or "SALES_QUEUE").strip().upper()
+    if internal_status == "EN_CAMINO" and getattr(getattr(order, "tracking", None), "stopped_at", None):
+        return "Ruta finalizada"
+    return PUBLIC_OPERATIONAL_STATUS_LABELS.get(internal_status, "Solicitud en revisión")
+
+
+def service_request_public_tracking(request: ServiceRequest) -> dict[str, Any]:
+    """Serialize only current, token-authorized tracking data for the customer portal."""
+    order = request.service_order
+    tracking = getattr(order, "tracking", None) if order else None
+    tracking_active = bool(
+        tracking
+        and tracking.tracking_active
+        and order
+        and (order.status or "").strip().upper() == "EN_CAMINO"
+    )
+    property_record = request.property_record
+    destination_lat = getattr(order, "location_lat", None) if order else None
+    destination_lng = getattr(order, "location_lng", None) if order else None
+    if destination_lat is None:
+        destination_lat = getattr(property_record, "location_lat", None)
+    if destination_lng is None:
+        destination_lng = getattr(property_record, "location_lng", None)
+    technician = getattr(order, "responsible_user", None) if order else None
+    technician_name = (technician.full_name or technician.username) if technician else None
+    return {
+        "tracking_token": request.tracking_token,
+        "order_number": order.order_number if order else None,
+        "service_category": request.service_category,
+        "urgency": request.urgency,
+        "tracking_active": tracking_active,
+        "operational_status": _public_operational_status(request, order),
+        "service_status": _public_operational_status(request, order),
+        "technician_display_name": technician_name,
+        "route_started_at": tracking.started_at if tracking_active else None,
+        "last_location_updated_at": tracking.updated_at if tracking_active else None,
+        "technician_lat": tracking.current_lat if tracking_active else None,
+        "technician_lng": tracking.current_lng if tracking_active else None,
+        "destination_lat": destination_lat,
+        "destination_lng": destination_lng,
+        "accuracy_m": tracking.accuracy_m if tracking_active else None,
     }
 
 

@@ -6,6 +6,9 @@ from sqlalchemy.orm import relationship
 from app.database.connection import Base
 
 
+TRACKING_STARTABLE_ORDER_STATUSES = frozenset({"ABERTA", "AGENDADA", "APROVADA", "ASSIGNED", "ACCEPTED"})
+
+
 class ServiceOrder(Base):
     __tablename__ = "service_orders"
 
@@ -43,3 +46,13 @@ class ServiceOrder(Base):
     lead = relationship("Lead", back_populates="service_orders")
     property_record = relationship("ServiceProperty", back_populates="service_orders")
     service_request = relationship("ServiceRequest", back_populates="service_order")
+    responsible_user = relationship("User", foreign_keys=[responsible_user_id])
+    tracking = relationship("ServiceOrderTracking", back_populates="service_order", uselist=False)
+
+    @property
+    def tracking_active(self):
+        return bool(self.tracking and self.tracking.tracking_active)
+
+    @property
+    def tracking_start_allowed(self):
+        return not self.tracking_active and (self.status or "").strip().upper() in TRACKING_STARTABLE_ORDER_STATUSES

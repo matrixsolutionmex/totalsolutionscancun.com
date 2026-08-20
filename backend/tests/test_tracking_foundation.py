@@ -1,4 +1,5 @@
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -16,6 +17,7 @@ from app.models.service_order_tracking import ServiceOrderTracking
 from app.models.service_property import ServiceProperty
 from app.models.service_request import ServiceRequest
 from app.models.user import User
+from app.schemas.lead_schema import LeadResponse
 from app.services.service_order_tracking_service import (
     get_tracking_for_actor,
     list_active_tracking_for_actor,
@@ -105,6 +107,7 @@ def test_assigned_technician_starts_with_consent_and_no_automatic_gps(db):
     order = make_order(db, org, technician)
 
     assert db.query(ServiceOrderTracking).count() == 0
+    assert LeadResponse.model_validate(order.lead).service_order.tracking_start_allowed is True
     with pytest.raises(HTTPException) as blocked:
         start_tracking(db, order.id, technician, False)
     assert blocked.value.status_code == 400
@@ -116,6 +119,23 @@ def test_assigned_technician_starts_with_consent_and_no_automatic_gps(db):
     assert result["tracking"]["consent_granted_at"] is not None
     assert db.query(ServiceOrderTracking).count() == 1
     assert db.query(LeadEvent).filter(LeadEvent.event_type == "TRACKING_STARTED").count() == 1
+
+
+def test_cotizacion_enviada_is_not_startable_and_frontend_rule_matches_backend(db):
+    org = make_org(db, "tracking-cotizacion")
+    technician = make_user(db, "tecnico-cotizacion", "BROKER", org)
+    order = make_order(db, org, technician, status="COTIZACAO_ENVIADA")
+
+    assert order.tracking_start_allowed is False
+    assert LeadResponse.model_validate(order.lead).service_order.tracking_start_allowed is False
+    with pytest.raises(HTTPException) as blocked:
+        start_tracking(db, order.id, technician, True)
+    assert blocked.value.status_code == 409
+    assert db.query(ServiceOrderTracking).count() == 0
+
+    html = (Path(__file__).resolve().parents[2] / "frontend" / "index.html").read_text()
+    assert "order.tracking_start_allowed === true" in html
+    assert "startableOrderStatuses" not in html
 
 
 def test_only_assigned_technician_controls_tracking_and_cross_org_is_blocked(db):
@@ -217,10 +237,10 @@ def test_operations_tracking_list_is_scoped_and_excludes_finished_routes(db):
     manager = make_user(db, "manager-operations", "GERENTE", org_a)
     technician = make_user(db, "technician-operations", "BROKER", org_a, manager_id=manager.id)
     foreign_technician = make_user(db, "foreign-operations", "BROKER", org_b)
-    visible = make_order(db, org_a, technician, manager, status="EN_CAMINO")
+    visible = make_order(db, org_a, technician, manager, status="ABERTA")
     visible.location_lat = 21.16
     visible.location_lng = -86.85
-    hidden_org = make_order(db, org_b, foreign_technician, status="EN_CAMINO")
+    hidden_org = make_order(db, org_b, foreign_technician, status="ABERTA")
     finished = make_order(db, org_a, technician, manager, status="COMPLETED")
     db.commit()
     start_tracking(db, visible.id, technician, True)

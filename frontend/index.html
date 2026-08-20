@@ -6485,15 +6485,19 @@
           : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${latitude},${longitude}`)}`)
         : (lead.google_maps_url || "");
       const terminalOrderStatuses = ["COMPLETED", "CONCLUIDA", "FINALIZADA", "CANCELLED", "CANCELADA", "PERDIDO"];
+      const orderStatus = String(order.status || "").toUpperCase();
+      const trackingActive = order.tracking_active === true;
       const canControlTracking = Boolean(order.id) && currentUser?.role === "BROKER"
         && String(order.responsible_user_id || lead.assigned_to_user_id) === String(currentUser.id)
-        && !terminalOrderStatuses.includes(String(order.status || "").toUpperCase());
-      const trackingActions = canControlTracking && order.status === "EN_CAMINO"
+        && !terminalOrderStatuses.includes(orderStatus);
+      const canStartTracking = canControlTracking && order.tracking_start_allowed === true;
+      const navigationLabel = trackingActive ? "Abrir navegación" : "Navegar hasta el cliente";
+      const trackingActions = canControlTracking && trackingActive && orderStatus === "EN_CAMINO"
         ? `<div class="card-actions-row">
             <button class="small-btn" type="button" onclick="stopServiceOrderTracking(${order.id}, 'ARRIVED')">Marcar llegada</button>
             <button class="small-btn" type="button" onclick="stopServiceOrderTracking(${order.id}, 'MANUAL')">Detener ruta</button>
           </div>`
-        : (canControlTracking ? `<div class="card-actions-row"><button class="small-btn" type="button" onclick="startServiceOrderTracking(${order.id})">Iniciar ruta</button></div>` : "");
+        : (canStartTracking ? `<div class="card-actions-row"><button class="small-btn" type="button" onclick="startServiceOrderTracking(${order.id})">Iniciar ruta</button></div>` : "");
 
       return `
         <article class="card ${stageClass}" draggable="true" data-lead-id="${lead.id}">
@@ -6512,10 +6516,10 @@
           <div class="status">Próximo contacto: <span>${escapeHtml(lead.proximo_contacto || "-")}</span></div>
           <div class="status">OS: <span>${escapeHtml(osNumber || "-")}</span></div>
           <div class="status">Estado de ruta: <span>${escapeHtml(order.status || "Sin iniciar")}</span></div>
-          ${order.status === "EN_CAMINO" ? '<div class="status">Compartiendo ubicación durante este servicio</div>' : ""}
+          ${trackingActive ? '<div class="status">Compartiendo ubicación durante este servicio</div>' : ""}
           ${trackingPublisherStatus.orderId === order.id && trackingPublisherStatus.message ? `<div class="status tracking-publisher-status ${escapeHtml(trackingPublisherStatus.kind)}">${escapeHtml(trackingPublisherStatus.message)}</div>` : ""}
           <div class="status">Local del servicio: <span>${escapeHtml(hasCoordinates ? "Coordenadas confirmadas" : (lead.google_maps_url ? "Enlace de mapa" : "No informado"))}</span></div>
-          ${navigationUrl ? `<div class="card-actions-row"><a class="small-btn" href="${escapeHtml(navigationUrl)}" target="_blank" rel="noopener noreferrer">Navegar hasta el cliente</a></div>` : ""}
+          ${navigationUrl ? `<div class="card-actions-row"><a class="small-btn" href="${escapeHtml(navigationUrl)}" target="_blank" rel="noopener noreferrer">${navigationLabel}</a></div>` : ""}
           ${trackingActions}
           <div class="lead-country"><span class="flag">${country.flag}</span>${escapeHtml(territory)}</div>
           <div class="status">${t("status")}: <span>${escapeHtml(stageLabel(lead.pipeline))}</span></div>
@@ -11536,6 +11540,24 @@
           background: #d1fae5;
           font-weight: 900;
         }
+        .public-tracking-map {
+          width: 100%;
+          min-height: 360px;
+          margin-top: 18px;
+          border: 1px solid #cbd5e1;
+          border-radius: 10px;
+          overflow: hidden;
+          background: #eef3f7;
+        }
+        .public-tracking-status {
+          display: grid;
+          gap: 8px;
+          margin-top: 16px;
+          color: var(--portal-ink);
+        }
+        .public-tracking-status strong {
+          color: #15803d;
+        }
         @media (max-width: 980px) {
           .portal-shell { grid-template-columns: 1fr; }
           .portal-brand {
@@ -11761,30 +11783,112 @@
           </section>
         `);
         const content = document.getElementById("trackingContent");
-        try {
-          const response = await fetch(`${apiBase}/public/service-requests/${encodeURIComponent(token)}`, {
-            headers: { Accept: "application/json" },
-          });
-          if (!response.ok) {
-            throw new Error("not-found");
+        let trackingTimer = null;
+        let trackingMap = null;
+        let technicianMarker = null;
+        let destinationMarker = null;
+        let lastTrackingData = null;
+
+        const formatTrackingDate = (value) => {
+          if (!value) return "-";
+          const date = new Date(value);
+          return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
+        };
+        const trackingAgeLabel = (value) => {
+          if (!value) return "Esperando ubicación del técnico";
+          const ageSeconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000));
+          return ageSeconds < 5 ? "Actualizada ahora" : `Última actualización hace ${ageSeconds} segundos`;
+        };
+        const removeTrackingTimer = () => {
+          if (trackingTimer) {
+            window.clearTimeout(trackingTimer);
+            trackingTimer = null;
           }
-          const data = await response.json();
-          content.innerHTML = `
-            <div class="portal-result">
-              <p>Numero de OS</p>
-              <code>${data.order_number || "En preparacion"}</code>
-              <p>Codigo de seguimiento</p>
-              <code>${data.tracking_token}</code>
-              <p>Status: <strong>${data.status}</strong></p>
-              <p>Servicio: <strong>${data.service_category || "Servicio"}</strong></p>
-              <p>Urgencia: <strong>${data.urgency || "Normal"}</strong></p>
-            </div>
-            <div class="portal-actions" style="margin-top: 18px;">
-              <a class="portal-button secondary" href="/solicitar-servico">Nueva solicitud</a>
-              <a class="portal-button secondary" href="/">Volver al acceso</a>
-            </div>
-          `;
+        };
+        const renderPublicTracking = (data) => {
+          const active = data.tracking_active === true;
+          const destinationLat = Number(data.destination_lat);
+          const destinationLng = Number(data.destination_lng);
+          const technicianLat = Number(data.technician_lat);
+          const technicianLng = Number(data.technician_lng);
+          const hasDestination = Number.isFinite(destinationLat) && Number.isFinite(destinationLng);
+          const hasTechnician = active && Number.isFinite(technicianLat) && Number.isFinite(technicianLng);
+          const ageMs = data.last_location_updated_at ? Date.now() - new Date(data.last_location_updated_at).getTime() : Infinity;
+          const locationMessage = !active
+            ? (data.operational_status || "Tu solicitud está siendo preparada")
+            : (!hasTechnician ? "Esperando ubicación del técnico" : (ageMs > 60000 ? "Ubicación temporalmente no disponible" : "Tu técnico está en camino"));
+          const needsShell = !document.getElementById("publicTrackingMap");
+          if (needsShell) {
+            content.innerHTML = `
+              <div class="portal-result">
+                <p>Numero de OS</p>
+                <code>${escapeHtml(data.order_number || "En preparacion")}</code>
+                <p>Estado del servicio</p>
+                <strong>${escapeHtml(data.operational_status || "Solicitud recibida")}</strong>
+                ${data.technician_display_name ? `<p>Técnico: <strong>${escapeHtml(data.technician_display_name)}</strong></p>` : ""}
+                ${data.route_started_at ? `<p>Salida: <strong>${escapeHtml(formatTrackingDate(data.route_started_at))}</strong></p>` : ""}
+              </div>
+              <div class="public-tracking-status" id="publicTrackingLiveStatus"><strong>${escapeHtml(locationMessage)}</strong><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at))}</span>${data.accuracy_m == null ? "" : `<span>Precisión: ${escapeHtml(data.accuracy_m)} m</span>`}</div>
+              ${(active || hasDestination) ? '<div id="publicTrackingMap" class="public-tracking-map" aria-label="Mapa de seguimiento del servicio"></div>' : ""}
+              <p id="publicTrackingMapHint" class="portal-message">${active ? "El marcador azul representa al técnico y el verde el destino." : "Tu solicitud está siendo preparada."}</p>
+            `;
+          }
+          const liveStatus = document.getElementById("publicTrackingLiveStatus");
+          if (liveStatus) {
+            liveStatus.innerHTML = `<strong>${escapeHtml(locationMessage)}</strong><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at))}</span>${data.accuracy_m == null ? "" : `<span>Precisión: ${escapeHtml(data.accuracy_m)} m</span>`}`;
+          }
+          const mapElement = document.getElementById("publicTrackingMap");
+          if (!mapElement || !window.L || window.leafletLoadFailed) return;
+          if (!trackingMap) {
+            trackingMap = L.map(mapElement).setView(hasDestination ? [destinationLat, destinationLng] : [21.1619, -86.8515], hasDestination ? 15 : 12);
+            L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(trackingMap);
+          }
+          const bounds = [];
+          if (hasDestination) {
+            if (!destinationMarker) destinationMarker = L.circleMarker([destinationLat, destinationLng], { radius: 8, color: "#16a34a", fillColor: "#16a34a", fillOpacity: 0.9 }).addTo(trackingMap).bindTooltip("Destino del servicio");
+            destinationMarker.setLatLng([destinationLat, destinationLng]);
+            bounds.push([destinationLat, destinationLng]);
+          }
+          if (hasTechnician) {
+            if (!technicianMarker) technicianMarker = L.circleMarker([technicianLat, technicianLng], { radius: 9, color: "#2563eb", fillColor: "#2563eb", fillOpacity: 0.95 }).addTo(trackingMap).bindTooltip("Técnico");
+            technicianMarker.setLatLng([technicianLat, technicianLng]);
+            bounds.push([technicianLat, technicianLng]);
+          } else if (technicianMarker) {
+            technicianMarker.remove();
+          }
+          if (bounds.length && needsShell) trackingMap.fitBounds(bounds, { padding: [30, 30], maxZoom: 16 });
+        };
+        const pollTracking = async () => {
+          removeTrackingTimer();
+          try {
+            const response = await fetch(`${apiBase}/public/service-requests/${encodeURIComponent(token)}/tracking`, { headers: { Accept: "application/json" } });
+            if (!response.ok) throw new Error("not-found");
+            const data = await response.json();
+            lastTrackingData = data;
+            renderPublicTracking(data);
+            if (data.tracking_active === true && !document.hidden) trackingTimer = window.setTimeout(pollTracking, 12000);
+          } catch (_error) {
+            if (lastTrackingData) {
+              const liveStatus = document.getElementById("publicTrackingLiveStatus");
+              if (liveStatus) liveStatus.innerHTML = '<strong>Ubicación temporalmente no disponible</strong><span>Reintentando actualización.</span>';
+              if (!document.hidden) trackingTimer = window.setTimeout(pollTracking, 12000);
+            } else {
+              removeTrackingTimer();
+              content.innerHTML = '<div class="portal-message error">No encontramos esta solicitud. Verifica el codigo de seguimiento.</div>';
+            }
+          }
+        };
+        document.addEventListener("visibilitychange", () => {
+          if (!document.hidden && lastTrackingData?.tracking_active === true) pollTracking();
+          if (document.hidden) removeTrackingTimer();
+        });
+        try {
+          await pollTracking();
+          if (!document.getElementById("publicTrackingMap")) {
+            content.insertAdjacentHTML("beforeend", '<div class="portal-actions" style="margin-top: 18px;"><a class="portal-button secondary" href="/solicitar-servico">Nueva solicitud</a><a class="portal-button secondary" href="/">Volver al acceso</a></div>');
+          }
         } catch (_error) {
+          removeTrackingTimer();
           content.innerHTML = `
             <div class="portal-message error">No encontramos esta solicitud. Verifica el codigo de seguimiento.</div>
             <div class="portal-actions" style="margin-top: 18px;">
