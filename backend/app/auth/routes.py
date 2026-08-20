@@ -42,7 +42,7 @@ from app.core.auth_security import (
     encrypt_secret,
     now_utc,
 )
-from app.core.organization import create_independent_organization, get_or_create_default_organization
+from app.core.organization import create_independent_organization, get_or_create_default_organization, get_platform_primary_organization
 from app.core.security import hash_password, password_needs_upgrade, verify_password
 from app.models.auth_security import PasswordResetToken, UserIdentity
 from app.models.user import User
@@ -50,6 +50,7 @@ from app.models.user_lifecycle import UserReactivationRequest
 from app.models.organization import Organization
 from app.models.organization_invitation import OrganizationInvitation
 from app.services.organization_onboarding_service import accept_invitation, invitation_for_token, record_referral
+from app.services.entitlement_service import ensure_user_commercial_profile
 from app.schemas.auth_schema import (
     AuthLoginRequest,
     AuthResponse,
@@ -552,11 +553,11 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
         if not organization:
             raise HTTPException(status_code=404, detail="Organização do convite não encontrada")
     else:
-        organization = create_independent_organization(
-            db,
-            name=(payload.company or payload.full_name or "Minha organização"),
-            pending_onboarding=True,
-        )
+        try:
+            organization = get_platform_primary_organization(db)
+        except RuntimeError as exc:
+            logger.error("Cadastro recusado: organização principal não configurada: %s", exc)
+            raise HTTPException(status_code=503, detail="Cadastro temporariamente indisponível") from exc
 
     user = User(
         organization_id=organization.id,
@@ -572,11 +573,12 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
         email_verification_token=None,
         status="PENDING_EMAIL",
         is_active=False,
-        onboarding_source="INVITATION" if invitation else "INDEPENDENT",
+        onboarding_source="INVITATION" if invitation else "STANDARD",
         registered_at=datetime.utcnow(),
     )
     db.add(user)
     db.flush()
+    ensure_user_commercial_profile(db, user, plan="FREE", source="INVITATION" if invitation else "PLATFORM_SIGNUP")
     if invitation:
         if user.email != invitation.invited_email:
             raise HTTPException(status_code=403, detail="O convite foi enviado para outro e-mail")
@@ -1064,11 +1066,11 @@ def google_login(payload: GoogleLoginRequest, request: Request, response: Respon
             audit_auth_event(db, request=request, event_type="GOOGLE_LOGIN", outcome="LINK_REQUIRED", user=existing_email_user)
             db.commit()
             raise HTTPException(status_code=409, detail="Conta Google precisa ser vinculada após login seguro na conta atual.")
-        organization = create_independent_organization(
-            db,
-            name=claims.get("name") or provider_email,
-            pending_onboarding=True,
-        )
+        try:
+            organization = get_platform_primary_organization(db)
+        except RuntimeError as exc:
+            logger.error("Cadastro Google recusado: organização principal não configurada: %s", exc)
+            raise HTTPException(status_code=503, detail="Cadastro temporariamente indisponível") from exc
         user = User(
             organization_id=organization.id,
             username=provider_email,
@@ -1080,11 +1082,12 @@ def google_login(payload: GoogleLoginRequest, request: Request, response: Respon
             email_verified=True,
             status="PENDING_ADMIN",
             is_active=False,
-            onboarding_source="INDEPENDENT",
+            onboarding_source="STANDARD",
             registered_at=datetime.utcnow(),
         )
         db.add(user)
         db.flush()
+        ensure_user_commercial_profile(db, user, plan="FREE", source="PLATFORM_SIGNUP")
         identity = UserIdentity(
             organization_id=user.organization_id,
             user_id=user.id,

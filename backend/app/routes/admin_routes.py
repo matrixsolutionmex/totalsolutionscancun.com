@@ -12,7 +12,7 @@ from app.core.security import hash_password
 from app.models.lead import Lead
 from app.models.user import User
 from app.models.organization import Organization
-from app.core.organization import create_independent_organization
+from app.core.organization import create_independent_organization, get_platform_primary_organization
 from app.models.user_lifecycle import UserLifecycleEvent, UserReactivationRequest
 from app.schemas.auth_schema import UserApprovalRequest
 from app.schemas.user_schema import (
@@ -33,6 +33,8 @@ from app.services.commercial_upgrade_service import (
     mark_payment_confirmed,
 )
 from app.services.user_lifecycle_service import record_user_lifecycle_event, revoke_user_access, transition_user_status
+from app.services.entitlement_service import ensure_user_commercial_profile, set_user_entitlement_plan
+from app.services.legacy_workspace_migration_service import legacy_workspace_candidates, migrate_legacy_user_to_primary
 from app.services.platform_admin_service import (
     get_platform_organization,
     get_platform_user,
@@ -53,6 +55,14 @@ class ManualEmailVerificationRequest(BaseModel):
 
 class CommercialIntentActionRequest(BaseModel):
     confirmation: str | None = None
+
+
+class PlatformSupervisorRequest(BaseModel):
+    supervisor_id: int | None = None
+
+
+class PlatformEntitlementRequest(BaseModel):
+    plan: str
 
 
 def require_reason(reason: str) -> str:
@@ -144,7 +154,14 @@ def approve_pending_user(db: Session, user: User, actor: User, payload: UserAppr
     organization_mode = (payload.organization_mode or "INDEPENDENT").upper()
     if organization_mode not in {"INDEPENDENT", "EXISTING"}:
         raise HTTPException(status_code=400, detail="organization_mode deve ser INDEPENDENT ou EXISTING")
-    if organization_mode == "EXISTING":
+    standard_signup = user.onboarding_source == "STANDARD"
+    if standard_signup:
+        target_organization = db.query(Organization).filter(Organization.id == user.organization_id).first()
+        primary = get_platform_primary_organization(db)
+        if not target_organization or target_organization.id != primary.id:
+            raise HTTPException(status_code=409, detail="Cadastro padrão está fora da organização principal")
+        organization_mode = "STANDARD"
+    elif organization_mode == "EXISTING":
         if payload.organization_id is None:
             raise HTTPException(status_code=400, detail="organization_id é obrigatório para organização existente")
         if actor.role != "ROOT" and payload.organization_id != actor.organization_id:
@@ -194,6 +211,7 @@ def approve_pending_user(db: Session, user: User, actor: User, payload: UserAppr
     user.status_reason = "Cadastro aprovado"
     user.status_changed_at = datetime.utcnow()
     user.status_changed_by = actor.id
+    ensure_user_commercial_profile(db, user, plan="FREE", source="PLATFORM_SIGNUP" if standard_signup else "ONBOARDING", granted_by_user_id=actor.id)
     if organization_mode == "EXISTING" and previous_organization_id != target_organization.id:
         previous_organization = db.query(Organization).filter(Organization.id == previous_organization_id).first()
         remaining_users = db.query(User).filter(
@@ -204,6 +222,8 @@ def approve_pending_user(db: Session, user: User, actor: User, payload: UserAppr
             previous_organization.status = "ORPHANED_ONBOARDING"
     revoke_user_access(db, user, deactivate_push=True)
     onboarding_event = {
+        ("STANDARD", "GERENTE"): "ONBOARDING_APPROVED_STANDARD",
+        ("STANDARD", "BROKER"): "ONBOARDING_APPROVED_STANDARD",
         ("INDEPENDENT", "GERENTE"): "ONBOARDING_APPROVED_SUPERVISOR",
         ("INDEPENDENT", "BROKER"): "ONBOARDING_APPROVED_INDEPENDENT",
         ("EXISTING", "BROKER"): "ONBOARDING_ASSIGNED_TO_ORGANIZATION",
@@ -400,6 +420,81 @@ def admin_platform_user(
     if not user:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
     return user
+
+
+@router.patch("/platform/users/{user_id}/supervisor")
+def admin_platform_assign_supervisor(
+    user_id: int,
+    payload: PlatformSupervisorRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    if user.role != "BROKER":
+        raise HTTPException(status_code=400, detail="Somente técnicos podem receber supervisor")
+    supervisor = None
+    if payload.supervisor_id is not None:
+        supervisor = db.query(User).filter(
+            User.id == payload.supervisor_id,
+            User.role == "GERENTE",
+            User.is_active.is_(True),
+            User.status == "ACTIVE",
+            User.organization_id == user.organization_id,
+        ).first()
+        if not supervisor:
+            raise HTTPException(status_code=400, detail="Supervisor ativo da mesma organização não encontrado")
+    previous_id = user.manager_id
+    user.manager_id = supervisor.id if supervisor else None
+    audit_auth_event(
+        db,
+        request=None,
+        event_type="SUPERVISOR_ASSIGNED",
+        outcome="SUCCESS",
+        user=user,
+        actor=actor,
+        detail={"previous_supervisor_id": previous_id, "supervisor_id": user.manager_id, "organization_id": user.organization_id},
+    )
+    db.commit()
+    return {"user_id": user.id, "organization_id": user.organization_id, "supervisor_id": user.manager_id}
+
+
+@router.patch("/platform/users/{user_id}/entitlement")
+def admin_platform_set_entitlement(
+    user_id: int,
+    payload: PlatformEntitlementRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    plan = payload.plan.strip().upper()
+    if plan not in {"FREE", "PRO", "BUSINESS"}:
+        raise HTTPException(status_code=400, detail="Plano inválido")
+    profile = set_user_entitlement_plan(db, user, plan, actor=actor, source="ROOT_ADMIN")
+    audit_auth_event(db, request=None, event_type="USER_ENTITLEMENT_CHANGED", outcome="SUCCESS", user=user, actor=actor, detail={"plan": profile.plan, "organization_id": user.organization_id})
+    db.commit()
+    return {"user_id": user.id, "plan": profile.plan, "organization_id": user.organization_id}
+
+
+@router.get("/platform/migrations/legacy-users")
+def admin_legacy_workspace_candidates(
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    return {"candidates": legacy_workspace_candidates(db)}
+
+
+@router.post("/platform/migrations/legacy-users/{user_id}")
+def admin_migrate_legacy_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    user = migrate_legacy_user_to_primary(db, user_id=user_id, actor=actor)
+    return {"user_id": user.id, "organization_id": user.organization_id, "onboarding_source": user.onboarding_source}
 
 
 @router.get("/commercial/intents")

@@ -9284,7 +9284,17 @@
         <div class="panel-title">Usuario: ${escapeHtml(user.full_name)}</div>
         <div class="line">${escapeHtml(user.email || "Sem e-mail")} · ${escapeHtml(user.role)} · ${escapeHtml(user.status)} · ${escapeHtml(user.email_verified ? "E-mail verificado" : "E-mail pendiente")}</div>
         <div class="line">Organización: ${escapeHtml(user.organization_name || "Sem organização")} (ID ${user.organization_id ?? "-"}) · Plan ${escapeHtml(user.plan)}</div>
-        <div class="line">Supervisor: ${escapeHtml(user.supervisor || "No informado")} · Onboarding: ${escapeHtml(user.onboarding_source || "-")} · Última actividad: ${escapeHtml(user.last_seen_at ? new Date(user.last_seen_at).toLocaleString() : "No informada")}</div>`;
+        <div class="line">Supervisor: ${escapeHtml(user.supervisor || "No informado")} · Onboarding: ${escapeHtml(user.onboarding_source || "-")} · Última actividad: ${escapeHtml(user.last_seen_at ? new Date(user.last_seen_at).toLocaleString() : "No informada")}</div>
+        ${user.role === "BROKER" ? `<div class="inline-actions" style="margin-top: 12px;"><select id="platformSupervisorSelect"><option value="">No definido</option></select><button type="button" data-platform-assign-supervisor="${user.id}">Atribuir supervisor</button></div>` : ""}`;
+      if (user.role === "BROKER") {
+        apiFetch(`${API_BASE}/admin/platform/users?organization_id=${encodeURIComponent(user.organization_id)}&role=GERENTE&status=ACTIVE`)
+          .then((response) => response.json())
+          .then((data) => {
+            const select = document.getElementById("platformSupervisorSelect");
+            if (!select) return;
+            select.innerHTML = `<option value="">No definido</option>` + (data.users || []).map((manager) => `<option value="${manager.id}" ${String(manager.id) === String(user.supervisor_id) ? "selected" : ""}>${escapeHtml(manager.full_name)}</option>`).join("");
+          }).catch(() => {});
+      }
     }
 
     async function loadPlatformDirectory() {
@@ -10433,6 +10443,21 @@
       const response = await apiFetch(`${API_BASE}/admin/platform/users/${target.dataset.platformUserId}`);
       const data = await response.json().catch(() => ({}));
       if (response.ok) renderPlatformUserDetail(data);
+    });
+    document.getElementById("platformDirectoryDetail")?.addEventListener("click", async (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || !target.matches("[data-platform-assign-supervisor]")) return;
+      const select = document.getElementById("platformSupervisorSelect");
+      const response = await apiFetch(`${API_BASE}/admin/platform/users/${target.dataset.platformAssignSupervisor}/supervisor`, {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({supervisor_id: select?.value ? Number(select.value) : null})
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "No fue posible atribuir el supervisor.");
+      const userResponse = await apiFetch(`${API_BASE}/admin/platform/users/${target.dataset.platformAssignSupervisor}`);
+      if (userResponse.ok) renderPlatformUserDetail(await userResponse.json());
+      await loadPlatformDirectory();
     });
 
     document.getElementById("marketplacePanel")?.addEventListener("click", async (event) => {

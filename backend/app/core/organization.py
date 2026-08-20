@@ -1,4 +1,5 @@
 import re
+import os
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
@@ -12,15 +13,32 @@ from app.services.entitlement_service import PLANS
 DEFAULT_ORGANIZATION_SLUG = "total-solutions-cancun"
 
 
+def primary_organization_slug() -> str:
+    return os.getenv("PLATFORM_PRIMARY_ORGANIZATION_SLUG", DEFAULT_ORGANIZATION_SLUG).strip().lower() or DEFAULT_ORGANIZATION_SLUG
+
+
+def get_platform_primary_organization(db: Session) -> Organization:
+    organization = db.query(Organization).filter(Organization.slug == primary_organization_slug()).first()
+    if not organization and os.getenv("ENVIRONMENT", "").strip().lower() != "production":
+        return get_or_create_default_organization(db)
+    if not organization:
+        raise RuntimeError(f"Organização principal da plataforma não encontrada: {primary_organization_slug()}")
+    return organization
+
+
 def get_or_create_default_organization(db: Session) -> Organization:
     Organization.__table__.create(bind=db.get_bind(), checkfirst=True)
-    organization = db.query(Organization).filter(Organization.slug == DEFAULT_ORGANIZATION_SLUG).first()
+    slug = primary_organization_slug()
+    organization = db.query(Organization).filter(Organization.slug == slug).first()
     if organization:
         return organization
 
+    if os.getenv("ENVIRONMENT", "").strip().lower() == "production" and os.getenv("PLATFORM_ALLOW_PRIMARY_BOOTSTRAP", "false").strip().lower() != "true":
+        raise RuntimeError(f"Organização principal da plataforma não encontrada: {slug}")
+
     organization = Organization(
         name="Total Solutions Cancún",
-        slug=DEFAULT_ORGANIZATION_SLUG,
+        slug=slug,
         industry_profile="SERVICIOS_TECNICOS",
         country="MX",
         language="es-MX",

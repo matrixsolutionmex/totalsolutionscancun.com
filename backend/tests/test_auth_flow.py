@@ -279,6 +279,10 @@ def test_public_registration_requires_verification_and_root_approval(monkeypatch
     assert 'href="https://totalsolutionscancun.com/auth/verify-email?token=' in html_body
     token = token_from_last_verification_email()
     pending = session.query(User).filter(User.email == "broker@example.com").one()
+    primary = session.query(Organization).filter(Organization.slug == "total-solutions-cancun").one()
+    assert pending.organization_id == primary.id
+    assert pending.plan == "FREE"
+    assert session.query(Organization).count() == 1
     assert pending.status == "PENDING_EMAIL"
     assert pending.is_active is False
     assert pending.email_verification_token is None

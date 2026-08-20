@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
 from app.models.commercial_subscription import CommercialSubscription, PlanChangeEvent
@@ -10,6 +11,7 @@ from app.models.organization import Organization
 from app.models.service_opportunity import ServiceOpportunity
 from app.models.service_order import ServiceOrder
 from app.models.user import User
+from app.models.user_commercial_profile import UserCommercialProfile
 
 
 PLANS = {
@@ -36,6 +38,31 @@ def plan_catalog() -> list[dict]:
     return [{**plan, "features": sorted(plan["features"]), "limits": dict(plan["limits"])} for plan in PLANS.values()]
 
 
+def ensure_user_commercial_profile(db: Session, user: User, *, plan: str = "FREE", source: str = "ONBOARDING", granted_by_user_id: int | None = None) -> UserCommercialProfile:
+    UserCommercialProfile.__table__.create(bind=db.get_bind(), checkfirst=True)
+    profile = db.query(UserCommercialProfile).filter(UserCommercialProfile.user_id == user.id).first()
+    if profile:
+        return profile
+    profile = UserCommercialProfile(
+        user_id=user.id,
+        plan=normalize_plan(plan),
+        source=(source or "ONBOARDING")[:40],
+        granted_by_user_id=granted_by_user_id,
+    )
+    db.add(profile)
+    db.flush()
+    return profile
+
+
+def set_user_entitlement_plan(db: Session, user: User, plan: str, *, actor: User, source: str = "ADMIN_GRANT") -> UserCommercialProfile:
+    profile = ensure_user_commercial_profile(db, user, source=source, granted_by_user_id=actor.id)
+    profile.plan = normalize_plan(plan)
+    profile.source = (source or "ADMIN_GRANT")[:40]
+    profile.granted_by_user_id = actor.id
+    profile.updated_at = datetime.utcnow()
+    return profile
+
+
 def subscription_for(db: Session, actor: User, *, create: bool = False) -> CommercialSubscription | None:
     return subscription_for_organization(db, actor.organization_id, create=create)
 
@@ -56,6 +83,11 @@ def subscription_for_organization(db: Session, organization_id: int | None, *, c
 
 
 def current_plan(db: Session, actor: User) -> str:
+    profile = None
+    if inspect(db.get_bind()).has_table(UserCommercialProfile.__tablename__):
+        profile = db.query(UserCommercialProfile).filter(UserCommercialProfile.user_id == actor.id).first()
+    if profile and profile.status == "ACTIVE":
+        return normalize_plan(profile.plan)
     subscription = subscription_for(db, actor)
     if subscription:
         return normalize_plan(subscription.plan)
@@ -90,10 +122,11 @@ def account_snapshot(db: Session, actor: User) -> dict:
     subscription = subscription_for(db, actor, create=True)
     db.commit()
     db.refresh(subscription)
-    plan = PLANS[normalize_plan(subscription.plan)]
+    effective_plan = current_plan(db, actor)
+    plan = PLANS[effective_plan]
     history = db.query(PlanChangeEvent).filter(PlanChangeEvent.organization_id == actor.organization_id).order_by(PlanChangeEvent.created_at.desc()).limit(20).all()
     return {
-        "plan": subscription.plan, "status": subscription.status, "provider": subscription.provider,
+        "plan": effective_plan, "organization_plan": normalize_plan(subscription.plan), "status": subscription.status, "provider": subscription.provider,
         "reference_price": subscription.reference_price, "started_at": subscription.started_at.isoformat(),
         "expires_at": subscription.expires_at.isoformat() if subscription.expires_at else None,
         "features": sorted(plan["features"]), "limits": dict(plan["limits"]), "usage": get_usage(db, actor),

@@ -12,6 +12,7 @@ from app.auth.jwt_handler import (
     require_root_user as require_root_actor,
     user_access_block_reason,
 )
+from app.core.auth_security import audit_auth_event
 from app.core.security import hash_password, verify_password
 from app.core.storage import PROFILE_PHOTOS_DIR, delete_profile_photo
 from app.models.lead import Lead
@@ -22,6 +23,7 @@ from app.core.organization import create_independent_organization
 from app.schemas.user_schema import AssignLeadsRequest, LoginRequest, ReturnLeadsRequest, UserCreate, UserResponse, UserUpdate
 from app.services.notification_service import dispatch_web_push_for_notification_ids, notify_assignment_change
 from app.services.user_lifecycle_service import transition_user_status
+from app.services.entitlement_service import ensure_user_commercial_profile
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -280,6 +282,8 @@ def create_user(
         is_active=True,
     )
     db.add(user)
+    db.flush()
+    ensure_user_commercial_profile(db, user, plan="FREE", source="ADMIN_ONBOARDING")
     db.commit()
     db.refresh(user)
     return user
@@ -356,6 +360,7 @@ def update_user(
         raise HTTPException(status_code=403, detail="Usuario fora da sua organizacao")
 
     updates = payload.model_dump(exclude_unset=True)
+    previous_manager_id = user.manager_id
 
     if actor and actor.role == "GERENTE":
         blocked_fields = {"role", "is_active", "manager_id"}
@@ -418,6 +423,17 @@ def update_user(
 
     for field, value in updates.items():
         setattr(user, field, value)
+
+    if "manager_id" in updates and previous_manager_id != user.manager_id:
+        audit_auth_event(
+            db,
+            request=None,
+            event_type="SUPERVISOR_ASSIGNED",
+            outcome="SUCCESS",
+            user=user,
+            actor=actor,
+            detail={"previous_supervisor_id": previous_manager_id, "supervisor_id": user.manager_id, "organization_id": user.organization_id},
+        )
 
     db.commit()
     db.refresh(user)

@@ -6,7 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.core.organization import create_independent_organization
+from app.core.organization import create_independent_organization, get_platform_primary_organization
 from app.core.security import hash_password
 from app.database.connection import Base
 from app.models.commercial_subscription import CommercialSubscription
@@ -14,14 +14,15 @@ from app.models.organization import Organization
 from app.models.organization_invitation import OrganizationInvitation
 from app.models.referral_attribution import ReferralAttribution
 from app.models.auth_security import UserSession
+from app.models.auth_security import AuthAuditEvent
 from app.models.notification import WebPushSubscription
 from app.models.user_lifecycle import UserLifecycleEvent
 from app.models.user import User
 from app.models import service_order, service_property
-from app.services.entitlement_service import current_plan
+from app.services.entitlement_service import current_plan, ensure_user_commercial_profile
 from app.services.organization_onboarding_service import accept_invitation, create_invitation, record_referral
 from app import main as _app_main  # registers the application's relationship models
-from app.routes.admin_routes import approve_pending_user, pending_onboarding_users, pending_users
+from app.routes.admin_routes import PlatformSupervisorRequest, admin_platform_assign_supervisor, approve_pending_user, pending_onboarding_users, pending_users
 from app.schemas.auth_schema import UserApprovalRequest
 
 
@@ -37,6 +38,7 @@ def onboarding_db():
             OrganizationInvitation.__table__,
             ReferralAttribution.__table__,
             UserSession.__table__,
+            AuthAuditEvent.__table__,
             WebPushSubscription.__table__,
             UserLifecycleEvent.__table__,
         ],
@@ -212,3 +214,42 @@ def test_global_assignment_marks_empty_provisional_workspace_without_deleting_it
     assert approved.manager_id == manager.id
     assert provisional.status == "ORPHANED_ONBOARDING"
     assert db.query(Organization).filter_by(id=provisional.id).count() == 1
+
+
+def test_standard_signup_approval_stays_in_primary_and_without_supervisor(onboarding_db):
+    db = onboarding_db
+    primary = Organization(name="Total Solutions", slug="total-solutions-cancun", is_platform_owner=True)
+    db.add(primary)
+    db.flush()
+    db.add(CommercialSubscription(organization_id=primary.id, plan="BUSINESS", status="ACTIVE"))
+    root = make_user(db, username="primary-root", organization_id=primary.id, role="ROOT")
+    pending = make_user(db, username="standard-tech", organization_id=primary.id)
+    pending.status = "PENDING_ADMIN"
+    pending.is_active = False
+    pending.onboarding_source = "STANDARD"
+    ensure_user_commercial_profile(db, pending, plan="FREE", source="PLATFORM_SIGNUP")
+    db.commit()
+
+    approved = approve_pending_user(db, pending, root, UserApprovalRequest(role="BROKER", organization_mode="INDEPENDENT"))
+    db.commit()
+    assert approved.organization_id == primary.id
+    assert approved.manager_id is None
+    assert current_plan(db, approved) == "FREE"
+    assert db.query(Organization).count() == 1
+
+
+def test_root_can_assign_same_org_supervisor_but_cross_org_is_rejected(onboarding_db):
+    db = onboarding_db
+    org_a = create_independent_organization(db, name="A")
+    org_b = create_independent_organization(db, name="B")
+    root = make_user(db, username="root-a", organization_id=org_a.id, role="ROOT")
+    manager_a = make_user(db, username="manager-a", organization_id=org_a.id, role="GERENTE")
+    technician = make_user(db, username="technician-a", organization_id=org_a.id, role="BROKER")
+    manager_b = make_user(db, username="manager-b", organization_id=org_b.id, role="GERENTE")
+    db.commit()
+
+    result = admin_platform_assign_supervisor(technician.id, PlatformSupervisorRequest(supervisor_id=manager_a.id), db, root)
+    assert result["supervisor_id"] == manager_a.id
+    with pytest.raises(HTTPException) as error:
+        admin_platform_assign_supervisor(technician.id, PlatformSupervisorRequest(supervisor_id=manager_b.id), db, root)
+    assert error.value.status_code == 400
