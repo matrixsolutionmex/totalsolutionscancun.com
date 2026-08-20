@@ -10,8 +10,8 @@ from app.services.entitlement_service import record_plan_change
 class MockBillingProvider:
     name: str = "MOCK"
 
-    def change_plan(self, db, actor: User, plan: str, reason: str | None = None):
-        return record_plan_change(db, actor, plan, reason)
+    def change_plan(self, db, actor: User, plan: str, reason: str | None = None, *, organization_id: int | None = None):
+        return record_plan_change(db, actor, plan, reason, organization_id=organization_id)
 
     def create_checkout(self, *args, **kwargs):
         raise NotImplementedError("Checkout real não está habilitado")

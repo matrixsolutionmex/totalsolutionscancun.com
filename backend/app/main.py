@@ -319,6 +319,9 @@ def create_database_tables():
 
         add_column_if_missing(db, "users", "onboarding_source", "VARCHAR DEFAULT 'INDEPENDENT'")
         db.execute(text("UPDATE users SET onboarding_source = 'INDEPENDENT' WHERE onboarding_source IS NULL OR TRIM(onboarding_source) = ''"))
+        add_column_if_missing(db, "commercial_upgrade_intents", "payment_confirmed_at", "TIMESTAMP")
+        add_column_if_missing(db, "commercial_upgrade_intents", "payment_confirmed_by_user_id", "INTEGER")
+        add_column_if_missing(db, "commercial_upgrade_intents", "confirmation_source", "VARCHAR(40)")
 
         normalized_upgrade_intents = normalize_existing_upgrade_intents(db)
         if normalized_upgrade_intents:

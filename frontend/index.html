@@ -3653,7 +3653,18 @@
         <div id="commercialAccountSummary" class="metric-row" style="margin: 16px 0;"></div>
         <div id="commercialPlanCards" class="view-grid"></div>
         <div class="panel-box manager-only" style="margin-top: 18px;">
-          <div class="panel-title">Solicitações comerciais</div>
+          <div class="panel-title">Gestão comercial</div>
+          <div class="metric-row root-only" id="commercialAdminMetrics" style="margin: 12px 0;"></div>
+          <div class="inline-actions root-only">
+            <select id="commercialAdminStatusFilter" aria-label="Filtro comercial">
+              <option value="ALL">Todos</option>
+              <option value="CHECKOUT_OPENED">Checkout aberto</option>
+              <option value="PAYMENT_PENDING">Pagamento pendente</option>
+              <option value="PAYMENT_CONFIRMED">Pagamento confirmado</option>
+              <option value="ACTIVATED">Ativados</option>
+              <option value="CANCELLED">Cancelados</option>
+            </select>
+          </div>
           <div class="broker-list" id="commercialUpgradeIntentList"></div>
         </div>
       </div>
@@ -5824,6 +5835,7 @@
           </article>`).join("");
         if (currentUser && ["ROOT", "GERENTE"].includes(currentUser.role)) {
           await loadCommercialUpgradeIntents();
+          if (currentUser?.role === "ROOT") await loadCommercialAdminMetrics();
         }
       } catch (error) {
         cards.innerHTML = `<div class="line">${escapeHtml(error.message || "Não foi possível carregar os planos.")}</div>`;
@@ -5862,7 +5874,12 @@
       const list = document.getElementById("commercialUpgradeIntentList");
       if (!list || !currentUser || !["ROOT", "GERENTE"].includes(currentUser.role)) return;
       try {
-        const response = await apiFetch(`${API_BASE}/commercial/upgrade-intents`);
+        const isRoot = currentUser.role === "ROOT";
+        const statusFilter = document.getElementById("commercialAdminStatusFilter")?.value || "ALL";
+        const endpoint = isRoot
+          ? `${API_BASE}/admin/commercial/intents?status=${encodeURIComponent(statusFilter)}`
+          : `${API_BASE}/commercial/upgrade-intents`;
+        const response = await apiFetch(endpoint);
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.detail || "Não foi possível carregar as solicitações.");
         const intents = data.intents || [];
@@ -5870,8 +5887,8 @@
           <div class="broker-row">
             <div>
               <strong>${escapeHtml(intent.user)} · ${escapeHtml(intent.plan)}</strong>
-              <span>${escapeHtml(intent.organization)} · MX$ ${Number(intent.reference_price_mxn).toLocaleString("es-MX", {minimumFractionDigits: 2})} · ${escapeHtml(intent.provider)}</span>
-              <small>${new Date(intent.created_at).toLocaleString()} · ${escapeHtml(intent.status)}</small>
+              <span>${escapeHtml(intent.organization)} · ${escapeHtml(intent.email || "")} · ${escapeHtml(intent.current_plan || "FREE")} -> ${escapeHtml(intent.requested_plan || intent.plan)} · MX$ ${Number(intent.reference_price_mxn).toLocaleString("es-MX", {minimumFractionDigits: 2})}</span>
+              <small>${new Date(intent.created_at).toLocaleString()} · ${escapeHtml(intent.status)} · ${escapeHtml(intent.confirmation_source || "sem confirmação")}</small>
             </div>
             <div class="inline-actions">
               ${intent.status === "CHECKOUT_OPENED" || intent.status === "PAYMENT_PENDING"
@@ -5887,12 +5904,39 @@
       }
     }
 
+    async function loadCommercialAdminMetrics() {
+      const container = document.getElementById("commercialAdminMetrics");
+      if (!container || currentUser?.role !== "ROOT") return;
+      const response = await apiFetch(`${API_BASE}/admin/commercial/metrics`);
+      const metrics = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(metrics.detail || "Não foi possível carregar as métricas comerciais.");
+      const metricItems = [
+        ["FREE", metrics.organizations_free], ["PRO", metrics.organizations_pro], ["BUSINESS", metrics.organizations_business],
+        ["Checkouts", metrics.checkouts_opened], ["Pendentes", metrics.payments_pending],
+        ["Confirmados", metrics.payments_confirmed_awaiting_activation], ["Ativados", metrics.activations_completed],
+        ["Cancelados", metrics.cancelled_or_abandoned], ["Potencial", `MX$ ${Number(metrics.potential_pending_mxn || 0).toLocaleString("es-MX", {minimumFractionDigits: 2})}`],
+        ["MRR referência", `MX$ ${Number(metrics.active_mrr_reference_mxn || 0).toLocaleString("es-MX", {minimumFractionDigits: 2})}`],
+        ["Upgrades PRO", metrics.upgrades_pro], ["Upgrades BUSINESS", metrics.upgrades_business]
+      ];
+      container.innerHTML = metricItems.map(([label, value]) => `<div class="metric">${escapeHtml(String(label))}<strong>${escapeHtml(String(value ?? 0))}</strong></div>`).join("");
+    }
+
     async function handleCommercialIntentAction(button) {
       const intentId = button.dataset.commercialIntentId;
       const action = button.dataset.commercialIntentAction;
       button.disabled = true;
       try {
-        const response = await apiFetch(`${API_BASE}/commercial/upgrade-intents/${intentId}/${action}`, {method: "POST"});
+        if (action === "confirm-payment" && !confirm("Confirme que o pagamento foi verificado no Clip antes de continuar.")) return;
+        const isRoot = currentUser?.role === "ROOT";
+        const endpoint = isRoot
+          ? `${API_BASE}/admin/commercial/intents/${intentId}/${action}`
+          : `${API_BASE}/commercial/upgrade-intents/${intentId}/${action}`;
+        const options = {method: "POST"};
+        if (isRoot && action === "confirm-payment") {
+          options.headers = {"Content-Type": "application/json"};
+          options.body = JSON.stringify({confirmation: "CONFIRM"});
+        }
+        const response = await apiFetch(endpoint, options);
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.detail || "Não foi possível atualizar a solicitação.");
         await loadCommercialPlans();
@@ -10217,6 +10261,9 @@
       handleCommercialIntentAction(target).catch((error) => {
         addPabloV2Message(error.message || "Não foi possível atualizar a solicitação.", "ai");
       });
+    });
+    document.getElementById("commercialAdminStatusFilter")?.addEventListener("change", () => {
+      loadCommercialUpgradeIntents().catch(() => {});
     });
 
     document.getElementById("marketplacePanel")?.addEventListener("click", async (event) => {

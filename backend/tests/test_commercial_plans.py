@@ -22,6 +22,8 @@ from app.services.commercial_upgrade_service import (
     create_or_reuse_upgrade_intent,
     create_upgrade_intent,
     get_active_upgrade_intent,
+    global_commercial_metrics,
+    list_global_upgrade_intents,
     mark_payment_confirmed,
     normalize_existing_upgrade_intents,
 )
@@ -250,14 +252,40 @@ def test_legacy_duplicate_intents_are_normalized_without_deleting_history(commer
     first = create_upgrade_intent(db, actor, "PRO")
     first.status = "CANCELLED"
     db.commit()
-    old = CommercialUpgradeIntent(organization_id=actor.organization_id, user_id=actor.id, requested_plan="PRO", reference_price_mxn=499, provider="CLIP", status="CHECKOUT_OPENED")
-    newer = CommercialUpgradeIntent(organization_id=actor.organization_id, user_id=actor.id, requested_plan="PRO", reference_price_mxn=499, provider="CLIP", status="CHECKOUT_OPENED")
-    db.add_all([old, newer])
-    db.commit()
-    assert normalize_existing_upgrade_intents(db) == 1
-    db.refresh(old)
-    db.refresh(newer)
-    assert old.status == "CHECKOUT_OPENED"
-    assert newer.status == "CANCELLED"
-    db.execute(text("CREATE UNIQUE INDEX uq_commercial_active_intent_org ON commercial_upgrade_intents (organization_id) WHERE status IN ('CHECKOUT_OPENED', 'PAYMENT_PENDING', 'PAYMENT_CONFIRMED', 'PAID')"))
-    db.commit()
+
+
+def test_root_global_commercial_queue_and_metrics_keep_other_org_free_until_activation(commercial_db):
+    db, actor, _, other = commercial_db
+    intent = create_upgrade_intent(db, other, "PRO")
+    metrics = global_commercial_metrics(db)
+    assert metrics["checkouts_opened"] == 1
+    assert metrics["potential_pending_mxn"] == 499.0
+    assert metrics["active_mrr_reference_mxn"] == 0
+    rows = list_global_upgrade_intents(db)
+    row = next(item for item in rows if item["id"] == intent.id)
+    assert row["organization_id"] == other.organization_id
+    assert row["current_plan"] == "FREE"
+    assert row["requested_plan"] == "PRO"
+
+    confirmed = mark_payment_confirmed(db, actor, intent.id, global_scope=True)
+    assert confirmed.confirmation_source == "MANUAL_ADMIN"
+    assert account_snapshot(db, other)["plan"] == "FREE"
+    assert global_commercial_metrics(db)["payments_confirmed_awaiting_activation"] == 1
+
+    activated, subscription = activate_upgrade_intent(db, actor, intent.id, global_scope=True)
+    assert activated.status == "ACTIVATED"
+    assert subscription.organization_id == other.organization_id
+    assert account_snapshot(db, other)["plan"] == "PRO"
+    assert account_snapshot(db, actor)["plan"] == "FREE"
+    final_metrics = global_commercial_metrics(db)
+    assert final_metrics["activations_completed"] == 1
+    assert final_metrics["active_mrr_reference_mxn"] == 499
+
+
+def test_non_root_cannot_confirm_global_commercial_intent(commercial_db):
+    db, actor, broker, other = commercial_db
+    intent = create_upgrade_intent(db, other, "BUSINESS")
+    with pytest.raises(Exception) as error:
+        mark_payment_confirmed(db, broker, intent.id, global_scope=True)
+    assert getattr(error.value, "status_code", None) == 403
+    assert intent.status == "CHECKOUT_OPENED"

@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.core.auth_security import audit_auth_event
 from app.models.commercial_upgrade_intent import CommercialUpgradeIntent
+from app.models.commercial_subscription import CommercialSubscription
+from app.models.auth_security import AuthAuditEvent
 from app.models.organization import Organization
 from app.models.user import User
 from app.services.billing_provider import MockBillingProvider
@@ -35,12 +37,11 @@ def _require_admin(actor: User):
         raise HTTPException(status_code=403, detail="Somente root ou gerente pode administrar solicitacoes comerciais")
 
 
-def _intent_or_404(db: Session, actor: User, intent_id: int) -> CommercialUpgradeIntent:
-    intent = (
-        db.query(CommercialUpgradeIntent)
-        .filter(CommercialUpgradeIntent.id == intent_id, CommercialUpgradeIntent.organization_id == actor.organization_id)
-        .first()
-    )
+def _intent_or_404(db: Session, actor: User, intent_id: int, *, global_scope: bool = False) -> CommercialUpgradeIntent:
+    query = db.query(CommercialUpgradeIntent).filter(CommercialUpgradeIntent.id == intent_id)
+    if not global_scope:
+        query = query.filter(CommercialUpgradeIntent.organization_id == actor.organization_id)
+    intent = query.first()
     if not intent:
         raise HTTPException(status_code=404, detail="Solicitacao comercial nao encontrada")
     return intent
@@ -139,29 +140,42 @@ def create_upgrade_intent(db: Session, actor: User, plan: str, *, source: str = 
     return create_or_reuse_upgrade_intent(db, actor, plan, source=source, request=request)[0]
 
 
-def mark_payment_confirmed(db: Session, actor: User, intent_id: int, *, request=None):
+def mark_payment_confirmed(db: Session, actor: User, intent_id: int, *, request=None, global_scope: bool = False):
     _require_admin(actor)
-    intent = _intent_or_404(db, actor, intent_id)
+    if global_scope and actor.role != "ROOT":
+        raise HTTPException(status_code=403, detail="Somente ROOT pode confirmar pagamentos globalmente")
+    intent = _intent_or_404(db, actor, intent_id, global_scope=global_scope)
     if intent.status == "ACTIVATED" or intent.status in CONFIRMED_INTENT_STATUSES:
         return intent
     if intent.status not in {"CHECKOUT_OPENED", "PAYMENT_PENDING"}:
         raise HTTPException(status_code=409, detail="Solicitacao nao pode ser confirmada neste estado")
     intent.status = "PAYMENT_CONFIRMED"
     intent.updated_at = datetime.utcnow()
+    intent.payment_confirmed_at = datetime.utcnow()
+    intent.payment_confirmed_by_user_id = actor.id
+    intent.confirmation_source = "MANUAL_ADMIN"
     _audit(db, request=request, event_type="UPGRADE_PAYMENT_CONFIRMED", actor=actor, intent=intent, detail={"plan": intent.requested_plan, "provider": intent.provider})
     db.commit()
     db.refresh(intent)
     return intent
 
 
-def activate_upgrade_intent(db: Session, actor: User, intent_id: int, *, request=None):
+def activate_upgrade_intent(db: Session, actor: User, intent_id: int, *, request=None, global_scope: bool = False):
     _require_admin(actor)
-    intent = _intent_or_404(db, actor, intent_id)
+    if global_scope and actor.role != "ROOT":
+        raise HTTPException(status_code=403, detail="Somente ROOT pode ativar planos globalmente")
+    intent = _intent_or_404(db, actor, intent_id, global_scope=global_scope)
     if intent.status == "ACTIVATED":
         return intent, None
     if intent.status not in CONFIRMED_INTENT_STATUSES:
         raise HTTPException(status_code=409, detail="Confirme o pagamento antes de ativar o plano")
-    subscription = MockBillingProvider().change_plan(db, actor, intent.requested_plan, reason=f"upgrade_intent:{intent.id}")
+    subscription = MockBillingProvider().change_plan(
+        db,
+        actor,
+        intent.requested_plan,
+        reason=f"upgrade_intent:{intent.id}",
+        organization_id=intent.organization_id,
+    )
     intent.status = "ACTIVATED"
     intent.activated_at = datetime.utcnow()
     intent.activated_by_user_id = actor.id
@@ -172,9 +186,11 @@ def activate_upgrade_intent(db: Session, actor: User, intent_id: int, *, request
     return intent, subscription
 
 
-def cancel_upgrade_intent(db: Session, actor: User, intent_id: int, *, request=None):
+def cancel_upgrade_intent(db: Session, actor: User, intent_id: int, *, request=None, global_scope: bool = False):
     _require_admin(actor)
-    intent = _intent_or_404(db, actor, intent_id)
+    if global_scope and actor.role != "ROOT":
+        raise HTTPException(status_code=403, detail="Somente ROOT pode cancelar globalmente")
+    intent = _intent_or_404(db, actor, intent_id, global_scope=global_scope)
     if intent.status == "ACTIVATED":
         raise HTTPException(status_code=409, detail="Plano ativado nao pode ser cancelado")
     if intent.status == "CANCELLED":
@@ -222,3 +238,90 @@ def list_upgrade_intents(db: Session, actor: User):
         "plan": intent.requested_plan, "reference_price_mxn": float(intent.reference_price_mxn), "provider": intent.provider,
         "status": "PAYMENT_CONFIRMED" if intent.status == "PAID" else intent.status, "created_at": intent.created_at.isoformat(),
     } for intent, user, organization in rows]
+
+
+def _normalized_intent_status(intent: CommercialUpgradeIntent) -> str:
+    return "PAYMENT_CONFIRMED" if intent.status == "PAID" else intent.status
+
+
+def _intent_history(db: Session, intent_id: int) -> list[dict]:
+    rows = (
+        db.query(AuthAuditEvent)
+        .filter(AuthAuditEvent.event_type.like("UPGRADE_%"), AuthAuditEvent.detail.like(f'%"intent_id": {intent_id}%'))
+        .order_by(AuthAuditEvent.created_at.asc(), AuthAuditEvent.id.asc())
+        .all()
+    )
+    return [{"event": row.event_type, "created_at": row.created_at.isoformat(), "actor_user_id": row.actor_user_id} for row in rows]
+
+
+def list_global_upgrade_intents(db: Session, *, status: str | None = None) -> list[dict]:
+    query = (
+        db.query(CommercialUpgradeIntent, User, Organization)
+        .join(User, User.id == CommercialUpgradeIntent.user_id)
+        .join(Organization, Organization.id == CommercialUpgradeIntent.organization_id)
+        .order_by(CommercialUpgradeIntent.created_at.desc(), CommercialUpgradeIntent.id.desc())
+    )
+    if status and status.upper() != "ALL":
+        requested_status = "PAYMENT_CONFIRMED" if status.upper() == "PAID" else status.upper()
+        query = query.filter(CommercialUpgradeIntent.status == requested_status)
+    rows = []
+    for intent, user, organization in query.limit(500).all():
+        confirmed_by = db.query(User).filter(User.id == intent.payment_confirmed_by_user_id).first() if intent.payment_confirmed_by_user_id else None
+        activated_by = db.query(User).filter(User.id == intent.activated_by_user_id).first() if intent.activated_by_user_id else None
+        rows.append({
+            "id": intent.id,
+            "organization_id": organization.id,
+            "organization": organization.name,
+            "user_id": user.id,
+            "user": user.full_name or user.username,
+            "email": user.email or user.email_pessoal,
+            "current_plan": normalize_plan(db.query(CommercialSubscription).filter(CommercialSubscription.organization_id == organization.id).with_entities(CommercialSubscription.plan).scalar() or organization.plan),
+            "requested_plan": intent.requested_plan,
+            "plan": intent.requested_plan,
+            "reference_price_mxn": float(intent.reference_price_mxn),
+            "provider": intent.provider,
+            "checkout_url": checkout_url_for(intent.requested_plan) if intent.status in {"CHECKOUT_OPENED", "PAYMENT_PENDING"} else None,
+            "status": _normalized_intent_status(intent),
+            "source": intent.source,
+            "created_at": intent.created_at.isoformat(),
+            "confirmation_source": intent.confirmation_source,
+            "confirmed_at": intent.payment_confirmed_at.isoformat() if intent.payment_confirmed_at else None,
+            "confirmed_by": confirmed_by.full_name or confirmed_by.username if confirmed_by else None,
+            "activated_at": intent.activated_at.isoformat() if intent.activated_at else None,
+            "activated_by": activated_by.full_name or activated_by.username if activated_by else None,
+            "history": _intent_history(db, intent.id),
+        })
+    return rows
+
+
+def global_commercial_metrics(db: Session) -> dict:
+    organizations = db.query(Organization).all()
+    subscriptions = {row.organization_id: row for row in db.query(CommercialSubscription).all()}
+    organization_plans = [normalize_plan(subscriptions.get(org.id).plan if subscriptions.get(org.id) else org.plan) for org in organizations]
+    intents = db.query(CommercialUpgradeIntent).all()
+    status_counts = {status: 0 for status in ("CHECKOUT_OPENED", "PAYMENT_PENDING", "PAYMENT_CONFIRMED", "ACTIVATED", "CANCELLED", "ABANDONED")}
+    upgrade_counts = {"PRO": 0, "BUSINESS": 0}
+    potential_pending = 0.0
+    for intent in intents:
+        status = _normalized_intent_status(intent)
+        if status in status_counts:
+            status_counts[status] += 1
+        if status not in {"CANCELLED", "ABANDONED", "SUPERSEDED"} and intent.requested_plan in upgrade_counts:
+            upgrade_counts[intent.requested_plan] += 1
+        if status in {"CHECKOUT_OPENED", "PAYMENT_PENDING"}:
+            potential_pending += float(intent.reference_price_mxn)
+    active_mrr = sum(PLANS[plan]["monthly_reference"] for plan in organization_plans if plan in {"PRO", "BUSINESS"})
+    return {
+        "organizations_free": organization_plans.count("FREE"),
+        "organizations_pro": organization_plans.count("PRO"),
+        "organizations_business": organization_plans.count("BUSINESS"),
+        "checkouts_opened": status_counts["CHECKOUT_OPENED"],
+        "payments_pending": status_counts["PAYMENT_PENDING"],
+        "payments_confirmed_awaiting_activation": status_counts["PAYMENT_CONFIRMED"],
+        "activations_completed": status_counts["ACTIVATED"],
+        "cancelled_or_abandoned": status_counts["CANCELLED"] + status_counts["ABANDONED"],
+        "potential_pending_mxn": potential_pending,
+        "active_mrr_reference_mxn": active_mrr,
+        "upgrades_pro": upgrade_counts["PRO"],
+        "upgrades_business": upgrade_counts["BUSINESS"],
+    }

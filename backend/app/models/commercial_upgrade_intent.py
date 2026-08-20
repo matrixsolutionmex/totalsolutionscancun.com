@@ -21,3 +21,6 @@ class CommercialUpgradeIntent(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     activated_at = Column(DateTime, nullable=True)
     activated_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    payment_confirmed_at = Column(DateTime, nullable=True)
+    payment_confirmed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    confirmation_source = Column(String(40), nullable=True)

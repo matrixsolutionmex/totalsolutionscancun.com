@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
@@ -25,6 +25,13 @@ from app.schemas.user_schema import (
     UserResponse,
 )
 from app.services.notification_service import dispatch_web_push_for_notification_ids, notify_user_activation
+from app.services.commercial_upgrade_service import (
+    activate_upgrade_intent,
+    cancel_upgrade_intent,
+    global_commercial_metrics,
+    list_global_upgrade_intents,
+    mark_payment_confirmed,
+)
 from app.services.user_lifecycle_service import record_user_lifecycle_event, revoke_user_access, transition_user_status
 
 
@@ -35,6 +42,10 @@ PENDING_EMAIL_SUPPORT_STATUSES = {"PENDING", "PENDING_EMAIL", "PENDING_APPROVAL"
 
 class ManualEmailVerificationRequest(BaseModel):
     reason: str
+
+
+class CommercialIntentActionRequest(BaseModel):
+    confirmation: str | None = None
 
 
 def require_reason(reason: str) -> str:
@@ -319,6 +330,59 @@ def reject_onboarding_user(
     db.commit()
     db.refresh(user)
     return user
+
+
+@router.get("/commercial/metrics")
+def admin_commercial_metrics(
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    return global_commercial_metrics(db)
+
+
+@router.get("/commercial/intents")
+def admin_commercial_intents(
+    status: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    return {"intents": list_global_upgrade_intents(db, status=status)}
+
+
+@router.post("/commercial/intents/{intent_id}/confirm-payment")
+def admin_confirm_commercial_payment(
+    intent_id: int,
+    request: Request,
+    payload: CommercialIntentActionRequest | None = None,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    if not payload or payload.confirmation != "CONFIRM":
+        raise HTTPException(status_code=400, detail="Confirmação explícita obrigatória")
+    intent = mark_payment_confirmed(db, actor, intent_id, request=request, global_scope=True)
+    return {"intent_id": intent.id, "status": intent.status, "confirmation_source": intent.confirmation_source}
+
+
+@router.post("/commercial/intents/{intent_id}/activate")
+def admin_activate_commercial_intent(
+    intent_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    intent, subscription = activate_upgrade_intent(db, actor, intent_id, request=request, global_scope=True)
+    return {"intent_id": intent.id, "status": intent.status, "plan": subscription.plan, "organization_id": intent.organization_id}
+
+
+@router.post("/commercial/intents/{intent_id}/cancel")
+def admin_cancel_commercial_intent(
+    intent_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    intent = cancel_upgrade_intent(db, actor, intent_id, request=request, global_scope=True)
+    return {"intent_id": intent.id, "status": intent.status}
 
 
 @router.post("/users/{user_id}/approve", response_model=UserResponse)

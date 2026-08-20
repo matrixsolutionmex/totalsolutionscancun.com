@@ -37,13 +37,18 @@ def plan_catalog() -> list[dict]:
 
 
 def subscription_for(db: Session, actor: User, *, create: bool = False) -> CommercialSubscription | None:
-    subscription = db.query(CommercialSubscription).filter(CommercialSubscription.organization_id == actor.organization_id).first()
+    return subscription_for_organization(db, actor.organization_id, create=create)
+
+
+def subscription_for_organization(db: Session, organization_id: int | None, *, create: bool = False) -> CommercialSubscription | None:
+    subscription = db.query(CommercialSubscription).filter(CommercialSubscription.organization_id == organization_id).first()
     if subscription or not create:
         return subscription
-    organization = db.query(Organization).filter(Organization.id == actor.organization_id).first()
+    organization = db.query(Organization).filter(Organization.id == organization_id).first()
+    plan = normalize_plan(getattr(organization, "plan", None))
     subscription = CommercialSubscription(
-        organization_id=actor.organization_id, plan=normalize_plan(getattr(organization, "plan", None)),
-        status="LAUNCH_ACCESS", provider="MOCK", reference_price=PLANS[normalize_plan(getattr(organization, "plan", None))]["price"],
+        organization_id=organization_id, plan=plan,
+        status="LAUNCH_ACCESS", provider="MOCK", reference_price=PLANS[plan]["price"],
     )
     db.add(subscription)
     db.flush()
@@ -97,18 +102,26 @@ def account_snapshot(db: Session, actor: User) -> dict:
     }
 
 
-def record_plan_change(db: Session, actor: User, new_plan: str, reason: str | None = None) -> CommercialSubscription:
+def record_plan_change(
+    db: Session,
+    actor: User,
+    new_plan: str,
+    reason: str | None = None,
+    *,
+    organization_id: int | None = None,
+) -> CommercialSubscription:
     new_plan = normalize_plan(new_plan)
-    subscription = subscription_for(db, actor, create=True)
+    target_organization_id = organization_id or actor.organization_id
+    subscription = subscription_for_organization(db, target_organization_id, create=True)
     previous = normalize_plan(subscription.plan)
     subscription.plan = new_plan
     subscription.status = "LAUNCH_ACCESS"
     subscription.provider = "MOCK"
     subscription.reference_price = PLANS[new_plan]["price"]
     subscription.updated_at = datetime.utcnow()
-    db.add(PlanChangeEvent(organization_id=actor.organization_id, actor_user_id=actor.id, previous_plan=previous,
+    db.add(PlanChangeEvent(organization_id=target_organization_id, actor_user_id=actor.id, previous_plan=previous,
                            new_plan=new_plan, provider="MOCK", reason=reason or "mock_billing"))
-    organization = db.query(Organization).filter(Organization.id == actor.organization_id).first()
+    organization = db.query(Organization).filter(Organization.id == target_organization_id).first()
     if organization:
         organization.plan = new_plan
     db.commit()
