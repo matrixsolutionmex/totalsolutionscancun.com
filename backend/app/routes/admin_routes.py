@@ -71,6 +71,11 @@ class PlatformRoleRequest(BaseModel):
     transfer_to_supervisor_id: int | None = None
 
 
+class LegacyMigrationRequest(BaseModel):
+    confirm: bool = False
+    reason: str | None = None
+
+
 def require_reason(reason: str) -> str:
     clean_reason = (reason or "").strip()
     if len(clean_reason) < 3:
@@ -558,10 +563,13 @@ def admin_legacy_workspace_candidates(
 @router.post("/platform/migrations/legacy-users/{user_id}")
 def admin_migrate_legacy_user(
     user_id: int,
+    payload: LegacyMigrationRequest,
     db: Session = Depends(get_db),
     actor: User = Depends(require_root_user),
 ):
-    user = migrate_legacy_user_to_primary(db, user_id=user_id, actor=actor)
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Confirmação explícita obrigatória para migrar o usuário")
+    user = migrate_legacy_user_to_primary(db, user_id=user_id, actor=actor, reason=payload.reason)
     return {"user_id": user.id, "organization_id": user.organization_id, "onboarding_source": user.onboarding_source}
 
 

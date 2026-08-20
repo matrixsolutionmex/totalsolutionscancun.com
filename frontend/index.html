@@ -5265,6 +5265,7 @@
     let audioContext = null;
     let editingOwnProfile = false;
     let currentUser = { id: 1, username: "root", role: "ROOT" };
+    let legacyMigrationCandidates = [];
     let cachedBoard = null;
     let queuedLeadFiles = [];
     let cachedLeadDocuments = [];
@@ -9323,6 +9324,7 @@
         <div class="line">Organización: ${escapeHtml(user.organization_name || "Sem organização")} (ID ${user.organization_id ?? "-"}) · Plan ${escapeHtml(user.plan)}</div>
         <div class="line">Supervisor: ${escapeHtml(user.supervisor || "No informado")} · Subordinados: ${user.subordinates_count || 0} · Onboarding: ${escapeHtml(user.onboarding_source || "-")} · Última actividad: ${escapeHtml(user.last_seen_at ? new Date(user.last_seen_at).toLocaleString() : "No informada")}</div>
         <div class="inline-actions" style="margin-top: 12px;">
+          ${legacyMigrationCandidates.some((candidate) => String(candidate.user_id) === String(user.id)) ? `<button type="button" data-platform-migrate-legacy="${user.id}">Migrar para Total Solutions</button>` : ""}
           ${user.role === "BROKER" && ["PRO", "BUSINESS"].includes(String(user.plan).toUpperCase()) ? `<button type="button" data-platform-promote-user="${user.id}">Promover a Supervisor</button>` : ""}
           ${user.role === "GERENTE" ? `<button class="ghost" type="button" data-platform-demote-user="${user.id}">Alterar função</button>` : ""}
           ${user.role === "BROKER" ? `<select id="platformSupervisorSelect"><option value="">No definido</option></select><button type="button" data-platform-assign-supervisor="${user.id}">Atribuir supervisor</button>` : ""}
@@ -9350,17 +9352,20 @@
         role: document.getElementById("platformUserRole")?.value || "ALL",
         status: document.getElementById("platformUserStatus")?.value || "ALL"
       });
-      const [metricsResponse, organizationsResponse, usersResponse] = await Promise.all([
+      const [metricsResponse, organizationsResponse, usersResponse, migrationsResponse] = await Promise.all([
         apiFetch(`${API_BASE}/admin/platform/metrics`),
         apiFetch(`${API_BASE}/admin/platform/organizations?${params}`),
-        apiFetch(`${API_BASE}/admin/platform/users?${userParams}`)
+        apiFetch(`${API_BASE}/admin/platform/users?${userParams}`),
+        apiFetch(`${API_BASE}/admin/platform/migrations/legacy-users`)
       ]);
       const metrics = await metricsResponse.json().catch(() => ({}));
       const organizations = await organizationsResponse.json().catch(() => ({}));
       const users = await usersResponse.json().catch(() => ({}));
-      if (!metricsResponse.ok || !organizationsResponse.ok || !usersResponse.ok) {
+      if (!metricsResponse.ok || !organizationsResponse.ok || !usersResponse.ok || !migrationsResponse.ok) {
         throw new Error(metrics.detail || organizations.detail || users.detail || "No fue posible cargar el directorio global.");
       }
+      const migrationData = await migrationsResponse.json().catch(() => ({}));
+      legacyMigrationCandidates = migrationData.candidates || [];
       renderPlatformDirectoryMetrics(metrics);
       renderPlatformOrganizations(organizations.organizations || []);
       renderPlatformUsers(users.users || []);
@@ -10510,6 +10515,27 @@
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || "No fue posible atribuir el supervisor.");
       const userResponse = await apiFetch(`${API_BASE}/admin/platform/users/${target.dataset.platformAssignSupervisor}`);
+      if (userResponse.ok) renderPlatformUserDetail(await userResponse.json());
+      await loadPlatformDirectory();
+    });
+    document.getElementById("platformDirectoryDetail")?.addEventListener("click", async (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || !target.matches("[data-platform-migrate-legacy]")) return;
+      const candidate = legacyMigrationCandidates.find((item) => String(item.user_id) === String(target.dataset.platformMigrateLegacy));
+      if (!candidate) return;
+      const summary = `Usuário: ${candidate.user}\nOrigem: ${candidate.organization_name}\nDestino: ${candidate.target_organization_name}\nPlano individual: ${candidate.individual_plan}\nFunção: Supervisor\nClientes no workspace antigo: ${candidate.clients_count}\nOS: ${candidate.service_orders_count}`;
+      if (!window.confirm(`${summary}\n\nConfirmar migração explícita para Total Solutions?`)) return;
+      target.disabled = true;
+      const response = await apiFetch(`${API_BASE}/admin/platform/migrations/legacy-users/${encodeURIComponent(candidate.user_id)}`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({confirm: true, reason: "Migração ROOT para organização principal"})
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Não foi possível migrar o usuário legado.");
+      addPabloV2Message("Usuário migrado para a organização principal. O Marketplace agora respeita o novo escopo.", "ai");
+      legacyMigrationCandidates = legacyMigrationCandidates.filter((item) => String(item.user_id) !== String(candidate.user_id));
+      const userResponse = await apiFetch(`${API_BASE}/admin/platform/users/${encodeURIComponent(candidate.user_id)}`);
       if (userResponse.ok) renderPlatformUserDetail(await userResponse.json());
       await loadPlatformDirectory();
     });
