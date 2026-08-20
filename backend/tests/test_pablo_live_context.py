@@ -51,7 +51,7 @@ from app.services.pablo_location_service import (
     expire_location_for_test,
     get_active_location,
 )
-from app.services.marketplace_service import claim_opportunity, list_opportunities
+from app.services.marketplace_service import assign_opportunity, claim_opportunity, list_opportunities
 
 
 class PabloLiveContextTest(unittest.TestCase):
@@ -640,6 +640,41 @@ Observação: Cliente solicitou diagnóstico de 12 aparelhos de ar-condicionado 
             claim_opportunity(self.db, self.other_user, "MKT-CLAIM-001")
         self.assertIn("aceita por outro", str(conflict.exception))
         self.assertEqual(self.db.query(ServiceOpportunity).filter(ServiceOpportunity.public_id == "MKT-CLAIM-001").one().claimed_by_user_id, self.actor.id)
+
+    def test_pro_supervisor_sees_radar_and_can_assign_only_to_own_team(self):
+        self.org.plan = "PRO"
+        supervisor = User(username=f"supervisor-{uuid4().hex[:8]}", full_name="Magno", password_hash="hash", role="GERENTE", organization_id=self.org.id, status="ACTIVE", is_active=True)
+        technician = User(username=f"team-tech-{uuid4().hex[:8]}", full_name="Team Tech", password_hash="hash", role="BROKER", organization_id=self.org.id, manager_id=supervisor.id, status="ACTIVE", is_active=True)
+        outsider = User(username=f"outside-tech-{uuid4().hex[:8]}", full_name="Outside", password_hash="hash", role="BROKER", organization_id=self.org.id, status="ACTIVE", is_active=True)
+        self.db.add(supervisor)
+        self.db.flush()
+        technician.manager_id = supervisor.id
+        self.db.add_all([technician, outsider, ServiceOpportunity(public_id="MKT-SUPERVISOR", organization_id=self.org.id, source="MARKETPLACE", service_type="ELETRICA", city="Cancún")])
+        self.db.commit()
+        self.assertEqual(len(list_opportunities(self.db, supervisor)), 1)
+        result = assign_opportunity(self.db, supervisor, "MKT-SUPERVISOR", technician.id)
+        self.assertEqual(result["opportunity"]["status"], "CLAIMED")
+        self.assertEqual(self.db.query(ServiceOpportunity).filter_by(public_id="MKT-SUPERVISOR").one().claimed_by_user_id, technician.id)
+        self.assertEqual(self.db.query(LeadEvent).filter_by(event_type="MARKETPLACE_ASSIGNED_BY_SUPERVISOR").count(), 1)
+        self.db.add(ServiceOpportunity(public_id="MKT-SUPERVISOR-OUT", organization_id=self.org.id, source="MARKETPLACE", service_type="ELETRICA"))
+        self.db.commit()
+        with self.assertRaises(Exception):
+            assign_opportunity(self.db, supervisor, "MKT-SUPERVISOR-OUT", outsider.id)
+
+    def test_free_supervisor_is_blocked_but_root_can_assign_cross_organization(self):
+        supervisor = User(username=f"free-supervisor-{uuid4().hex[:8]}", full_name="Free Supervisor", password_hash="hash", role="GERENTE", organization_id=self.org.id, status="ACTIVE", is_active=True)
+        root = User(username=f"root-market-{uuid4().hex[:8]}", full_name="Root", password_hash="hash", role="ROOT", organization_id=self.other_org.id, status="ACTIVE", is_active=True)
+        target = User(username=f"root-target-{uuid4().hex[:8]}", full_name="Global Tech", password_hash="hash", role="BROKER", organization_id=self.org.id, status="ACTIVE", is_active=True)
+        self.db.add_all([supervisor, root, target])
+        self.db.flush()
+        opportunity = ServiceOpportunity(public_id="MKT-ROOT-GLOBAL", organization_id=self.org.id, source="MARKETPLACE", service_type="HIDRAULICA")
+        self.db.add(opportunity)
+        self.db.commit()
+        with self.assertRaises(Exception):
+            list_opportunities(self.db, supervisor)
+        result = assign_opportunity(self.db, root, opportunity.public_id, target.id)
+        self.assertEqual(result["opportunity"]["status"], "CLAIMED")
+        self.assertEqual(self.db.query(LeadEvent).filter_by(event_type="MARKETPLACE_ASSIGNED_BY_ROOT").count(), 1)
 
     def test_marketplace_claim_isolated_by_organization_and_pablo_requires_confirmation(self):
         other = ServiceOpportunity(public_id="MKT-OTHER-001", organization_id=self.other_org.id, source="MARKETPLACE", service_type="ELETRICA", city="Cancún")

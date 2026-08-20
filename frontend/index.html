@@ -5275,6 +5275,7 @@
     let boardClockTimer = null;
     let marketplaceRefreshTimer = null;
     let marketplaceTab = "agenda";
+    let marketplaceAssignableUsers = [];
     let currentLanguage = localStorage.getItem("totalsolutions_language") || "es";
     let currentTheme = "classic";
 
@@ -6009,6 +6010,19 @@
       return value === null || value === undefined || value === "" ? "Não informado" : escapeHtml(String(value));
     }
 
+    async function loadMarketplaceAssignableUsers() {
+      marketplaceAssignableUsers = [];
+      if (currentUser?.role === "GERENTE") {
+        const response = await apiFetch(`${API_BASE}/organization/team`);
+        const data = await response.json().catch(() => ([]));
+        if (response.ok) marketplaceAssignableUsers = data.filter((user) => user.role === "BROKER" && user.status === "ACTIVE");
+      } else if (currentUser?.role === "ROOT") {
+        const response = await apiFetch(`${API_BASE}/admin/platform/users?role=ALL&status=ACTIVE`);
+        const data = await response.json().catch(() => ({}));
+        if (response.ok) marketplaceAssignableUsers = (data.users || []).filter((user) => ["BROKER", "GERENTE"].includes(user.role));
+      }
+    }
+
     function renderMarketplacePanel(tab, payload = {}) {
       const panel = document.getElementById("marketplacePanel");
       if (!panel) return;
@@ -6038,7 +6052,8 @@
             <p>${marketplaceValue(item.description)}</p>
             <div class="pablo-action-card-actions">
               <button type="button" data-marketplace-details="${marketplaceValue(item.public_id)}">Ver detalhes</button>
-              <button type="button" data-marketplace-claim="${marketplaceValue(item.public_id)}">Aceitar serviço</button>
+              ${currentUser?.role === "GERENTE" || currentUser?.role === "ROOT" ? `<select data-marketplace-target aria-label="Técnico de destino"><option value="">Atribuir para...</option>${marketplaceAssignableUsers.map((user) => `<option value="${user.id}">${marketplaceValue(user.full_name || user.username)} · ${marketplaceValue(user.organization_name || "organização")}</option>`).join("")}</select><button type="button" data-marketplace-assign="${marketplaceValue(item.public_id)}">Atribuir à equipe</button>` : ""}
+              ${currentUser?.role !== "ROOT" && currentUser?.role !== "GERENTE" ? `<button type="button" data-marketplace-claim="${marketplaceValue(item.public_id)}">Aceitar serviço</button>` : ""}
             </div>
           </article>`).join("");
       } else if (tab === "accepted" || tab === "agenda") {
@@ -6066,6 +6081,7 @@
       if (!panel) return;
       try {
         const endpoint = tab === "accepted" || tab === "agenda" ? `${API_BASE}/marketplace/my-services` : `${API_BASE}/marketplace/opportunities?sort=distance`;
+        if (tab === "radar" && ["ROOT", "GERENTE"].includes(currentUser?.role)) await loadMarketplaceAssignableUsers();
         const response = await apiFetch(endpoint);
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.detail || "Não foi possível carregar o radar.");
@@ -6083,6 +6099,15 @@
       if (!response.ok) throw new Error(data.detail || "Este serviço acabou de ser aceito por outro profissional.");
       addPabloV2Message(data.message || "Serviço reservado para você.", "ai");
       await loadMarketplace("accepted");
+    }
+
+    async function assignMarketplaceOpportunity(publicId, targetUserId) {
+      if (!targetUserId) throw new Error("Selecione um técnico de destino.");
+      const response = await apiFetch(`${API_BASE}/marketplace/opportunities/${encodeURIComponent(publicId)}/assign`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({target_user_id: Number(targetUserId)})});
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Não foi possível atribuir o serviço.");
+      addPabloV2Message("Serviço atribuído com sucesso.", "ai");
+      await loadMarketplace("radar");
     }
 
     function normalizeLanguage(value) {
@@ -10538,6 +10563,12 @@
           target.disabled = true;
           target.textContent = "Confirmando disponibilidade...";
           await claimMarketplaceOpportunity(target.dataset.marketplaceClaim);
+        }
+        if (target.matches("[data-marketplace-assign]")) {
+          const card = target.closest("article");
+          const assignee = card?.querySelector("[data-marketplace-target]");
+          target.disabled = true;
+          await assignMarketplaceOpportunity(target.dataset.marketplaceAssign, assignee?.value);
         }
         if (target.matches("[data-marketplace-details]")) {
           const response = await apiFetch(`${API_BASE}/marketplace/opportunities/${encodeURIComponent(target.dataset.marketplaceDetails)}`);

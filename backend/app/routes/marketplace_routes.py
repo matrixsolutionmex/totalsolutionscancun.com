@@ -1,16 +1,19 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth.jwt_handler import get_current_user, get_db, require_admin_user
 from app.models.service_opportunity import ServiceOpportunity
+from app.models.user import User
 from app.services.marketplace_service import (
     claim_opportunity,
+    assign_opportunity,
     get_available_opportunity,
     list_opportunities,
     private_opportunity,
     public_opportunity,
     seed_demo_opportunities,
+    can_access_marketplace,
 )
 from app.services.pablo_location_service import get_active_location
 
@@ -20,6 +23,10 @@ router = APIRouter(prefix="/marketplace", tags=["marketplace"])
 
 class MarketplaceSeedRequest(BaseModel):
     count: int = Field(default=10, ge=1, le=12)
+
+
+class MarketplaceAssignmentRequest(BaseModel):
+    target_user_id: int = Field(gt=0)
 
 
 @router.get("/opportunities")
@@ -51,13 +58,38 @@ def marketplace_opportunity_claim(public_id: str, db: Session = Depends(get_db),
     return claim_opportunity(db, actor, public_id)
 
 
+@router.post("/opportunities/{public_id}/assign")
+def marketplace_opportunity_assign(
+    public_id: str,
+    payload: MarketplaceAssignmentRequest,
+    db: Session = Depends(get_db),
+    actor=Depends(get_current_user),
+):
+    return assign_opportunity(db, actor, public_id, payload.target_user_id)
+
+
 @router.get("/my-services")
 def marketplace_my_services(db: Session = Depends(get_db), actor=Depends(get_current_user)):
-    opportunities = db.query(ServiceOpportunity).filter(
-        ServiceOpportunity.organization_id == actor.organization_id,
-        ServiceOpportunity.claimed_by_user_id == actor.id,
+    if not can_access_marketplace(db, actor):
+        raise HTTPException(status_code=403, detail="Seu perfil não possui acesso ao Marketplace.")
+    target_ids = [actor.id]
+    if actor.role == "GERENTE":
+        target_ids.extend(
+            user.id for user in db.query(User).filter(
+                User.organization_id == actor.organization_id,
+                User.manager_id == actor.id,
+                User.role == "BROKER",
+                User.is_active.is_(True),
+                User.status == "ACTIVE",
+            ).all()
+        )
+    query = db.query(ServiceOpportunity).filter(
+        ServiceOpportunity.claimed_by_user_id.in_(target_ids),
         ServiceOpportunity.status.in_(["CLAIMED", "IN_PROGRESS", "COMPLETED"]),
-    ).order_by(ServiceOpportunity.claimed_at.desc()).all()
+    )
+    if actor.role != "ROOT":
+        query = query.filter(ServiceOpportunity.organization_id == actor.organization_id)
+    opportunities = query.order_by(ServiceOpportunity.claimed_at.desc()).all()
     return {"opportunities": [private_opportunity(db, item, actor) for item in opportunities]}
 
 

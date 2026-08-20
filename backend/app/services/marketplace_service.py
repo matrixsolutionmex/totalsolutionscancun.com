@@ -17,6 +17,7 @@ from app.models.service_request import ServiceRequest
 from app.models.user import User
 from app.schemas.lead_schema import LeadCreate
 from app.services.lead_creation_service import create_lead_record
+from app.services.entitlement_service import current_plan
 from app.services.pablo_location_service import get_active_location
 from app.services.service_order_service import ensure_service_order
 
@@ -24,6 +25,15 @@ from app.services.service_order_service import ensure_service_order
 AVAILABLE = "AVAILABLE"
 CLAIMED = "CLAIMED"
 MARKETPLACE = "MARKETPLACE"
+
+
+def can_access_marketplace(db: Session, actor: User) -> bool:
+    """Marketplace access is role and entitlement based, never frontend supplied."""
+    if not actor or not actor.is_active or actor.status != "ACTIVE":
+        return False
+    if actor.role == "ROOT" or actor.role == "BROKER":
+        return True
+    return actor.role == "GERENTE" and current_plan(db, actor) in {"PRO", "BUSINESS"}
 
 
 def haversine_km(latitude_a: float, longitude_a: float, latitude_b: float, longitude_b: float) -> float:
@@ -35,11 +45,10 @@ def haversine_km(latitude_a: float, longitude_a: float, latitude_b: float, longi
 
 
 def _scope_query(db: Session, actor: User):
-    return db.query(ServiceOpportunity).filter(
-        ServiceOpportunity.organization_id == actor.organization_id,
-        ServiceOpportunity.source == MARKETPLACE,
-        ServiceOpportunity.status == AVAILABLE,
-    )
+    query = db.query(ServiceOpportunity).filter(ServiceOpportunity.source == MARKETPLACE, ServiceOpportunity.status == AVAILABLE)
+    if actor.role != "ROOT":
+        query = query.filter(ServiceOpportunity.organization_id == actor.organization_id)
+    return query
 
 
 def _distance(location: dict | None, opportunity: ServiceOpportunity) -> float | None:
@@ -84,7 +93,10 @@ def public_opportunity(opportunity: ServiceOpportunity, *, distance_km: float | 
 
 
 def private_opportunity(db: Session, opportunity: ServiceOpportunity, actor: User) -> dict:
-    lead = db.query(Lead).filter(Lead.id == opportunity.lead_id, Lead.organization_id == actor.organization_id).first()
+    lead_query = db.query(Lead).filter(Lead.id == opportunity.lead_id)
+    if actor.role != "ROOT":
+        lead_query = lead_query.filter(Lead.organization_id == actor.organization_id)
+    lead = lead_query.first()
     order = db.query(ServiceOrder).filter(ServiceOrder.id == opportunity.service_order_id).first() if opportunity.service_order_id else None
     return {
         **public_opportunity(opportunity),
@@ -97,6 +109,8 @@ def private_opportunity(db: Session, opportunity: ServiceOpportunity, actor: Use
 def list_opportunities(db: Session, actor: User, *, service: str | None = None, city: str | None = None,
                        state: str | None = None, country: str | None = None, urgency: str | None = None,
                        max_distance: float | None = None, sort: str = "distance") -> list[dict]:
+    if not can_access_marketplace(db, actor):
+        raise HTTPException(status_code=403, detail="Seu perfil não possui acesso ao Marketplace.")
     query = _scope_query(db, actor)
     if service:
         query = query.filter(or_(ServiceOpportunity.service_type.ilike(f"%{service.strip()}%"), ServiceOpportunity.segment.ilike(f"%{service.strip()}%")))
@@ -177,6 +191,8 @@ def create_opportunity_from_service_request(db: Session, service_request: Servic
 
 
 def get_available_opportunity(db: Session, actor: User, public_id: str) -> ServiceOpportunity:
+    if not can_access_marketplace(db, actor):
+        raise HTTPException(status_code=403, detail="Seu perfil não possui acesso ao Marketplace.")
     opportunity = _scope_query(db, actor).filter(ServiceOpportunity.public_id == public_id).first()
     if not opportunity:
         raise HTTPException(status_code=404, detail="Oportunidade não disponível")
@@ -184,28 +200,40 @@ def get_available_opportunity(db: Session, actor: User, public_id: str) -> Servi
 
 
 def claim_opportunity(db: Session, actor: User, public_id: str) -> dict:
-    if actor.role != "BROKER" or not actor.is_active or actor.status != "ACTIVE":
-        raise HTTPException(status_code=403, detail="Apenas técnicos ativos podem aceitar oportunidades")
+    if not can_access_marketplace(db, actor) or actor.role not in {"BROKER", "GERENTE", "ROOT"}:
+        raise HTTPException(status_code=403, detail="Usuário não autorizado a aceitar oportunidades")
+    return _claim_for_user(db, actor, actor, public_id, audit_event="MARKETPLACE_CLAIMED_BY_TECHNICIAN")
+
+
+def _claim_for_user(db: Session, actor: User, target: User, public_id: str, *, audit_event: str) -> dict:
+    """Atomically claim an opportunity for a backend-validated target user."""
+    if not target.is_active or target.status != "ACTIVE":
+        raise HTTPException(status_code=403, detail="O usuário de destino não está ativo.")
     opportunity = db.query(ServiceOpportunity).filter(
-        ServiceOpportunity.organization_id == actor.organization_id,
         ServiceOpportunity.source == MARKETPLACE,
         ServiceOpportunity.public_id == public_id,
     ).first()
-    if not opportunity:
+    if actor.role != "ROOT":
+        opportunity = db.query(ServiceOpportunity).filter(
+            ServiceOpportunity.organization_id == actor.organization_id,
+            ServiceOpportunity.source == MARKETPLACE,
+            ServiceOpportunity.public_id == public_id,
+        ).first()
+    if not opportunity or (target.role != "ROOT" and target.organization_id != opportunity.organization_id):
         raise HTTPException(status_code=404, detail="Oportunidade não encontrada")
     if opportunity.status != AVAILABLE:
         raise HTTPException(status_code=409, detail="Esta oportunidade acabou de ser aceita por outro profissional.")
     now = datetime.utcnow()
     claimed = db.query(ServiceOpportunity).filter(
         ServiceOpportunity.id == opportunity.id,
-        ServiceOpportunity.organization_id == actor.organization_id,
+        ServiceOpportunity.organization_id == opportunity.organization_id,
         ServiceOpportunity.status == AVAILABLE,
-    ).update({"status": CLAIMED, "claimed_by_user_id": actor.id, "claimed_at": now, "updated_at": now}, synchronize_session=False)
+    ).update({"status": CLAIMED, "claimed_by_user_id": target.id, "claimed_at": now, "updated_at": now}, synchronize_session=False)
     if claimed != 1:
         db.rollback()
         raise HTTPException(status_code=409, detail="Esta oportunidade acabou de ser aceita por outro profissional.")
     db.refresh(opportunity)
-    lead = db.query(Lead).filter(Lead.id == opportunity.lead_id, Lead.organization_id == actor.organization_id).first() if opportunity.lead_id else None
+    lead = db.query(Lead).filter(Lead.id == opportunity.lead_id, Lead.organization_id == opportunity.organization_id).first() if opportunity.lead_id else None
     notification_ids = []
     if not lead:
         payload = LeadCreate(
@@ -215,23 +243,43 @@ def claim_opportunity(db: Session, actor: User, public_id: str) -> dict:
             tipo_servico="OUTRO", urgencia=opportunity.urgency, observacoes=opportunity.description_public,
             origen="OTRO",
         )
-        lead, notification_ids = create_lead_record(db, payload, actor)
+        lead, notification_ids = create_lead_record(db, payload, target)
         opportunity.lead_id = lead.id
     else:
-        lead.assigned_to_user_id = actor.id
+        lead.assigned_to_user_id = target.id
         lead.updated_at = now
     order = db.query(ServiceOrder).filter(ServiceOrder.id == opportunity.service_order_id).first() if opportunity.service_order_id else None
     if not order:
         order = ensure_service_order(db, lead, actor=actor)
         opportunity.service_order_id = order.id
-    order.responsible_user_id = actor.id
+    order.responsible_user_id = target.id
     order.updated_at = now
-    db.add(LeadEvent(organization_id=actor.organization_id, lead_id=lead.id, actor_id=actor.id,
+    db.add(LeadEvent(organization_id=opportunity.organization_id, lead_id=lead.id, actor_id=actor.id,
                      actor_name=actor.full_name or actor.username, event_type="MARKETPLACE_OPPORTUNITY_CLAIMED",
-                     message=f"Oportunidade {opportunity.public_id} aceita pelo técnico autenticado"))
+                     message=f"Oportunidade {opportunity.public_id} aceita para o usuário autorizado"))
+    db.add(LeadEvent(organization_id=opportunity.organization_id, lead_id=lead.id, actor_id=actor.id,
+                     actor_name=actor.full_name or actor.username, event_type=audit_event,
+                     message=f"Oportunidade {opportunity.public_id} atribuída sem dados pessoais no evento"))
     db.commit()
     db.refresh(opportunity)
     return {"opportunity": private_opportunity(db, opportunity, actor), "notification_ids": notification_ids}
+
+
+def assign_opportunity(db: Session, actor: User, public_id: str, target_user_id: int) -> dict:
+    if not can_access_marketplace(db, actor) or actor.role not in {"GERENTE", "ROOT"}:
+        raise HTTPException(status_code=403, detail="Somente supervisores PRO/BUSINESS ou ROOT podem atribuir oportunidades.")
+    target = db.query(User).filter(User.id == target_user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Usuário de destino não encontrado.")
+    if actor.role == "GERENTE":
+        if target.role != "BROKER" or target.organization_id != actor.organization_id or target.manager_id != actor.id:
+            raise HTTPException(status_code=403, detail="O destino deve ser um técnico ativo da sua própria equipe.")
+        audit_event = "MARKETPLACE_ASSIGNED_BY_SUPERVISOR"
+    else:
+        if target.role not in {"BROKER", "GERENTE"}:
+            raise HTTPException(status_code=403, detail="ROOT só pode atribuir a técnico ou supervisor ativo.")
+        audit_event = "MARKETPLACE_ASSIGNED_BY_ROOT"
+    return _claim_for_user(db, actor, target, public_id, audit_event=audit_event)
 
 
 def seed_demo_opportunities(db: Session, actor: User, count: int = 10) -> int:
