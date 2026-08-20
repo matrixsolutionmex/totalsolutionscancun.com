@@ -57,6 +57,10 @@ def _public_base_url() -> str:
     return os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8010").rstrip("/")
 
 
+def public_tracking_url(tracking_token: str) -> str:
+    return f"{_public_base_url()}/seguimiento/{tracking_token}"
+
+
 def _actor_name(actor: User | None) -> str:
     if not actor:
         return "Portal del cliente"
@@ -313,7 +317,7 @@ def service_request_public_status(request: ServiceRequest) -> dict[str, Any]:
         "urgency": request.urgency,
         "created_at": request.created_at,
         "order_number": order.order_number if order else None,
-        "tracking_url": f"{_public_base_url()}/seguimiento/{request.tracking_token}",
+        "tracking_url": public_tracking_url(request.tracking_token),
     }
 
 

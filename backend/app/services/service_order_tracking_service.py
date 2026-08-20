@@ -10,6 +10,7 @@ from app.models.lead_event import LeadEvent
 from app.models.service_order import ServiceOrder, TRACKING_STARTABLE_ORDER_STATUSES
 from app.models.service_order_tracking import ServiceOrderTracking
 from app.models.user import User
+from app.services.customer_portal_service import public_tracking_url
 
 
 STARTABLE_ORDER_STATUSES = TRACKING_STARTABLE_ORDER_STATUSES
@@ -130,11 +131,13 @@ def list_active_tracking_for_actor(db: Session, actor: User) -> list[dict]:
         if not _is_visible_to_actor(db, order, actor):
             continue
         lead = order.lead
+        service_request = order.service_request
         active_routes.append({
             "service_order_id": order.id,
             "order_number": order.order_number,
             "status": order.status,
             "client_name": lead.nome if lead else None,
+            "tracking_public_url": public_tracking_url(service_request.tracking_token) if service_request else None,
             "technician": {
                 "id": technician.id,
                 "name": _actor_name(technician),

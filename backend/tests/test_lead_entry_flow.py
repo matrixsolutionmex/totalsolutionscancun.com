@@ -57,7 +57,7 @@ from app.routes.service_request_routes import (
 from app.schemas.lead_schema import IntegrationLeadCreate, LeadAssignUpdate, LeadCreate, LeadPipelineUpdate, LeadUpdate
 from app.schemas.notification_schema import WebPushDeactivateRequest, WebPushKeys, WebPushSubscriptionCreate
 from app.services.customer_portal_service import create_customer_request_and_order, service_request_public_status, service_request_public_tracking
-from app.services.service_order_tracking_service import start_tracking, stop_tracking, update_tracking_position
+from app.services.service_order_tracking_service import list_active_tracking_for_actor, start_tracking, stop_tracking, update_tracking_position
 from app.services.import_service import import_lead_records
 from app.services.notification_service import notification_push_payload, notify_client_created
 from app.services.reverse_geocode_service import _normalize_result, reverse_geocode
@@ -1170,6 +1170,13 @@ def test_tracking_operations_map_polls_only_for_authorized_operational_view():
     assert "Señal GPS débil" in html
     assert "stopTrackingOperationsMonitoring();" in html
     assert "![\"ROOT\", \"GERENTE\"].includes(currentUser?.role)" in html
+    assert "Ver seguimiento" in html
+    assert "Copiar enlace" in html
+    assert "data-tracking-copy" in html
+    assert "navigator.clipboard.writeText" in html
+    assert "document.execCommand(\"copy\")" in html
+    assert "trackingOperationsPrecision" in html
+    assert "tracking_public_url" in html
 
 
 def test_public_tracking_portal_uses_safe_statuses_and_live_leaflet_polling():
@@ -1323,6 +1330,7 @@ def test_public_request_status_does_not_expose_private_customer_data(db):
 
 def test_public_tracking_exposes_only_current_active_position_and_hides_it_after_stop(db):
     organization = make_organization(db, "portal-live-tracking", "Portal Live Tracking")
+    manager = make_user(db, "manager-live-links", "GERENTE", organization_id=organization.id)
     technician = make_user(db, "tecnico-live", "BROKER", organization_id=organization.id)
     service_request = create_customer_request_and_order(
         db,
@@ -1330,6 +1338,8 @@ def test_public_tracking_exposes_only_current_active_position_and_hides_it_after
     )
     order = service_request.service_order
     order.responsible_user_id = technician.id
+    order.supervisor_user_id = manager.id
+    technician.manager_id = manager.id
     order.location_lat = 21.1619
     order.location_lng = -86.8515
     db.commit()
@@ -1350,6 +1360,13 @@ def test_public_tracking_exposes_only_current_active_position_and_hides_it_after
     assert active["technician_display_name"] == technician.full_name
     assert active["technician_lat"] == pytest.approx(21.1620)
     assert active["accuracy_m"] == pytest.approx(12)
+    root = make_user(db, "root-live-links", "ROOT", organization_id=organization.id)
+    central_routes = list_active_tracking_for_actor(db, root)
+    assert len(central_routes) == 1
+    assert central_routes[0]["tracking_public_url"].endswith(f"/seguimiento/{service_request.tracking_token}")
+    manager_routes = list_active_tracking_for_actor(db, manager)
+    assert len(manager_routes) == 1
+    assert manager_routes[0]["tracking_public_url"] == central_routes[0]["tracking_public_url"]
     serialized = json.dumps(active, default=str, ensure_ascii=False)
     assert "organization_id" not in serialized
     assert "technician_id" not in serialized

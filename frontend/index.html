@@ -999,6 +999,20 @@
       color: var(--text);
     }
 
+    .tracking-route-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+
+    .tracking-route-actions a,
+    .tracking-route-actions button {
+      min-height: 36px;
+      padding: 0 12px;
+      font-size: 13px;
+    }
+
     .tracking-status-muted {
       color: var(--muted);
     }
@@ -6087,6 +6101,11 @@
       return "En camino";
     }
 
+    function trackingOperationsPrecision(value) {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? `~${Math.max(0, Math.round(numeric))} m` : "-";
+    }
+
     function renderTrackingOperationsRoutes(routes) {
       const list = document.getElementById("trackingOperationsRoutes");
       if (!list) return;
@@ -6096,11 +6115,13 @@
       }
       list.innerHTML = routes.map((route) => {
         const tracking = route.tracking || {};
+        const trackingUrl = route.tracking_public_url || "";
         return `<article class="tracking-route-row">
           <strong>${escapeHtml(route.order_number || `OS ${route.service_order_id}`)} · ${escapeHtml(route.technician?.name || "Técnico")}</strong>
           <span>Cliente: ${escapeHtml(route.client_name || "-")}</span>
           <span>${trackingOperationsStatus(route)} · Inicio: ${escapeHtml(trackingOperationsDate(tracking.started_at))}</span>
-          <span>Última actualización: ${escapeHtml(trackingOperationsDate(tracking.updated_at))} · Precisión: ${tracking.accuracy_m == null ? "-" : `${escapeHtml(tracking.accuracy_m)} m`}</span>
+          <span>Última actualización: ${escapeHtml(trackingOperationsDate(tracking.updated_at))} · Precisión: <span title="${tracking.accuracy_m == null ? "" : `${escapeHtml(tracking.accuracy_m)} m`}">${escapeHtml(trackingOperationsPrecision(tracking.accuracy_m))}</span></span>
+          ${trackingUrl ? `<div class="tracking-route-actions"><a class="small-btn" href="${escapeHtml(trackingUrl)}" target="_blank" rel="noopener noreferrer">Ver seguimiento</a><button class="small-btn ghost" type="button" data-tracking-copy="${escapeHtml(trackingUrl)}">Copiar enlace</button></div>` : ""}
         </article>`;
       }).join("");
     }
@@ -6150,7 +6171,10 @@
         }
         if (hasTechnician) {
           markers.technician.setLatLng([technicianLat, technicianLng]).addTo(trackingOperationsMap);
-          markers.technician.bindPopup(`<strong>${escapeHtml(route.order_number || `OS ${route.service_order_id}`)}</strong><br>${escapeHtml(route.technician?.name || "Técnico")}<br>${escapeHtml(trackingOperationsStatus(route))}`);
+          const popupLink = route.tracking_public_url
+            ? `<br><a href="${escapeHtml(route.tracking_public_url)}" target="_blank" rel="noopener noreferrer">Ver seguimiento</a>`
+            : "";
+          markers.technician.bindPopup(`<strong>${escapeHtml(route.order_number || `OS ${route.service_order_id}`)}</strong><br>${escapeHtml(route.technician?.name || "Técnico")}<br>${escapeHtml(trackingOperationsStatus(route))}<br>Precisión: ${escapeHtml(trackingOperationsPrecision(tracking.accuracy_m))}${popupLink}`);
           bounds.push([technicianLat, technicianLng]);
         } else {
           markers.technician.remove();
@@ -6212,6 +6236,39 @@
       if (document.getElementById("view-atendimento")?.classList.contains("active") && !document.hidden) {
         trackingOperationsTimer = window.setTimeout(() => loadActiveTrackingOperations().catch(() => {}), TRACKING_OPERATIONS_POLL_MS);
       }
+    }
+
+    async function copyTrackingPublicLink(button) {
+      const url = button?.dataset.trackingCopy;
+      if (!url) return;
+      let copied = false;
+      if (navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(url);
+          copied = true;
+        } catch (_error) {
+          copied = false;
+        }
+      }
+      if (!copied) {
+        const input = document.createElement("textarea");
+        input.value = url;
+        input.setAttribute("readonly", "");
+        input.style.position = "fixed";
+        input.style.opacity = "0";
+        document.body.appendChild(input);
+        input.select();
+        try {
+          copied = document.execCommand("copy");
+        } finally {
+          input.remove();
+        }
+      }
+      const previousLabel = button.textContent;
+      button.textContent = copied ? "Enlace copiado" : "No fue posible copiar";
+      window.setTimeout(() => {
+        if (button.isConnected) button.textContent = previousLabel;
+      }, 1800);
     }
 
     async function loadMarketplaceAssignableUsers() {
@@ -10920,6 +10977,14 @@
 
     document.querySelectorAll("[data-marketplace-tab]").forEach((button) => {
       button.addEventListener("click", () => loadMarketplace(button.dataset.marketplaceTab));
+    });
+
+    document.getElementById("trackingOperationsRoutes")?.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || !target.matches("[data-tracking-copy]")) return;
+      copyTrackingPublicLink(target).catch(() => {
+        target.textContent = "No fue posible copiar";
+      });
     });
 
     document.getElementById("commercialPlanCards")?.addEventListener("click", (event) => {
