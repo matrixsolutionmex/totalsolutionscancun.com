@@ -12,6 +12,7 @@ from app.database.connection import SessionLocal
 from app.models.organization import Organization
 from app.models.user import User
 from app.core.auth_security import validate_session_cookie
+from app.core.user_status import PENDING_ADMIN_STATUSES
 
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,6 @@ def verify_access_token(token: str) -> dict:
         ) from exc
 
 
-PENDING_ADMIN_STATUSES = {"PENDING", "PENDING_APPROVAL", "PENDING_ADMIN"}
 BLOCKED_USER_STATUSES = {"SUSPENDED", "INACTIVE", "ARCHIVED", "ANONYMIZED"}
 
 

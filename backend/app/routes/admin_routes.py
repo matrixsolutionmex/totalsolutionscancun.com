@@ -2,13 +2,14 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
-from sqlalchemy import func, or_
+from sqlalchemy import func, inspect, or_
 from sqlalchemy.orm import Session
 
-from app.auth.jwt_handler import get_db, require_admin_user, require_root_user
+from app.auth.jwt_handler import get_db, require_admin_user, require_root_user, user_access_block_reason
 from app.auth.routes import create_email_verification_link, issue_email_verification
 from app.core.auth_security import audit_auth_event
 from app.core.security import hash_password
+from app.core.user_status import PENDING_ADMIN_STATUSES, PENDING_USER_STATUSES
 from app.models.lead import Lead
 from app.models.user import User
 from app.models.organization import Organization
@@ -33,7 +34,7 @@ from app.services.commercial_upgrade_service import (
     mark_payment_confirmed,
 )
 from app.services.user_lifecycle_service import record_user_lifecycle_event, revoke_user_access, transition_user_status
-from app.services.entitlement_service import current_plan, ensure_user_commercial_profile, set_user_entitlement_plan
+from app.services.entitlement_service import current_plan, ensure_user_commercial_profile, resolve_plan, set_user_entitlement_plan
 from app.services.legacy_workspace_migration_service import legacy_workspace_candidates, legacy_workspace_diagnostics, migrate_legacy_user_to_primary
 from app.services.platform_admin_service import (
     get_platform_organization,
@@ -45,8 +46,7 @@ from app.services.platform_admin_service import (
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
-PENDING_ADMIN_STATUSES = {"PENDING", "PENDING_APPROVAL", "PENDING_ADMIN"}
-PENDING_EMAIL_SUPPORT_STATUSES = {"PENDING", "PENDING_EMAIL", "PENDING_APPROVAL", "PENDING_ADMIN"}
+PENDING_EMAIL_SUPPORT_STATUSES = PENDING_USER_STATUSES
 
 
 class ManualEmailVerificationRequest(BaseModel):
@@ -207,9 +207,17 @@ def approve_pending_user(db: Session, user: User, actor: User, payload: UserAppr
         if not manager:
             raise HTTPException(status_code=400, detail="Supervisor responsável não encontrado na organização")
     previous_status = user.status
+    # Approval activates the account, but must not downgrade an existing
+    # individual entitlement that the platform already resolved for this user.
+    if inspect(db.get_bind()).has_table("commercial_subscriptions"):
+        approval_plan = resolve_plan(db, user)["plan"]
+    else:
+        approval_plan = (user.plan or "FREE").strip().upper()
+    if approval_plan not in {"PRO", "BUSINESS"}:
+        approval_plan = "FREE"
     user.role = role
     user.manager_id = manager_id
-    user.plan = "FREE"
+    user.plan = approval_plan
     user.organization_id = target_organization.id
     if target_organization.status == "PENDING_ONBOARDING":
         target_organization.status = "ACTIVE"
@@ -222,7 +230,7 @@ def approve_pending_user(db: Session, user: User, actor: User, payload: UserAppr
     user.status_reason = "Cadastro aprovado"
     user.status_changed_at = datetime.utcnow()
     user.status_changed_by = actor.id
-    ensure_user_commercial_profile(db, user, plan="FREE", source="PLATFORM_SIGNUP" if standard_signup else "ONBOARDING", granted_by_user_id=actor.id)
+    ensure_user_commercial_profile(db, user, plan=approval_plan, source="PLATFORM_SIGNUP" if standard_signup else "ONBOARDING", granted_by_user_id=actor.id)
     if organization_mode == "EXISTING" and previous_organization_id != target_organization.id:
         previous_organization = db.query(Organization).filter(Organization.id == previous_organization_id).first()
         remaining_users = db.query(User).filter(
@@ -263,7 +271,7 @@ def list_users_by_status(
     if status:
         normalized = status.strip().upper()
         if normalized == "PENDING":
-            query = query.filter(User.status.in_(["PENDING", "PENDING_EMAIL", "PENDING_APPROVAL", "PENDING_ADMIN"]))
+            query = query.filter(User.status.in_(PENDING_USER_STATUSES))
         else:
             query = query.filter(User.status == normalized)
     return query.order_by(User.registered_at.desc(), User.id.desc()).all()
@@ -276,7 +284,7 @@ def pending_users(
 ):
     return (
         visible_user_query(db, actor)
-        .filter(User.status.in_(["PENDING", "PENDING_EMAIL", "PENDING_APPROVAL", "PENDING_ADMIN"]))
+        .filter(User.status.in_(PENDING_USER_STATUSES))
         .order_by(User.registered_at.desc(), User.id.desc())
         .all()
     )
@@ -286,7 +294,6 @@ def global_onboarding_pending_query(db: Session):
     return (
         db.query(User)
         .filter(
-            User.onboarding_source == "INDEPENDENT",
             User.status.in_(PENDING_ADMIN_STATUSES),
         )
         .order_by(User.registered_at.desc(), User.id.desc())
@@ -312,6 +319,7 @@ def serialize_global_onboarding_user(db: Session, user: User) -> dict:
         "supervisor": supervisor.full_name or supervisor.username if supervisor else None,
         "status": user.status,
         "email_verified": user.email_verified,
+        "access_block_reason": user_access_block_reason(db, user),
     }
 
 
@@ -431,6 +439,33 @@ def admin_platform_user(
     if not user:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
     return user
+
+
+@router.get("/platform/users/{user_id}/access-diagnostic")
+def admin_platform_user_access_diagnostic(
+    user_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    supervisor = db.query(User).filter(User.id == user.manager_id).first() if user.manager_id else None
+    return {
+        "user_id": user.id,
+        "email": user.email,
+        "email_verified": bool(user.email_verified),
+        "status": user.status,
+        "role": user.role,
+        "is_active": bool(user.is_active),
+        "onboarding_source": user.onboarding_source,
+        "organization_id": user.organization_id,
+        "supervisor": {
+            "user_id": supervisor.id,
+            "name": supervisor.full_name or supervisor.username,
+        } if supervisor else None,
+        "access_block_reason": user_access_block_reason(db, user),
+    }
 
 
 @router.patch("/platform/users/{user_id}/role")

@@ -7,6 +7,7 @@ from app.models.lead import Lead
 from app.models.organization import Organization
 from app.models.service_order import ServiceOrder
 from app.models.user import User
+from app.core.user_status import PENDING_USER_STATUSES
 from app.services.entitlement_service import current_plan, normalize_plan, resolve_plan
 
 
@@ -160,5 +161,5 @@ def platform_directory_metrics(db: Session) -> dict:
         "technicians_total": sum(1 for item in users if item.role == "BROKER"),
         "supervisors_total": sum(1 for item in users if item.role == "GERENTE"),
         "users_active": sum(1 for item in users if item.is_active and item.status == "ACTIVE"),
-        "users_pending": sum(1 for item in users if item.status in {"PENDING", "PENDING_EMAIL", "PENDING_APPROVAL", "PENDING_ADMIN"}),
+        "users_pending": sum(1 for item in users if item.status in PENDING_USER_STATUSES),
     }

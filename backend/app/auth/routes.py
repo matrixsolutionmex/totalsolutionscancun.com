@@ -42,6 +42,7 @@ from app.core.auth_security import (
     encrypt_secret,
     now_utc,
 )
+from app.core.user_status import PENDING_USER_STATUSES
 from app.core.organization import create_independent_organization, get_or_create_default_organization, get_platform_primary_organization
 from app.core.security import hash_password, password_needs_upgrade, verify_password
 from app.models.auth_security import PasswordResetToken, UserIdentity
@@ -430,7 +431,7 @@ def generic_register_response(
 
 def public_status_label(status: str | None) -> str:
     value = (status or "").upper()
-    if value in {"PENDING_EMAIL", "PENDING_APPROVAL", "PENDING_ADMIN", "PENDING"}:
+    if value in PENDING_USER_STATUSES:
         return "PENDING"
     return value or "ACTIVE"
 

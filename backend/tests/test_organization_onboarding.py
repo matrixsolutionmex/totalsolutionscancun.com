@@ -2,6 +2,8 @@ from datetime import datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
+from starlette.responses import Response
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -13,7 +15,7 @@ from app.models.commercial_subscription import CommercialSubscription
 from app.models.organization import Organization
 from app.models.organization_invitation import OrganizationInvitation
 from app.models.referral_attribution import ReferralAttribution
-from app.models.auth_security import UserSession
+from app.models.auth_security import AuthRateLimit, UserSession
 from app.models.auth_security import AuthAuditEvent
 from app.models.notification import WebPushSubscription
 from app.models.user_lifecycle import UserLifecycleEvent
@@ -22,9 +24,12 @@ from app.models import service_order, service_property
 from app.services.entitlement_service import current_plan, ensure_user_commercial_profile
 from app.services.organization_onboarding_service import accept_invitation, create_invitation, record_referral
 from app import main as _app_main  # registers the application's relationship models
-from app.routes.admin_routes import PlatformRoleRequest, PlatformSupervisorRequest, admin_platform_assign_supervisor, admin_platform_change_role, approve_pending_user, pending_onboarding_users, pending_users
+from app.auth.routes import login
+from app.routes.admin_routes import PlatformRoleRequest, PlatformSupervisorRequest, admin_platform_assign_supervisor, admin_platform_change_role, admin_platform_user_access_diagnostic, approve_pending_user, pending_onboarding_users, pending_users
 from app.routes.organization_routes import current_team
-from app.schemas.auth_schema import UserApprovalRequest
+from app.routes.user_routes import update_user
+from app.schemas.auth_schema import AuthLoginRequest, UserApprovalRequest
+from app.schemas.user_schema import UserUpdate
 
 
 @pytest.fixture
@@ -39,6 +44,7 @@ def onboarding_db():
             OrganizationInvitation.__table__,
             ReferralAttribution.__table__,
             UserSession.__table__,
+            AuthRateLimit.__table__,
             AuthAuditEvent.__table__,
             WebPushSubscription.__table__,
             UserLifecycleEvent.__table__,
@@ -65,6 +71,20 @@ def make_user(db, *, username, organization_id=None, role="BROKER", email=None):
     return user
 
 
+def login_request():
+    return Request({
+        "type": "http",
+        "method": "POST",
+        "scheme": "http",
+        "server": ("testserver", 80),
+        "path": "/auth/login",
+        "root_path": "",
+        "query_string": b"",
+        "headers": [(b"user-agent", b"pytest")],
+        "client": ("127.0.0.1", 50000),
+    })
+
+
 def test_independent_workspace_is_free_and_does_not_inherit_paid_plan(onboarding_db):
     db = onboarding_db
     paid = create_independent_organization(db, name="Empresa PRO")
@@ -78,6 +98,120 @@ def test_independent_workspace_is_free_and_does_not_inherit_paid_plan(onboarding
     assert independent.plan == "FREE"
     assert db.query(CommercialSubscription).filter_by(organization_id=independent.id).one().status == "LAUNCH_ACCESS"
     assert current_plan(db, user) == "FREE"
+
+
+def test_root_queue_matches_login_gate_for_non_independent_gerente_pro(onboarding_db):
+    db = onboarding_db
+    organization = create_independent_organization(db, name="Magno A B")
+    organization.plan = "PRO"
+    subscription = db.query(CommercialSubscription).filter_by(organization_id=organization.id).one()
+    subscription.plan = "PRO"
+    root = make_user(db, username="root", organization_id=organization.id, role="ROOT")
+    pending = User(
+        username="magnoalvesbrasil",
+        email="magnoalvesbrasil@proton.me",
+        full_name="Magno A B",
+        password_hash=hash_password("password"),
+        organization_id=organization.id,
+        role="GERENTE",
+        status="PENDING_ADMIN",
+        is_active=False,
+        email_verified=True,
+        onboarding_source="TEAM",
+        plan="PRO",
+    )
+    db.add(pending)
+    db.commit()
+    db.refresh(pending)
+
+    with pytest.raises(HTTPException) as blocked:
+        login(AuthLoginRequest(email=pending.email, password="password"), login_request(), Response(), db)
+    assert blocked.value.status_code == 403
+    assert "Aprobación administrativa" in str(blocked.value.detail)
+
+    rows = pending_onboarding_users(db, root)
+    row = next(item for item in rows if item["id"] == pending.id)
+    assert row["onboarding_source"] == "TEAM"
+    assert row["access_block_reason"] == "Aprobación administrativa pendiente"
+
+    with pytest.raises(HTTPException) as role_change:
+        admin_platform_change_role(pending.id, PlatformRoleRequest(role="BROKER"), db, root)
+    assert role_change.value.status_code == 409
+    with pytest.raises(HTTPException) as alternate_role_change:
+        update_user(pending.id, UserUpdate(role="BROKER"), db, root)
+    assert alternate_role_change.value.status_code == 409
+
+    diagnostic = admin_platform_user_access_diagnostic(pending.id, db, root)
+    assert diagnostic == {
+        "user_id": pending.id,
+        "email": pending.email,
+        "email_verified": True,
+        "status": "PENDING_ADMIN",
+        "role": "GERENTE",
+        "is_active": False,
+        "onboarding_source": "TEAM",
+        "organization_id": organization.id,
+        "supervisor": None,
+        "access_block_reason": "Aprobación administrativa pendiente",
+    }
+
+    original_organization_id = pending.organization_id
+    approved = approve_pending_user(
+        db,
+        pending,
+        root,
+        UserApprovalRequest(role="GERENTE", organization_mode="EXISTING", organization_id=organization.id),
+    )
+    db.commit()
+    assert approved.status == "ACTIVE"
+    assert approved.is_active is True
+    assert approved.role == "GERENTE"
+    assert approved.organization_id == original_organization_id
+    assert approved.plan == "PRO"
+    assert current_plan(db, approved) == "PRO"
+    assert not any(item["id"] == approved.id for item in pending_onboarding_users(db, root))
+
+    authenticated = login(AuthLoginRequest(email=pending.email, password="password"), login_request(), Response(), db)
+    # GERENTE is subject to the existing MFA step; reaching this response proves
+    # administrative approval no longer blocks password authentication.
+    assert authenticated.mfa_required is True
+    assert authenticated.mfa_challenge_token
+
+
+def test_admin_approval_does_not_bypass_unverified_email(onboarding_db):
+    db = onboarding_db
+    organization = create_independent_organization(db, name="Pending Email")
+    root = make_user(db, username="root-email", organization_id=organization.id, role="ROOT")
+    pending = User(
+        username="unverified",
+        email="unverified@example.com",
+        full_name="Unverified",
+        password_hash=hash_password("password"),
+        organization_id=organization.id,
+        role="BROKER",
+        status="PENDING_ADMIN",
+        is_active=False,
+        email_verified=False,
+        onboarding_source="TEAM",
+    )
+    db.add(pending)
+    db.commit()
+
+    with pytest.raises(HTTPException) as approval:
+        approve_pending_user(
+            db,
+            pending,
+            root,
+            UserApprovalRequest(role="BROKER", organization_mode="EXISTING", organization_id=organization.id),
+        )
+    assert approval.value.status_code == 400
+    assert pending.status == "PENDING_ADMIN"
+    assert pending.is_active is False
+
+    with pytest.raises(HTTPException) as blocked:
+        login(AuthLoginRequest(email=pending.email, password="password"), login_request(), Response(), db)
+    assert blocked.value.status_code == 403
+    assert "Correo pendiente" in str(blocked.value.detail)
 
 
 def test_invitation_is_explicit_single_use_and_starts_member_free(onboarding_db):

@@ -370,6 +370,8 @@ def update_user(
             raise HTTPException(status_code=403, detail="Gerente pode editar apenas brokers")
 
     if "role" in updates and updates["role"]:
+        if (user.status or "").strip().upper() != "ACTIVE":
+            raise HTTPException(status_code=409, detail="Usuário precisa estar ACTIVE antes de alterar a função")
         role = updates["role"].upper()
         if role not in {"ROOT", "GERENTE", "BROKER"}:
             raise HTTPException(status_code=400, detail="Role deve ser ROOT, GERENTE ou BROKER")

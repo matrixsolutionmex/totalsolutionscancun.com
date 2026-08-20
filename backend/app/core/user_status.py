@@ -1,0 +1,5 @@
+"""Shared user status groups used by authentication and administration."""
+
+PENDING_ADMIN_STATUSES = frozenset({"PENDING", "PENDING_APPROVAL", "PENDING_ADMIN"})
+PENDING_EMAIL_STATUSES = frozenset({"PENDING_EMAIL"})
+PENDING_USER_STATUSES = PENDING_ADMIN_STATUSES | PENDING_EMAIL_STATUSES

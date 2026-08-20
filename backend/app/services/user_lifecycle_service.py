@@ -6,12 +6,13 @@ from sqlalchemy.orm import Session
 from app.models.notification import WebPushSubscription
 from app.models.user import User
 from app.models.user_lifecycle import UserLifecycleEvent
+from app.core.user_status import PENDING_USER_STATUSES
 from app.core.auth_security import revoke_sessions_for_user
 
 
 def normalize_user_status(status: str | None) -> str:
     value = (status or "").strip().upper()
-    if value in {"PENDING_EMAIL", "PENDING_APPROVAL", "PENDING_ADMIN"}:
+    if value in PENDING_USER_STATUSES:
         return "PENDING"
     return value or "ACTIVE"
 
