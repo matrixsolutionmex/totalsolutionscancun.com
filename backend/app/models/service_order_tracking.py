@@ -19,6 +19,7 @@ class ServiceOrderTracking(Base):
     consent_granted_at = Column(DateTime, nullable=True)
     started_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=True)
+    last_heartbeat_at = Column(DateTime, nullable=True)
     stopped_at = Column(DateTime, nullable=True)
 
     service_order = relationship("ServiceOrder", back_populates="tracking")

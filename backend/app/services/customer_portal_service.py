@@ -20,6 +20,7 @@ from app.services.import_service import clean_text, normalize_email, normalize_p
 from app.services.lead_entry_service import duplicate_lead, ensure_property_id
 from app.services.service_order_service import ensure_service_order
 from app.services.location_service import normalize_service_location
+from app.services.tracking_health_service import tracking_health
 
 
 ALLOWED_MEDIA_TYPES = {
@@ -363,6 +364,7 @@ def service_request_public_tracking(request: ServiceRequest) -> dict[str, Any]:
         destination_lng = getattr(property_record, "location_lng", None)
     technician = getattr(order, "responsible_user", None) if order else None
     technician_name = (technician.full_name or technician.username) if technician else None
+    health = tracking_health(tracking) if tracking_active else tracking_health(None)
     return {
         "tracking_token": request.tracking_token,
         "order_number": order.order_number if order else None,
@@ -374,6 +376,9 @@ def service_request_public_tracking(request: ServiceRequest) -> dict[str, Any]:
         "technician_display_name": technician_name,
         "route_started_at": tracking.started_at if tracking_active else None,
         "last_location_updated_at": tracking.updated_at if tracking_active else None,
+        "last_location_at": health["last_location_at"] if tracking_active else None,
+        "seconds_since_last_update": health["seconds_since_last_update"] if tracking_active else None,
+        "tracking_health": health["tracking_health"],
         "technician_lat": tracking.current_lat if tracking_active else None,
         "technician_lng": tracking.current_lng if tracking_active else None,
         "destination_lat": destination_lat,

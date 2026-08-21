@@ -1166,7 +1166,7 @@ def test_tracking_operations_map_polls_only_for_authorized_operational_view():
     assert "Técnico" in html
     assert "Destino del servicio" in html
     assert "Última actualización" in html
-    assert "Ubicación desactualizada" in html
+    assert "Ubicación interrumpida" in html
     assert "Señal GPS débil" in html
     assert "stopTrackingOperationsMonitoring();" in html
     assert "![\"ROOT\", \"GERENTE\"].includes(currentUser?.role)" in html

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -20,12 +20,15 @@ from app.models.user import User
 from app.schemas.lead_schema import LeadResponse
 from app.services.service_order_tracking_service import (
     get_tracking_for_actor,
+    heartbeat_tracking,
+    record_tracking_diagnostic,
     list_active_tracking_for_actor,
     start_tracking,
     stop_tracking,
     stop_tracking_for_order,
     update_tracking_position,
 )
+from app.services.tracking_health_service import tracking_health
 
 
 @pytest.fixture()
@@ -186,6 +189,64 @@ def test_position_requires_active_tracking_and_updates_single_row(db):
     assert result["tracking"]["current_lng"] == pytest.approx(-86.8515)
     assert db.query(ServiceOrderTracking).count() == 1
     assert db.query(LeadEvent).filter(LeadEvent.event_type == "TRACKING_POSITION_UPDATED").count() == 0
+
+
+def test_tracking_health_distinguishes_live_stale_offline_and_finalized(db):
+    org = make_org(db, "tracking-health")
+    technician = make_user(db, "tecnico-health", "BROKER", org)
+    order = make_order(db, org, technician)
+    start_tracking(db, order.id, technician, True)
+    tracking = db.query(ServiceOrderTracking).filter_by(service_order_id=order.id).one()
+    now = datetime.utcnow()
+
+    tracking.updated_at = now
+    tracking.last_heartbeat_at = now
+    tracking.current_lat = 21.16
+    tracking.current_lng = -86.85
+    assert tracking_health(tracking, now)["tracking_health"] == "LIVE"
+
+    tracking.last_heartbeat_at = now
+    tracking.updated_at = now - timedelta(seconds=40)
+    assert tracking_health(tracking, now)["location_health"] == "STALE"
+    tracking.updated_at = now - timedelta(seconds=121)
+    assert tracking_health(tracking, now)["location_health"] == "OFFLINE"
+
+    stop_tracking(db, order.id, technician, "MANUAL")
+    tracking = db.query(ServiceOrderTracking).filter_by(service_order_id=order.id).one()
+    assert tracking_health(tracking, now)["tracking_health"] == "OFFLINE"
+
+
+def test_heartbeat_refreshes_session_without_faking_gps_freshness(db):
+    org = make_org(db, "tracking-heartbeat")
+    technician = make_user(db, "tecnico-heartbeat", "BROKER", org)
+    order = make_order(db, org, technician)
+    start_tracking(db, order.id, technician, True)
+    update_tracking_position(db, order.id, technician, 21.16, -86.85, 15)
+    tracking = db.query(ServiceOrderTracking).filter_by(service_order_id=order.id).one()
+    original_location_at = tracking.updated_at
+    result = heartbeat_tracking(db, order.id, technician)
+    tracking = db.query(ServiceOrderTracking).filter_by(service_order_id=order.id).one()
+    assert result["tracking"]["last_heartbeat_at"] is not None
+    assert tracking.updated_at == original_location_at
+    assert tracking.current_lat == pytest.approx(21.16)
+
+    with pytest.raises(HTTPException) as blocked:
+        heartbeat_tracking(db, order.id, make_user(db, "other-heartbeat", "BROKER", org))
+    assert blocked.value.status_code == 403
+
+
+def test_tracking_diagnostics_are_scoped_and_do_not_accept_arbitrary_payloads(db):
+    org = make_org(db, "tracking-diagnostics")
+    technician = make_user(db, "tecnico-diagnostics", "BROKER", org)
+    order = make_order(db, org, technician)
+    start_tracking(db, order.id, technician, True)
+
+    result = record_tracking_diagnostic(db, order.id, technician, "GEOLOCATION_TIMEOUT")
+    assert result == {"recorded": True, "event_type": "GEOLOCATION_TIMEOUT"}
+    assert db.query(LeadEvent).filter(LeadEvent.event_type == "GEOLOCATION_TIMEOUT").count() == 1
+    with pytest.raises(HTTPException) as blocked:
+        record_tracking_diagnostic(db, order.id, technician, "CLIENT_TOKEN")
+    assert blocked.value.status_code == 400
 
 
 def test_stop_arrived_records_event_and_stops_tracking(db):

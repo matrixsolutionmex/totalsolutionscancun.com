@@ -5338,12 +5338,15 @@
     const TRACKING_OPERATIONS_POLL_MS = 12000;
     let activeTrackingOrderId = null;
     let activeTrackingWatcherId = null;
+    let activeTrackingHeartbeatTimer = null;
+    let trackingRecoveryTimer = null;
     let activeTrackingGeneration = 0;
     let activeTrackingLastSentAt = 0;
     let activeTrackingLastPosition = null;
     let trackingPublisherStatus = { orderId: null, message: "", kind: "" };
     const TRACKING_MIN_INTERVAL_MS = 15000;
     const TRACKING_MIN_DISTANCE_M = 50;
+    const TRACKING_HEARTBEAT_INTERVAL_MS = 20000;
     let currentLanguage = localStorage.getItem("totalsolutions_language") || "es";
     let currentTheme = "classic";
 
@@ -6094,11 +6097,11 @@
     }
 
     function trackingOperationsStatus(route) {
-      const updatedAt = route?.tracking?.updated_at;
-      const ageMs = updatedAt ? Date.now() - new Date(updatedAt).getTime() : Infinity;
-      if (!Number.isFinite(ageMs) || ageMs > 60000) return "Ubicación desactualizada";
+      const health = route?.tracking?.location_health || route?.tracking?.tracking_health;
+      if (health === "OFFLINE") return "Ubicación interrumpida";
+      if (health === "STALE") return "Actualizando ubicación...";
       if (route?.tracking?.accuracy_m != null && Number(route.tracking.accuracy_m) > 1000) return "Señal GPS débil";
-      return "En camino";
+      return "Ubicación en vivo";
     }
 
     function trackingOperationsPrecision(value) {
@@ -6621,15 +6624,74 @@
       }
     }
 
-    function clearTrackingWatcher() {
-      activeTrackingGeneration += 1;
+    function clearNativeTrackingWatch() {
       if (activeTrackingWatcherId !== null && navigator.geolocation) {
         navigator.geolocation.clearWatch(activeTrackingWatcherId);
       }
       activeTrackingWatcherId = null;
+    }
+
+    function clearTrackingWatcher() {
+      activeTrackingGeneration += 1;
+      if (trackingRecoveryTimer) {
+        window.clearTimeout(trackingRecoveryTimer);
+        trackingRecoveryTimer = null;
+      }
+      if (activeTrackingHeartbeatTimer) {
+        window.clearInterval(activeTrackingHeartbeatTimer);
+        activeTrackingHeartbeatTimer = null;
+      }
+      clearNativeTrackingWatch();
       activeTrackingOrderId = null;
       activeTrackingLastSentAt = 0;
       activeTrackingLastPosition = null;
+    }
+
+    async function sendTrackingHeartbeat(orderId, generation) {
+      if (activeTrackingOrderId !== orderId || activeTrackingGeneration !== generation || navigator.onLine === false) return;
+      try {
+        const response = await apiFetch(`${API_BASE}/service-orders/${orderId}/tracking/heartbeat`, { method: "POST" });
+        if (!response.ok && [401, 403, 409].includes(response.status)) {
+          clearTrackingWatcher();
+          setTrackingPublisherStatus(orderId, "Ruta detenida", "error");
+        }
+      } catch (_error) {
+        setTrackingPublisherStatus(orderId, "Sin conexión. Ubicación pendiente", "error");
+      }
+    }
+
+    function sendTrackingDiagnostic(orderId, eventType) {
+      if (!orderId || navigator.onLine === false) return;
+      apiFetch(`${API_BASE}/service-orders/${orderId}/tracking/diagnostic`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_type: eventType })
+      }).catch(() => {});
+    }
+
+    function startTrackingHeartbeat(orderId, generation) {
+      if (activeTrackingHeartbeatTimer) window.clearInterval(activeTrackingHeartbeatTimer);
+      activeTrackingHeartbeatTimer = window.setInterval(() => {
+        sendTrackingHeartbeat(orderId, generation);
+      }, TRACKING_HEARTBEAT_INTERVAL_MS);
+      sendTrackingHeartbeat(orderId, generation);
+    }
+
+    function suspendTrackingWatcher() {
+      clearNativeTrackingWatch();
+      activeTrackingGeneration += 1;
+      if (activeTrackingHeartbeatTimer) {
+        window.clearInterval(activeTrackingHeartbeatTimer);
+        activeTrackingHeartbeatTimer = null;
+      }
+    }
+
+    function scheduleTrackingPublisherRecovery() {
+      if (trackingRecoveryTimer || document.hidden || !activeTrackingOrderId) return;
+      trackingRecoveryTimer = window.setTimeout(() => {
+        trackingRecoveryTimer = null;
+        ensureTrackingPublisher();
+      }, 2000);
     }
 
     function haversineDistanceMeters(first, second) {
@@ -6705,6 +6767,7 @@
     async function handleTrackingGeolocationError(orderId, generation, error) {
       if (activeTrackingOrderId !== orderId || activeTrackingGeneration !== generation) return;
       if (error?.code === 1) {
+        sendTrackingDiagnostic(orderId, "GEOLOCATION_PERMISSION_DENIED");
         clearTrackingWatcher();
         setTrackingPublisherStatus(orderId, "Permiso de ubicación denegado. Ruta detenida", "error");
         await stopTrackingBackend(orderId);
@@ -6713,6 +6776,10 @@
       setTrackingPublisherStatus(orderId, error?.code === 3
         ? "GPS buscando señal"
         : "Ubicación temporalmente no disponible", "error");
+      suspendTrackingWatcher();
+      sendTrackingDiagnostic(orderId, error?.code === 3 ? "GEOLOCATION_TIMEOUT" : "GEOLOCATION_UNAVAILABLE");
+      sendTrackingDiagnostic(orderId, "WATCH_RESTARTED");
+      scheduleTrackingPublisherRecovery();
     }
 
     function beginTrackingPublisher(orderId) {
@@ -6730,6 +6797,7 @@
           (error) => handleTrackingGeolocationError(orderId, generation, error),
           { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 }
         );
+        startTrackingHeartbeat(orderId, generation);
       } catch (_error) {
         clearTrackingWatcher();
         setTrackingPublisherStatus(orderId, "GPS no disponible. Ruta detenida", "error");
@@ -6808,14 +6876,33 @@
     }
 
     window.addEventListener("offline", () => {
-      if (activeTrackingOrderId) setTrackingPublisherStatus(activeTrackingOrderId, "Sin conexión. Ubicación pendiente", "error");
+      if (activeTrackingOrderId) {
+        sendTrackingDiagnostic(activeTrackingOrderId, "NETWORK_OFFLINE");
+        setTrackingPublisherStatus(activeTrackingOrderId, "Sin conexión. Ubicación pendiente", "error");
+      }
     });
     window.addEventListener("online", () => {
-      if (activeTrackingOrderId) setTrackingPublisherStatus(activeTrackingOrderId, "GPS buscando señal");
+      if (activeTrackingOrderId) {
+        sendTrackingDiagnostic(activeTrackingOrderId, "NETWORK_ONLINE");
+        setTrackingPublisherStatus(activeTrackingOrderId, "GPS buscando señal");
+        ensureTrackingPublisher();
+      }
     });
     window.addEventListener("pagehide", () => {
-      clearTrackingWatcher();
+      if (activeTrackingOrderId) {
+        sendTrackingDiagnostic(activeTrackingOrderId, "PAGE_HIDDEN");
+        suspendTrackingWatcher();
+      }
     });
+    window.addEventListener("pageshow", () => {
+      if (activeTrackingOrderId) sendTrackingDiagnostic(activeTrackingOrderId, "PAGE_VISIBLE");
+      ensureTrackingPublisher();
+    });
+
+    function ensureTrackingPublisher() {
+      if (document.hidden || !activeTrackingOrderId || activeTrackingWatcherId !== null) return;
+      beginTrackingPublisher(activeTrackingOrderId);
+    }
 
     async function openLeadFromRequest(leadId) {
       let lead = findLeadInCache(leadId);
@@ -11138,6 +11225,7 @@
     });
 
     document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) ensureTrackingPublisher();
       if (document.hidden) {
         if (marketplaceRefreshTimer) {
           window.clearTimeout(marketplaceRefreshTimer);
@@ -11879,9 +11967,10 @@
           const hasDestination = Number.isFinite(destinationLat) && Number.isFinite(destinationLng);
           const hasTechnician = active && Number.isFinite(technicianLat) && Number.isFinite(technicianLng);
           const ageMs = data.last_location_updated_at ? Date.now() - new Date(data.last_location_updated_at).getTime() : Infinity;
+          const locationHealth = data.tracking_health || (ageMs > 120000 ? "OFFLINE" : ageMs > 30000 ? "STALE" : "LIVE");
           const locationMessage = !active
             ? (data.operational_status || "Tu solicitud está siendo preparada")
-            : (!hasTechnician ? "Esperando ubicación del técnico" : (ageMs > 60000 ? "Ubicación temporalmente no disponible" : "Tu técnico está en camino"));
+            : (!hasTechnician ? "Esperando ubicación del técnico" : (locationHealth === "OFFLINE" ? "Ubicación interrumpida" : locationHealth === "STALE" ? "Actualizando ubicación..." : "Tu técnico está en camino"));
           const needsShell = !document.getElementById("publicTrackingMap");
           if (needsShell) {
             content.innerHTML = `

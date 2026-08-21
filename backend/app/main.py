@@ -323,6 +323,7 @@ def create_database_tables():
         add_column_if_missing(db, "commercial_upgrade_intents", "payment_confirmed_at", "TIMESTAMP")
         add_column_if_missing(db, "commercial_upgrade_intents", "payment_confirmed_by_user_id", "INTEGER")
         add_column_if_missing(db, "commercial_upgrade_intents", "confirmation_source", "VARCHAR(40)")
+        add_column_if_missing(db, "service_order_tracking", "last_heartbeat_at", "TIMESTAMP")
 
         normalized_upgrade_intents = normalize_existing_upgrade_intents(db)
         if normalized_upgrade_intents:

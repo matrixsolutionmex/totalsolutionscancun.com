@@ -11,10 +11,22 @@ from app.models.service_order import ServiceOrder, TRACKING_STARTABLE_ORDER_STAT
 from app.models.service_order_tracking import ServiceOrderTracking
 from app.models.user import User
 from app.services.customer_portal_service import public_tracking_url
+from app.services.tracking_health_service import tracking_health
 
 
 STARTABLE_ORDER_STATUSES = TRACKING_STARTABLE_ORDER_STATUSES
 TERMINAL_ORDER_STATUSES = {"COMPLETED", "CONCLUIDA", "FINALIZADA", "CANCELLED", "CANCELADA", "PERDIDO"}
+TRACKING_DIAGNOSTIC_EVENTS = {
+    "GEOLOCATION_PERMISSION_DENIED",
+    "GEOLOCATION_UNAVAILABLE",
+    "GEOLOCATION_TIMEOUT",
+    "PAGE_HIDDEN",
+    "PAGE_VISIBLE",
+    "NETWORK_OFFLINE",
+    "NETWORK_ONLINE",
+    "WATCH_RESTARTED",
+    "PUBLISH_FAILED",
+}
 
 
 def _actor_name(actor: User | None) -> str:
@@ -85,6 +97,7 @@ def _add_tracking_event(db: Session, order: ServiceOrder, actor: User | None, ev
 def serialize_tracking(tracking: ServiceOrderTracking | None) -> dict | None:
     if not tracking:
         return None
+    health = tracking_health(tracking)
     return {
         "id": tracking.id,
         "service_order_id": tracking.service_order_id,
@@ -96,6 +109,13 @@ def serialize_tracking(tracking: ServiceOrderTracking | None) -> dict | None:
         "consent_granted_at": tracking.consent_granted_at,
         "started_at": tracking.started_at,
         "updated_at": tracking.updated_at,
+        "last_location_at": health["last_location_at"],
+        "seconds_since_last_update": health["seconds_since_last_update"],
+        "tracking_health": health["tracking_health"],
+        "location_health": health["location_health"],
+        "heartbeat_health": health["heartbeat_health"],
+        "last_heartbeat_at": health["last_heartbeat_at"],
+        "seconds_since_last_heartbeat": health["seconds_since_last_heartbeat"],
         "stopped_at": tracking.stopped_at,
     }
 
@@ -181,6 +201,7 @@ def start_tracking(db: Session, order_id: int, actor: User, consent_granted: boo
     tracking.consent_granted_at = now
     tracking.started_at = now
     tracking.updated_at = now
+    tracking.last_heartbeat_at = now
     tracking.stopped_at = None
     order.status = "EN_CAMINO"
     order.updated_at = now
@@ -188,6 +209,32 @@ def start_tracking(db: Session, order_id: int, actor: User, consent_granted: boo
     db.commit()
     db.refresh(tracking)
     return {"service_order_id": order.id, "order_number": order.order_number, "status": order.status, "tracking": serialize_tracking(tracking)}
+
+
+def heartbeat_tracking(db: Session, order_id: int, actor: User) -> dict:
+    order = _order_for_actor(db, order_id, actor)
+    _require_assigned_technician(order, actor)
+    tracking = db.query(ServiceOrderTracking).filter(ServiceOrderTracking.service_order_id == order.id).first()
+    if not tracking or not tracking.tracking_active:
+        raise HTTPException(status_code=409, detail="Tracking nao esta ativo")
+    tracking.last_heartbeat_at = datetime.utcnow()
+    db.commit()
+    db.refresh(tracking)
+    return {"service_order_id": order.id, "order_number": order.order_number, "status": order.status, "tracking": serialize_tracking(tracking)}
+
+
+def record_tracking_diagnostic(db: Session, order_id: int, actor: User, event_type: str) -> dict:
+    order = _order_for_actor(db, order_id, actor)
+    _require_assigned_technician(order, actor)
+    normalized_event = (event_type or "").strip().upper()
+    if normalized_event not in TRACKING_DIAGNOSTIC_EVENTS:
+        raise HTTPException(status_code=400, detail="Evento de diagnóstico invalido")
+    tracking = db.query(ServiceOrderTracking).filter(ServiceOrderTracking.service_order_id == order.id).first()
+    if not tracking or not tracking.tracking_active:
+        raise HTTPException(status_code=409, detail="Tracking nao esta ativo")
+    _add_tracking_event(db, order, actor, normalized_event, f"Diagnostico de tracking: {normalized_event}")
+    db.commit()
+    return {"recorded": True, "event_type": normalized_event}
 
 
 def update_tracking_position(db: Session, order_id: int, actor: User, latitude, longitude, accuracy=None) -> dict:

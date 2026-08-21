@@ -17,6 +17,8 @@ from app.services.service_order_tracking_service import (
     stop_tracking,
     stop_tracking_for_order,
     update_tracking_position,
+    heartbeat_tracking,
+    record_tracking_diagnostic,
 )
 
 
@@ -44,6 +46,10 @@ class TrackingPositionPayload(BaseModel):
 
 class TrackingStopPayload(BaseModel):
     reason: str = "MANUAL"
+
+
+class TrackingDiagnosticPayload(BaseModel):
+    event_type: str
 
 
 def _actor_label(actor: User) -> str:
@@ -226,6 +232,15 @@ def update_service_order_tracking_position(
     return update_tracking_position(db, order_id, actor, payload.latitude, payload.longitude, payload.accuracy_m)
 
 
+@router.post("/service-orders/{order_id}/tracking/heartbeat")
+def heartbeat_service_order_tracking(
+    order_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_actor),
+):
+    return heartbeat_tracking(db, order_id, actor)
+
+
 @router.post("/service-orders/{order_id}/tracking/stop")
 def stop_service_order_tracking(
     order_id: int,
@@ -234,3 +249,13 @@ def stop_service_order_tracking(
     actor: User = Depends(get_actor),
 ):
     return stop_tracking(db, order_id, actor, payload.reason)
+
+
+@router.post("/service-orders/{order_id}/tracking/diagnostic")
+def record_service_order_tracking_diagnostic(
+    order_id: int,
+    payload: TrackingDiagnosticPayload,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_actor),
+):
+    return record_tracking_diagnostic(db, order_id, actor, payload.event_type)
