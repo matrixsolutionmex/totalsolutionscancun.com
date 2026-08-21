@@ -74,6 +74,19 @@ def _value_range(opportunity: ServiceOpportunity) -> str | None:
     return f"{low} – {high}"
 
 
+def _customer_budget_range(opportunity: ServiceOpportunity) -> str | None:
+    low, high = opportunity.customer_budget_min, opportunity.customer_budget_max
+    if low is None and high is None:
+        return None
+    if low is None:
+        return f"Hasta {high}"
+    if high is None:
+        return f"Desde {low}"
+    if low == high:
+        return str(low)
+    return f"{low} – {high}"
+
+
 def public_opportunity(opportunity: ServiceOpportunity, *, distance_km: float | None = None) -> dict:
     """Return only pre-claim operational information. No lead/contact/address data."""
     return {
@@ -86,6 +99,7 @@ def public_opportunity(opportunity: ServiceOpportunity, *, distance_km: float | 
         "distance_km": distance_km,
         "urgency": opportunity.urgency,
         "estimated_value_range": _value_range(opportunity),
+        "customer_budget_range": _customer_budget_range(opportunity),
         "pricing_zone": opportunity.pricing_zone,
         "visit_calculated_price": opportunity.visit_calculated_price,
         "market_reference_min": opportunity.market_reference_min,

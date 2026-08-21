@@ -7,12 +7,15 @@ from sqlalchemy.pool import StaticPool
 from app.database.connection import Base
 from app.models.organization import Organization
 from app.models.pricing_rate import PricingRate
+from app.models.service_opportunity import ServiceOpportunity
+from app.models.service_order_tracking import ServiceOrderTracking  # noqa: F401 - registers ServiceOrder relationship
+from app.services.marketplace_service import public_opportunity
 from app.services.pricing_engine_service import calculate_preliminary_pricing, seed_default_pricing_rates
 
 
 def pricing_db():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(bind=engine, tables=[Organization.__table__, PricingRate.__table__])
+    Base.metadata.create_all(bind=engine, tables=[Organization.__table__, PricingRate.__table__, ServiceOpportunity.__table__])
     return sessionmaker(bind=engine)()
 
 
@@ -81,5 +84,41 @@ def test_organization_override_does_not_leak_between_organizations():
         other = calculate_preliminary_pricing(db, "electricidad", "residencial", {"locality": "Cancun"}, organization_id=second.id)
         assert own["visit_calculated_price"] == 999.0
         assert other["visit_calculated_price"] == 450.0
+    finally:
+        db.close()
+
+
+def test_marketplace_preserves_customer_budget_snapshot_and_keeps_reference_separate():
+    db = pricing_db()
+    try:
+        opportunity = ServiceOpportunity(
+            public_id="MKT-BUDGET-001", organization_id=1, service_type="PLUMBING", segment="RESIDENTIAL",
+            customer_budget_min=1200, customer_budget_max=3000, pricing_currency="MXN",
+            market_reference_min=None, market_reference_max=None, visit_calculated_price=450,
+            pricing_zone="Z0", description_public="Fuga detectada.",
+        )
+        db.add(opportunity)
+        db.commit()
+        serialized = public_opportunity(opportunity)
+        assert serialized["customer_budget_min"] == 1200
+        assert serialized["customer_budget_max"] == 3000
+        assert serialized["customer_budget_range"] == "1200.00 – 3000.00"
+        assert serialized["market_reference_min"] is None
+        assert serialized["estimate_available"] is False
+        assert serialized["pricing_currency"] == "MXN"
+    finally:
+        db.close()
+
+
+def test_customer_budget_shapes_are_serialized_without_mixing_reference():
+    db = pricing_db()
+    try:
+        shapes = [(1200, None, "Desde 1200"), (None, 3000, "Hasta 3000"), (1500, 1500, "1500"), (None, None, None)]
+        for index, (low, high, expected) in enumerate(shapes):
+            item = ServiceOpportunity(public_id=f"MKT-BUDGET-{index + 2:03d}", organization_id=1, service_type="POOL",
+                                       customer_budget_min=low, customer_budget_max=high, pricing_currency="MXN")
+            db.add(item)
+            db.flush()
+            assert public_opportunity(item)["customer_budget_range"] == expected
     finally:
         db.close()

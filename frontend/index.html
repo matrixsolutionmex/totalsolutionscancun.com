@@ -6130,6 +6130,33 @@
       return value === null || value === undefined || value === "" ? "Não informado" : escapeHtml(String(value));
     }
 
+    function marketplaceMoney(value, currency = "MXN") {
+      if (value === null || value === undefined || value === "") return "No informado";
+      return `${currency === "MXN" ? "MX$" : `${currency} `}${Number(value).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+    }
+
+    function marketplaceBudget(item) {
+      const low = item?.customer_budget_min;
+      const high = item?.customer_budget_max;
+      const currency = item?.pricing_currency || "MXN";
+      if (low == null && high == null) return "No informado";
+      if (low == null) return `Hasta ${marketplaceMoney(high, currency)}`;
+      if (high == null) return `Desde ${marketplaceMoney(low, currency)}`;
+      if (Number(low) === Number(high)) return marketplaceMoney(low, currency);
+      return `${marketplaceMoney(low, currency)} — ${marketplaceMoney(high, currency)}`;
+    }
+
+    function marketplaceReference(item) {
+      const low = item?.market_reference_min;
+      const high = item?.market_reference_max;
+      const currency = item?.pricing_currency || "MXN";
+      if (low == null && high == null) return "Aguardando diagnóstico";
+      if (low == null) return `Hasta ${marketplaceMoney(high, currency)}`;
+      if (high == null) return `Desde ${marketplaceMoney(low, currency)}`;
+      if (Number(low) === Number(high)) return marketplaceMoney(low, currency);
+      return `${marketplaceMoney(low, currency)} — ${marketplaceMoney(high, currency)}`;
+    }
+
     function trackingOperationsDate(value) {
       if (!value) return "-";
       const date = new Date(value);
@@ -6389,7 +6416,9 @@
             <div class="line">📍 ${marketplaceValue(item.city)}${item.distance_km == null ? "" : ` · ${item.distance_km} km de você`}</div>
             <p>Urgência: <strong>${marketplaceValue(item.urgency)}</strong></p>
             <p>${marketplaceValue(item.scheduled_for || "Horário a combinar")}</p>
-            <p>Estimativa: <strong>${marketplaceValue(item.estimated_value_range)}</strong></p>
+            <p>Presupuesto del cliente: <strong>${marketplaceValue(marketplaceBudget(item))}</strong></p>
+            <p>Referencia Total Solutions: <strong>${marketplaceValue(marketplaceReference(item))}</strong></p>
+            <p>Visita técnica: <strong>${marketplaceMoney(item.visit_calculated_price, item.pricing_currency || "MXN")}</strong> · Zona: <strong>${marketplaceValue(item.pricing_zone)}</strong></p>
             <p>${marketplaceValue(item.description)}</p>
             <div class="pablo-action-card-actions">
               <button type="button" data-marketplace-details="${marketplaceValue(item.public_id)}">Ver detalhes</button>
@@ -11355,7 +11384,7 @@
           const data = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(data.detail || "Oportunidade não disponível.");
           const item = data.opportunity || {};
-          addPabloV2Message(`${item.service_type || "Serviço"} em ${item.city || "região não informada"}. Urgência: ${item.urgency || "NORMAL"}.`, "ai");
+          addPabloV2Message(`${item.service_type || "Servicio"} en ${item.city || "región no informada"}. Presupuesto del cliente: ${marketplaceBudget(item)}. Referencia Total Solutions: ${marketplaceReference(item)}. Visita técnica: ${marketplaceMoney(item.visit_calculated_price, item.pricing_currency || "MXN")}. Zona: ${item.pricing_zone || "No informada"}. Urgencia: ${item.urgency || "NORMAL"}.`, "ai");
         }
       } catch (error) {
         addPabloV2Message(error.message || "Não foi possível concluir a operação.", "ai");
