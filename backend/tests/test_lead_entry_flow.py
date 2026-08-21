@@ -1187,6 +1187,10 @@ def test_public_tracking_portal_uses_safe_statuses_and_live_leaflet_polling():
     assert "Esperando ubicación del técnico" in html
     assert "Última actualización hace" in html
     assert "setLatLng" in html
+    assert "route_geometry" in html
+    assert "L.polyline" in html
+    assert "formatRouteDistance" in html
+    assert "formatRouteDuration" in html
     assert "setTimeout(pollTracking, 12000)" in html
     assert "SALES_QUEUE" not in html.split("async function renderTracking", 1)[1].split("function bindForm", 1)[0]
 

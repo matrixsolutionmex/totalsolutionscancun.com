@@ -11,6 +11,7 @@ from app.models.service_order import ServiceOrder, TRACKING_STARTABLE_ORDER_STAT
 from app.models.service_order_tracking import ServiceOrderTracking
 from app.models.user import User
 from app.services.customer_portal_service import public_tracking_url
+from app.services.route_intelligence_service import calculate_route
 from app.services.tracking_health_service import tracking_health
 
 
@@ -96,6 +97,22 @@ def _add_tracking_event(db: Session, order: ServiceOrder, actor: User | None, ev
     ))
 
 
+def route_for_order(order: ServiceOrder, tracking: ServiceOrderTracking | None) -> dict:
+    if not tracking or not tracking.tracking_active or tracking.current_lat is None or tracking.current_lng is None:
+        return {"available": False, "distance_m": None, "duration_s": None, "eta_at": None, "geometry": None}
+    if tracking_health(tracking)["tracking_health"] == "OFFLINE":
+        return {"available": False, "distance_m": None, "duration_s": None, "eta_at": None, "geometry": None}
+    if order.location_lat is None or order.location_lng is None:
+        return {"available": False, "distance_m": None, "duration_s": None, "eta_at": None, "geometry": None}
+    return calculate_route(
+        tracking.current_lat,
+        tracking.current_lng,
+        order.location_lat,
+        order.location_lng,
+        cache_key=f"service-order:{order.id}",
+    )
+
+
 def serialize_tracking(tracking: ServiceOrderTracking | None) -> dict | None:
     if not tracking:
         return None
@@ -127,7 +144,13 @@ def get_tracking_for_actor(db: Session, order_id: int, actor: User) -> dict:
     if not _is_visible_to_actor(db, order, actor):
         raise HTTPException(status_code=403, detail="Tracking fora da sua estrutura")
     tracking = db.query(ServiceOrderTracking).filter(ServiceOrderTracking.service_order_id == order.id).first()
-    return {"service_order_id": order.id, "order_number": order.order_number, "status": order.status, "tracking": serialize_tracking(tracking)}
+    return {
+        "service_order_id": order.id,
+        "order_number": order.order_number,
+        "status": order.status,
+        "tracking": serialize_tracking(tracking),
+        "route": route_for_order(order, tracking),
+    }
 
 
 def list_active_tracking_for_actor(db: Session, actor: User) -> list[dict]:
@@ -165,6 +188,7 @@ def list_active_tracking_for_actor(db: Session, actor: User) -> list[dict]:
                 "name": _actor_name(technician),
             },
             "tracking": serialize_tracking(tracking),
+            "route": route_for_order(order, tracking),
             "service_location": {
                 "latitude": order.location_lat,
                 "longitude": order.location_lng,
@@ -210,7 +234,13 @@ def start_tracking(db: Session, order_id: int, actor: User, consent_granted: boo
     _add_tracking_event(db, order, actor, "TRACKING_STARTED", f"Rota iniciada para OS {order.order_number or order.id}")
     db.commit()
     db.refresh(tracking)
-    return {"service_order_id": order.id, "order_number": order.order_number, "status": order.status, "tracking": serialize_tracking(tracking)}
+    return {
+        "service_order_id": order.id,
+        "order_number": order.order_number,
+        "status": order.status,
+        "tracking": serialize_tracking(tracking),
+        "route": route_for_order(order, tracking),
+    }
 
 
 def heartbeat_tracking(db: Session, order_id: int, actor: User) -> dict:
@@ -222,7 +252,13 @@ def heartbeat_tracking(db: Session, order_id: int, actor: User) -> dict:
     tracking.last_heartbeat_at = datetime.utcnow()
     db.commit()
     db.refresh(tracking)
-    return {"service_order_id": order.id, "order_number": order.order_number, "status": order.status, "tracking": serialize_tracking(tracking)}
+    return {
+        "service_order_id": order.id,
+        "order_number": order.order_number,
+        "status": order.status,
+        "tracking": serialize_tracking(tracking),
+        "route": route_for_order(order, tracking),
+    }
 
 
 def record_tracking_diagnostic(

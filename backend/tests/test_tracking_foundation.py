@@ -23,6 +23,7 @@ from app.services.service_order_tracking_service import (
     heartbeat_tracking,
     record_tracking_diagnostic,
     list_active_tracking_for_actor,
+    route_for_order,
     start_tracking,
     stop_tracking,
     stop_tracking_for_order,
@@ -214,6 +215,20 @@ def test_tracking_health_distinguishes_live_stale_offline_and_finalized(db):
     stop_tracking(db, order.id, technician, "MANUAL")
     tracking = db.query(ServiceOrderTracking).filter_by(service_order_id=order.id).one()
     assert tracking_health(tracking, now)["tracking_health"] == "OFFLINE"
+
+
+def test_offline_tracking_does_not_present_route_eta_as_current(db, monkeypatch):
+    org = make_org(db, "tracking-route-health")
+    technician = make_user(db, "tecnico-route-health", "BROKER", org)
+    order = make_order(db, org, technician)
+    order.location_lat = 21.2
+    order.location_lng = -86.8
+    start_tracking(db, order.id, technician, True)
+    update_tracking_position(db, order.id, technician, 21.16, -86.85, 10)
+    tracking = db.query(ServiceOrderTracking).filter_by(service_order_id=order.id).one()
+    tracking.updated_at = datetime.utcnow() - timedelta(seconds=121)
+    monkeypatch.setenv("ROUTING_PROVIDER_URL", "https://routing.test")
+    assert route_for_order(order, tracking)["available"] is False
 
 
 def test_heartbeat_refreshes_session_without_faking_gps_freshness(db):

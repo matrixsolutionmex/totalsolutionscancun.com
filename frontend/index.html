@@ -6117,6 +6117,26 @@
       return Number.isFinite(numeric) ? `~${Math.max(0, Math.round(numeric))} m` : "-";
     }
 
+    function formatRouteDistance(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric) || numeric < 0) return "-";
+      return numeric < 1000 ? `${Math.round(numeric)} m` : `${(numeric / 1000).toFixed(1)} km`;
+    }
+
+    function formatRouteDuration(value) {
+      const totalMinutes = Math.max(0, Math.round(Number(value) / 60));
+      if (!Number.isFinite(totalMinutes) || !totalMinutes) return "-";
+      const hours = Math.floor(totalMinutes / 60);
+      const minutes = totalMinutes % 60;
+      return hours ? `${hours} h${minutes ? ` ${minutes} min` : ""}` : `${minutes} min`;
+    }
+
+    function formatRouteEta(value) {
+      if (!value) return "-";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? "-" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    }
+
     function renderTrackingOperationsRoutes(routes) {
       const list = document.getElementById("trackingOperationsRoutes");
       if (!list) return;
@@ -6132,6 +6152,7 @@
           <span>Cliente: ${escapeHtml(route.client_name || "-")}</span>
           <span>${trackingOperationsStatus(route)} · Inicio: ${escapeHtml(trackingOperationsDate(tracking.started_at))}</span>
           <span>Última actualización: ${escapeHtml(trackingOperationsDate(tracking.updated_at))} · Precisión: <span title="${tracking.accuracy_m == null ? "" : `${escapeHtml(tracking.accuracy_m)} m`}">${escapeHtml(trackingOperationsPrecision(tracking.accuracy_m))}</span></span>
+          ${route.route?.available ? `<span>${escapeHtml(formatRouteDistance(route.route.distance_m))} restantes · ETA ${escapeHtml(formatRouteEta(route.route.eta_at))}</span>` : `<span>Ruta temporalmente no disponible</span>`}
           ${trackingUrl ? `<div class="tracking-route-actions"><a class="small-btn" href="${escapeHtml(trackingUrl)}" target="_blank" rel="noopener noreferrer">Ver seguimiento</a><button class="small-btn ghost" type="button" data-tracking-copy="${escapeHtml(trackingUrl)}">Copiar enlace</button></div>` : ""}
         </article>`;
       }).join("");
@@ -6185,7 +6206,10 @@
           const popupLink = route.tracking_public_url
             ? `<br><a href="${escapeHtml(route.tracking_public_url)}" target="_blank" rel="noopener noreferrer">Ver seguimiento</a>`
             : "";
-          markers.technician.bindPopup(`<strong>${escapeHtml(route.order_number || `OS ${route.service_order_id}`)}</strong><br>${escapeHtml(route.technician?.name || "Técnico")}<br>${escapeHtml(trackingOperationsStatus(route))}<br>Precisión: ${escapeHtml(trackingOperationsPrecision(tracking.accuracy_m))}${popupLink}`);
+          const routeSummary = route.route?.available
+            ? `<br>Distancia: ${escapeHtml(formatRouteDistance(route.route.distance_m))}<br>ETA: ${escapeHtml(formatRouteEta(route.route.eta_at))}`
+            : "<br>Ruta temporalmente no disponible";
+          markers.technician.bindPopup(`<strong>${escapeHtml(route.order_number || `OS ${route.service_order_id}`)}</strong><br>${escapeHtml(route.technician?.name || "Técnico")}<br>${escapeHtml(trackingOperationsStatus(route))}<br>Precisión: ${escapeHtml(trackingOperationsPrecision(tracking.accuracy_m))}${routeSummary}${popupLink}`);
           bounds.push([technicianLat, technicianLng]);
         } else {
           markers.technician.remove();
@@ -12010,6 +12034,7 @@
         let trackingMap = null;
         let technicianMarker = null;
         let destinationMarker = null;
+        let routePolyline = null;
         let lastTrackingData = null;
 
         const formatTrackingDate = (value) => {
@@ -12041,6 +12066,9 @@
           const locationMessage = !active
             ? (data.operational_status || "Tu solicitud está siendo preparada")
             : (!hasTechnician ? "Esperando ubicación del técnico" : (locationHealth === "OFFLINE" ? "Ubicación interrumpida" : locationHealth === "STALE" ? "Actualizando ubicación..." : "Tu técnico está en camino"));
+          const routeMessage = data.route_available
+            ? `${locationHealth === "STALE" ? "ETA aproximado" : "Llegada estimada"}: ${formatRouteDuration(data.route_duration_s)} · Distancia restante: ${formatRouteDistance(data.route_distance_m)} · Hora: ${formatRouteEta(data.route_eta_at)}`
+            : (active && locationHealth === "OFFLINE" ? "ETA temporalmente no disponible" : "Ruta temporalmente no disponible");
           const needsShell = !document.getElementById("publicTrackingMap");
           if (needsShell) {
             content.innerHTML = `
@@ -12052,20 +12080,28 @@
                 ${data.technician_display_name ? `<p>Técnico: <strong>${escapeHtml(data.technician_display_name)}</strong></p>` : ""}
                 ${data.route_started_at ? `<p>Salida: <strong>${escapeHtml(formatTrackingDate(data.route_started_at))}</strong></p>` : ""}
               </div>
-              <div class="public-tracking-status" id="publicTrackingLiveStatus"><strong>${escapeHtml(locationMessage)}</strong><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at))}</span>${data.accuracy_m == null ? "" : `<span>Precisión: ${escapeHtml(data.accuracy_m)} m</span>`}</div>
+              <div class="public-tracking-status" id="publicTrackingLiveStatus"><strong>${escapeHtml(locationMessage)}</strong><span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at))}</span>${data.accuracy_m == null ? "" : `<span>Precisión: ${escapeHtml(data.accuracy_m)} m</span>`}</div>
               ${(active || hasDestination) ? '<div id="publicTrackingMap" class="public-tracking-map" aria-label="Mapa de seguimiento del servicio"></div>' : ""}
               <p id="publicTrackingMapHint" class="portal-message">${active ? "El marcador azul representa al técnico y el verde el destino." : "Tu solicitud está siendo preparada."}</p>
             `;
           }
           const liveStatus = document.getElementById("publicTrackingLiveStatus");
           if (liveStatus) {
-            liveStatus.innerHTML = `<strong>${escapeHtml(locationMessage)}</strong><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at))}</span>${data.accuracy_m == null ? "" : `<span>Precisión: ${escapeHtml(data.accuracy_m)} m</span>`}`;
+            liveStatus.innerHTML = `<strong>${escapeHtml(locationMessage)}</strong><span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at))}</span>${data.accuracy_m == null ? "" : `<span>Precisión: ${escapeHtml(data.accuracy_m)} m</span>`}`;
           }
           const mapElement = document.getElementById("publicTrackingMap");
           if (!mapElement || !window.L || window.leafletLoadFailed) return;
           if (!trackingMap) {
             trackingMap = L.map(mapElement).setView(hasDestination ? [destinationLat, destinationLng] : [21.1619, -86.8515], hasDestination ? 15 : 12);
             L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(trackingMap);
+          }
+          const routeGeometry = Array.isArray(data.route_geometry) ? data.route_geometry.filter((point) => Array.isArray(point) && point.length === 2 && point.every((value) => Number.isFinite(Number(value)))) : [];
+          if (routeGeometry.length >= 2 && data.route_available) {
+            if (!routePolyline) routePolyline = L.polyline(routeGeometry, { color: "#2563eb", weight: 5, opacity: 0.72 }).addTo(trackingMap);
+            else routePolyline.setLatLngs(routeGeometry);
+          } else if (routePolyline) {
+            routePolyline.remove();
+            routePolyline = null;
           }
           const bounds = [];
           if (hasDestination) {

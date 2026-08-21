@@ -20,6 +20,7 @@ from app.services.import_service import clean_text, normalize_email, normalize_p
 from app.services.lead_entry_service import duplicate_lead, ensure_property_id
 from app.services.service_order_service import ensure_service_order
 from app.services.location_service import normalize_service_location
+from app.services.route_intelligence_service import calculate_route
 from app.services.tracking_health_service import tracking_health
 
 
@@ -365,6 +366,15 @@ def service_request_public_tracking(request: ServiceRequest) -> dict[str, Any]:
     technician = getattr(order, "responsible_user", None) if order else None
     technician_name = (technician.full_name or technician.username) if technician else None
     health = tracking_health(tracking) if tracking_active else tracking_health(None)
+    route = {"available": False, "distance_m": None, "duration_s": None, "eta_at": None, "geometry": None}
+    if tracking_active and tracking.current_lat is not None and tracking.current_lng is not None and destination_lat is not None and destination_lng is not None:
+        route = calculate_route(
+            tracking.current_lat,
+            tracking.current_lng,
+            destination_lat,
+            destination_lng,
+            cache_key=f"service-order:{order.id}",
+        )
     return {
         "tracking_token": request.tracking_token,
         "order_number": order.order_number if order else None,
@@ -384,6 +394,11 @@ def service_request_public_tracking(request: ServiceRequest) -> dict[str, Any]:
         "destination_lat": destination_lat,
         "destination_lng": destination_lng,
         "accuracy_m": tracking.accuracy_m if tracking_active else None,
+        "route_available": bool(route.get("available")) if tracking_active and health["tracking_health"] != "OFFLINE" else False,
+        "route_distance_m": route.get("distance_m") if tracking_active else None,
+        "route_duration_s": route.get("duration_s") if tracking_active else None,
+        "route_eta_at": route.get("eta_at") if tracking_active and health["tracking_health"] != "OFFLINE" else None,
+        "route_geometry": route.get("geometry") if tracking_active else None,
     }
 
 
