@@ -24,6 +24,7 @@ from app.schemas.user_schema import AssignLeadsRequest, LoginRequest, ReturnLead
 from app.services.notification_service import dispatch_web_push_for_notification_ids, notify_assignment_change
 from app.services.user_lifecycle_service import transition_user_status
 from app.services.entitlement_service import ensure_user_commercial_profile
+from app.services.localization_service import normalize_language
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -407,7 +408,7 @@ def update_user(
         updates["cidade_operacao"] = updates["cidade_operacao"].strip()
 
     if "idioma" in updates and updates["idioma"]:
-        updates["idioma"] = updates["idioma"].lower()
+        updates["idioma"] = normalize_language(updates["idioma"])
 
     if "password" in updates:
         password = updates.pop("password")
@@ -471,7 +472,7 @@ def update_own_profile(
         updates["cidade_operacao"] = updates["cidade_operacao"].strip()
 
     if "idioma" in updates and updates["idioma"]:
-        updates["idioma"] = updates["idioma"].lower()
+        updates["idioma"] = normalize_language(updates["idioma"])
 
     if "password" in updates:
         password = updates.pop("password")

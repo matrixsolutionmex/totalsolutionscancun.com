@@ -1141,7 +1141,7 @@ def test_tracking_controls_are_explicit_and_not_automatic():
     assert "await stopTrackingPublisher({ notifyBackend: true, reason: \"MANUAL\" })" in html
     assert "order.tracking_active === true" in html
     assert "const canStartTracking = canControlTracking && order.tracking_start_allowed === true" in html
-    assert "const navigationLabel = trackingActive ? \"Abrir navegación\"" in html
+    assert 'const navigationLabel = trackingActive ? t("uiOpenNavigation")' in html
 
 
 def test_tracking_watcher_is_started_only_by_explicit_start_flow():
