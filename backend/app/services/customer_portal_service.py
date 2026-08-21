@@ -23,6 +23,7 @@ from app.services.location_service import normalize_service_location
 from app.services.route_intelligence_service import calculate_route
 from app.services.tracking_health_service import tracking_health
 from app.services.pricing_engine_service import calculate_preliminary_pricing, pricing_snapshot
+from app.services.localization_service import normalize_language
 
 
 ALLOWED_MEDIA_TYPES = {
@@ -289,7 +290,7 @@ def create_customer_request_and_order(
         requester_name=clean_text(payload.get("requester_name")),
         requester_phone=requester_phone,
         requester_email=requester_email,
-        public_language=clean_text(payload.get("public_language")) or "es-MX",
+        public_language=normalize_language(payload.get("public_language")),
         consent_privacy=bool(payload.get("consent_privacy")),
         consent_images=bool(payload.get("consent_images")),
         **location,
@@ -341,6 +342,7 @@ def service_request_public_status(request: ServiceRequest) -> dict[str, Any]:
     operational_status = _public_operational_status(request, order)
     return {
         "tracking_token": request.tracking_token,
+        "language": normalize_language(request.public_language),
         "status": operational_status,
         "operational_status": operational_status,
         "service_category": request.service_category,
@@ -380,9 +382,15 @@ PUBLIC_OPERATIONAL_STATUS_LABELS = {
 
 def _public_operational_status(request: ServiceRequest, order) -> str:
     internal_status = (getattr(order, "status", None) or request.status or "SALES_QUEUE").strip().upper()
+    language = normalize_language(request.public_language)
     if internal_status == "EN_CAMINO" and getattr(getattr(order, "tracking", None), "stopped_at", None):
-        return "Ruta finalizada"
-    return PUBLIC_OPERATIONAL_STATUS_LABELS.get(internal_status, "Solicitud en revisión")
+        return {"es": "Ruta finalizada", "en": "Route finished", "pt-BR": "Rota finalizada"}[language]
+    labels = {
+        "es": PUBLIC_OPERATIONAL_STATUS_LABELS,
+        "en": {"SALES_QUEUE": "Request received", "ASSIGNED": "Technician assigned", "ACCEPTED": "Technician assigned", "EN_CAMINO": "Technician on the way", "ARRIVED": "Technician arrived", "EM_ATENDIMENTO": "Service in progress", "CONCLUIDA": "Service completed", "CANCELADA": "Cancelled"},
+        "pt-BR": {"SALES_QUEUE": "Solicitação recebida", "ASSIGNED": "Técnico atribuído", "ACCEPTED": "Técnico atribuído", "EN_CAMINO": "Técnico a caminho", "ARRIVED": "Técnico chegou", "EM_ATENDIMENTO": "Serviço em execução", "CONCLUIDA": "Serviço concluído", "CANCELADA": "Cancelada"},
+    }
+    return labels[language].get(internal_status, labels[language]["SALES_QUEUE"])
 
 
 def service_request_public_tracking(request: ServiceRequest) -> dict[str, Any]:
@@ -416,6 +424,7 @@ def service_request_public_tracking(request: ServiceRequest) -> dict[str, Any]:
         )
     return {
         "tracking_token": request.tracking_token,
+        "language": normalize_language(request.public_language),
         "order_number": order.order_number if order else None,
         "service_category": request.service_category,
         "urgency": request.urgency,

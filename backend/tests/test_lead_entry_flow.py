@@ -61,6 +61,7 @@ from app.services.service_order_tracking_service import list_active_tracking_for
 from app.services.import_service import import_lead_records
 from app.services.notification_service import notification_push_payload, notify_client_created
 from app.services.reverse_geocode_service import _normalize_result, reverse_geocode
+from app.services.localization_service import normalize_language, resolve_language
 
 
 @pytest.fixture()
@@ -1425,6 +1426,27 @@ def test_public_tracking_rejects_invalid_token(db):
     assert blocked.value.status_code == 404
 
 
+def test_localization_resolves_supported_languages_with_spanish_fallback():
+    assert normalize_language("en-US") == "en"
+    assert normalize_language("pt") == "pt-BR"
+    assert normalize_language("fr-FR") == "es"
+    assert resolve_language(accept_language="en-US,en;q=0.9") == "en"
+    assert resolve_language(accept_language="pt-BR,pt;q=0.9") == "pt-BR"
+    assert resolve_language(persisted="pt-BR", explicit="en", accept_language="en-US") == "pt-BR"
+
+
+def test_customer_request_preserves_language_and_localizes_tracking_status(db):
+    make_organization(db, "localized-portal", "Localized Portal")
+    request = create_customer_request_and_order(
+        db,
+        make_portal_payload(idempotency_key="localized-portal-1", public_language="en-US"),
+    )
+    db.commit()
+    assert request.public_language == "en"
+    status = service_request_public_status(request)
+    assert status["language"] == "en"
+    assert status["status"] == "Request received"
+    assert request.service_order.status == "ABERTA"
 def test_sales_queue_triage_and_assignments_are_org_scoped(db):
     org_a = make_organization(db, "portal-sales-a", "Portal Sales A")
     org_b = make_organization(db, "portal-sales-b", "Portal Sales B")

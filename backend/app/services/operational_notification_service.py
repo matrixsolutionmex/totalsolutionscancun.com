@@ -4,8 +4,6 @@ This module owns event names, recipient selection, sanitized payloads and
 deduplication. It deliberately reuses the existing Notification model.
 """
 
-import json
-from datetime import datetime
 from enum import Enum
 
 from sqlalchemy.orm import Session
@@ -13,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.models.service_opportunity import ServiceOpportunity
 from app.models.user import User
 from app.services.notification_service import create_notification
+from app.services.localization_service import localized_notification
 
 
 class OperationalEvent(str, Enum):
@@ -159,16 +158,17 @@ def emit_operational_notification(
     if metadata:
         base_metadata.update({key: value for key, value in metadata.items() if key not in {"email", "phone", "address", "tracking_token"}})
 
-    title = "Nuevo servicio disponible" if event == OperationalEvent.MARKETPLACE_SERVICE_CREATED else event.value.replace("_", " ").title()
-    location = opportunity.city or "zona no informada" if opportunity else "Total Solutions"
     service = opportunity.service_type or "Servicio" if opportunity else "Evento operativo"
-    message = f"{service} · {location}"
+    city = opportunity.city or "zona no informada" if opportunity else "Total Solutions"
+    title, message = localized_notification(event.value, "es", service=service, city=city) if event == OperationalEvent.MARKETPLACE_SERVICE_CREATED else (event.value.replace("_", " ").title(), f"{service} · {city}")
     public_id = opportunity.public_id if opportunity else None
     action_url = f"/?section=agenda&opportunity={public_id}" if public_id else "/"
     dedupe_base = f"{event.value}:org:{organization_id}:opportunity:{public_id or opportunity_id or service_order_id or service_request_id}"
 
     notification_ids: list[int] = []
     for recipient in recipients:
+        if event == OperationalEvent.MARKETPLACE_SERVICE_CREATED:
+            title, message = localized_notification(event.value, recipient.idioma, service=service, city=city)
         notification = create_notification(
             db,
             recipient=recipient,

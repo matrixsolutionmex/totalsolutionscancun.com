@@ -95,6 +95,10 @@ def test_marketplace_created_notifies_admins_and_eligible_technicians(db):
     root = make_user(db, "root", "ROOT", org.id)
     manager = make_user(db, "manager", "GERENTE", org.id)
     technician = make_user(db, "technician", "BROKER", org.id)
+    root.idioma = "es"
+    manager.idioma = "en"
+    technician.idioma = "pt-BR"
+    db.commit()
     inactive = make_user(db, "inactive", "BROKER", org.id, active=False, status="SUSPENDED")
     other_technician = make_user(db, "other-tech", "BROKER", other_org.id)
     opportunity = make_opportunity(db, org.id)
@@ -114,6 +118,10 @@ def test_marketplace_created_notifies_admins_and_eligible_technicians(db):
     assert other_technician.id not in {item.recipient_user_id for item in notifications}
     assert all(item.type == "marketplace_service_created" for item in notifications)
     assert all(item.priority == "NORMAL" for item in notifications)
+    by_recipient = {item.recipient_user_id: item.title for item in notifications}
+    assert by_recipient[root.id] == "Nuevo servicio disponible"
+    assert by_recipient[manager.id] == "New service available"
+    assert by_recipient[technician.id] == "Novo serviço disponível"
 
 
 def test_marketplace_notification_is_deduplicated_per_recipient(db):

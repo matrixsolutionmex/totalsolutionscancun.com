@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.auth.jwt_handler import get_db
@@ -8,6 +8,7 @@ from app.models.service_request import ServiceRequest
 from app.services.customer_portal_service import create_customer_request_and_order, service_request_public_status, service_request_public_tracking
 from app.services.marketplace_service import create_opportunity_from_service_request
 from app.services.reverse_geocode_service import reverse_geocode
+from app.services.localization_service import resolve_language
 
 
 router = APIRouter(prefix="/public", tags=["public-service-requests"])
@@ -57,12 +58,13 @@ def create_public_service_request(
     consent_privacy: bool = Form(default=False),
     consent_images: bool = Form(default=False),
     idempotency_key: str | None = Form(default=None),
-    public_language: str = Form(default="es-MX"),
+    public_language: str | None = Form(default=None),
     customer_budget_min: str | None = Form(default=None),
     customer_budget_max: str | None = Form(default=None),
     pricing_zone: str | None = Form(default=None),
     files: list[UploadFile] | None = File(default=None),
     db: Session = Depends(get_db),
+    accept_language: str | None = Header(default=None),
 ):
     payload = {
         "requester_name": requester_name,
@@ -92,7 +94,7 @@ def create_public_service_request(
         "consent_privacy": consent_privacy,
         "consent_images": consent_images,
         "idempotency_key": idempotency_key,
-        "public_language": public_language,
+        "public_language": resolve_language(explicit=public_language, accept_language=accept_language),
         "customer_budget_min": customer_budget_min,
         "customer_budget_max": customer_budget_max,
         "pricing_zone": pricing_zone,
