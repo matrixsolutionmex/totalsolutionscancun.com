@@ -1353,13 +1353,16 @@ def test_public_tracking_exposes_only_current_active_position_and_hides_it_after
     assert started["status"] == "EN_CAMINO"
     assert started["tracking"]["tracking_active"] is True
     assert order.status == "EN_CAMINO"
-    update_tracking_position(db, order.id, technician, 21.1620, -86.8516, 12)
+    update_tracking_position(db, order.id, technician, 21.1550, -86.8450, 12)
+    update_tracking_position(db, order.id, technician, 21.1555, -86.8445, 11)
+    update_tracking_position(db, order.id, technician, 21.1560, -86.8440, 10)
     active = service_request_public_tracking(service_request)
     assert active["tracking_active"] is True
     assert active["operational_status"] == "Técnico en camino"
     assert active["technician_display_name"] == technician.full_name
-    assert active["technician_lat"] == pytest.approx(21.1620)
-    assert active["accuracy_m"] == pytest.approx(12)
+    assert active["technician_lat"] == pytest.approx(21.1560)
+    assert active["technician_lng"] == pytest.approx(-86.8440)
+    assert active["accuracy_m"] == pytest.approx(10)
     root = make_user(db, "root-live-links", "ROOT", organization_id=organization.id)
     central_routes = list_active_tracking_for_actor(db, root)
     assert len(central_routes) == 1

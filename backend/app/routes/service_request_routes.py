@@ -50,6 +50,9 @@ class TrackingStopPayload(BaseModel):
 
 class TrackingDiagnosticPayload(BaseModel):
     event_type: str
+    accuracy_m: float | None = None
+    distance_m: float | None = None
+    coordinate_changed: bool | None = None
 
 
 def _actor_label(actor: User) -> str:
@@ -258,4 +261,12 @@ def record_service_order_tracking_diagnostic(
     db: Session = Depends(get_db),
     actor: User = Depends(get_actor),
 ):
-    return record_tracking_diagnostic(db, order_id, actor, payload.event_type)
+    return record_tracking_diagnostic(
+        db,
+        order_id,
+        actor,
+        payload.event_type,
+        accuracy_m=payload.accuracy_m,
+        distance_m=payload.distance_m,
+        coordinate_changed=payload.coordinate_changed,
+    )

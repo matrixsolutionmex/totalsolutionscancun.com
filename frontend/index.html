@@ -5343,6 +5343,14 @@
     let activeTrackingGeneration = 0;
     let activeTrackingLastSentAt = 0;
     let activeTrackingLastPosition = null;
+    let activeTrackingPendingPosition = null;
+    let activeTrackingPublishInFlight = false;
+    let activeTrackingLastGpsPosition = null;
+    let activeTrackingLastGpsReadAt = 0;
+    let activeTrackingLastPublishedAt = 0;
+    let activeTrackingLastGpsAccuracy = null;
+    let activeTrackingLastGpsDistance = null;
+    const trackingDiagnosticLastSentAt = new Map();
     let trackingPublisherStatus = { orderId: null, message: "", kind: "" };
     const TRACKING_MIN_INTERVAL_MS = 15000;
     const TRACKING_MIN_DISTANCE_M = 50;
@@ -6617,8 +6625,15 @@
       return null;
     }
 
+    function trackingTelemetrySuffix(orderId) {
+      if (activeTrackingOrderId !== orderId || !activeTrackingLastGpsReadAt) return "";
+      const age = (value) => value ? `${Math.max(0, Math.floor((Date.now() - value) / 1000))} s` : "-";
+      const accuracy = activeTrackingLastGpsAccuracy == null ? "-" : `~${Math.round(activeTrackingLastGpsAccuracy)} m`;
+      return ` · Última lectura GPS: ${age(activeTrackingLastGpsReadAt)} · Última publicación: ${age(activeTrackingLastPublishedAt)} · Precisión: ${accuracy} · Conexión: ${navigator.onLine === false ? "offline" : "online"}`;
+    }
+
     function setTrackingPublisherStatus(orderId, message, kind = "") {
-      trackingPublisherStatus = { orderId, message, kind };
+      trackingPublisherStatus = { orderId, message: `${message}${trackingTelemetrySuffix(orderId)}`, kind };
       if (cachedBoard) {
         renderBoard(cachedBoard);
       }
@@ -6645,6 +6660,14 @@
       activeTrackingOrderId = null;
       activeTrackingLastSentAt = 0;
       activeTrackingLastPosition = null;
+      activeTrackingPendingPosition = null;
+      activeTrackingPublishInFlight = false;
+      activeTrackingLastGpsPosition = null;
+      activeTrackingLastGpsReadAt = 0;
+      activeTrackingLastPublishedAt = 0;
+      activeTrackingLastGpsAccuracy = null;
+      activeTrackingLastGpsDistance = null;
+      trackingDiagnosticLastSentAt.clear();
     }
 
     async function sendTrackingHeartbeat(orderId, generation) {
@@ -6660,12 +6683,16 @@
       }
     }
 
-    function sendTrackingDiagnostic(orderId, eventType) {
+    function sendTrackingDiagnostic(orderId, eventType, details = {}, minIntervalMs = 30000) {
       if (!orderId || navigator.onLine === false) return;
+      const key = `${orderId}:${eventType}`;
+      const now = Date.now();
+      if (trackingDiagnosticLastSentAt.has(key) && now - trackingDiagnosticLastSentAt.get(key) < minIntervalMs) return;
+      trackingDiagnosticLastSentAt.set(key, now);
       apiFetch(`${API_BASE}/service-orders/${orderId}/tracking/diagnostic`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ event_type: eventType })
+        body: JSON.stringify({ event_type: eventType, ...details })
       }).catch(() => {});
     }
 
@@ -6726,20 +6753,31 @@
         setTrackingPublisherStatus(orderId, "Ubicación temporalmente no disponible", "error");
         return;
       }
+      const gpsDistance = haversineDistanceMeters(activeTrackingLastGpsPosition, normalized);
+      activeTrackingLastGpsPosition = normalized;
+      activeTrackingLastGpsReadAt = Date.now();
+      activeTrackingLastGpsAccuracy = normalized.accuracy;
+      activeTrackingLastGpsDistance = Number.isFinite(gpsDistance) ? gpsDistance : null;
+      sendTrackingDiagnostic(orderId, "GPS_UPDATE_RECEIVED", {
+        accuracy_m: normalized.accuracy,
+        distance_m: Number.isFinite(gpsDistance) ? gpsDistance : null,
+        coordinate_changed: Number.isFinite(gpsDistance) && gpsDistance > 0
+      }, 60000);
+      activeTrackingPendingPosition = normalized;
+      if (navigator.onLine === false) {
+        setTrackingPublisherStatus(orderId, "Sin conexión. GPS activo; ubicación pendiente", "error");
+        return;
+      }
+      if (activeTrackingPublishInFlight) return;
       const now = Date.now();
       const movedEnough = haversineDistanceMeters(activeTrackingLastPosition, normalized) >= TRACKING_MIN_DISTANCE_M;
       if (activeTrackingLastSentAt && now - activeTrackingLastSentAt < TRACKING_MIN_INTERVAL_MS && !movedEnough) {
         return;
       }
-      activeTrackingLastSentAt = now;
-      activeTrackingLastPosition = normalized;
-      if (navigator.onLine === false) {
-        setTrackingPublisherStatus(orderId, "Sin conexión. Ubicación pendiente", "error");
-        return;
-      }
+      activeTrackingPublishInFlight = true;
       setTrackingPublisherStatus(orderId, normalized.accuracy !== null && normalized.accuracy > 1000
-        ? "Compartiendo ubicación · precisión baja"
-        : "Compartiendo ubicación");
+        ? "GPS activo · precisión baja"
+        : "GPS activo · publicando ubicación");
       try {
         const response = await apiFetch(`${API_BASE}/service-orders/${orderId}/tracking/position`, {
           method: "POST",
@@ -6757,10 +6795,33 @@
             setTrackingPublisherStatus(orderId, "Ruta detenida", "error");
             return;
           }
-          setTrackingPublisherStatus(orderId, "Ubicación temporalmente no disponible", "error");
+          sendTrackingDiagnostic(orderId, "GPS_POSITION_PUBLISH_FAILED", {}, 30000);
+          setTrackingPublisherStatus(orderId, "GPS activo · publicación pendiente", "error");
+          return;
+        }
+        activeTrackingLastSentAt = Date.now();
+        activeTrackingLastPosition = normalized;
+        activeTrackingLastPublishedAt = activeTrackingLastSentAt;
+        if (activeTrackingPendingPosition === normalized) activeTrackingPendingPosition = null;
+        sendTrackingDiagnostic(orderId, "GPS_POSITION_PUBLISHED", {
+          accuracy_m: normalized.accuracy,
+          distance_m: Number.isFinite(gpsDistance) ? gpsDistance : null,
+          coordinate_changed: Number.isFinite(gpsDistance) && gpsDistance > 0
+        }, 60000);
+        setTrackingPublisherStatus(orderId, normalized.accuracy !== null && normalized.accuracy > 1000
+          ? "GPS activo · precisión baja"
+          : "GPS activo · ubicación publicada");
+        if (activeTrackingPendingPosition && activeTrackingPendingPosition !== normalized) {
+          const pending = activeTrackingPendingPosition;
+          activeTrackingPublishInFlight = false;
+          await publishTrackingPosition(orderId, generation, { coords: pending, timestamp: pending.capturedAt });
+          return;
         }
       } catch (_error) {
-        setTrackingPublisherStatus(orderId, "Sin conexión. Reintentando ubicación", "error");
+        sendTrackingDiagnostic(orderId, "GPS_POSITION_PUBLISH_FAILED", {}, 30000);
+        setTrackingPublisherStatus(orderId, "Sin conexión. GPS activo; reintentando", "error");
+      } finally {
+        activeTrackingPublishInFlight = false;
       }
     }
 
@@ -6795,7 +6856,7 @@
         activeTrackingWatcherId = navigator.geolocation.watchPosition(
           (position) => publishTrackingPosition(orderId, generation, position),
           (error) => handleTrackingGeolocationError(orderId, generation, error),
-          { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 }
+          { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
         );
         startTrackingHeartbeat(orderId, generation);
       } catch (_error) {
@@ -6804,6 +6865,14 @@
         return false;
       }
       return true;
+    }
+
+    function flushPendingTrackingPosition() {
+      if (!activeTrackingOrderId || !activeTrackingPendingPosition || activeTrackingWatcherId === null || navigator.onLine === false) return;
+      publishTrackingPosition(activeTrackingOrderId, activeTrackingGeneration, {
+        coords: activeTrackingPendingPosition,
+        timestamp: activeTrackingPendingPosition.capturedAt
+      });
     }
 
     async function stopTrackingBackend(orderId, reason = "MANUAL") {
@@ -6886,6 +6955,7 @@
         sendTrackingDiagnostic(activeTrackingOrderId, "NETWORK_ONLINE");
         setTrackingPublisherStatus(activeTrackingOrderId, "GPS buscando señal");
         ensureTrackingPublisher();
+        window.setTimeout(flushPendingTrackingPosition, 0);
       }
     });
     window.addEventListener("pagehide", () => {

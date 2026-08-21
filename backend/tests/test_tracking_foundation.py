@@ -241,9 +241,19 @@ def test_tracking_diagnostics_are_scoped_and_do_not_accept_arbitrary_payloads(db
     order = make_order(db, org, technician)
     start_tracking(db, order.id, technician, True)
 
-    result = record_tracking_diagnostic(db, order.id, technician, "GEOLOCATION_TIMEOUT")
-    assert result == {"recorded": True, "event_type": "GEOLOCATION_TIMEOUT"}
-    assert db.query(LeadEvent).filter(LeadEvent.event_type == "GEOLOCATION_TIMEOUT").count() == 1
+    result = record_tracking_diagnostic(
+        db,
+        order.id,
+        technician,
+        "GPS_UPDATE_RECEIVED",
+        accuracy_m=12,
+        distance_m=42,
+        coordinate_changed=True,
+    )
+    assert result == {"recorded": True, "event_type": "GPS_UPDATE_RECEIVED"}
+    event = db.query(LeadEvent).filter(LeadEvent.event_type == "GPS_UPDATE_RECEIVED").one()
+    assert "accuracy_m=12.0" in event.message
+    assert "distance_m=42.0" in event.message
     with pytest.raises(HTTPException) as blocked:
         record_tracking_diagnostic(db, order.id, technician, "CLIENT_TOKEN")
     assert blocked.value.status_code == 400

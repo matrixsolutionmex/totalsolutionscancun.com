@@ -26,6 +26,8 @@ TRACKING_DIAGNOSTIC_EVENTS = {
     "NETWORK_ONLINE",
     "WATCH_RESTARTED",
     "PUBLISH_FAILED",
+    "GPS_UPDATE_RECEIVED",
+    "GPS_POSITION_PUBLISHED",
 }
 
 
@@ -223,16 +225,37 @@ def heartbeat_tracking(db: Session, order_id: int, actor: User) -> dict:
     return {"service_order_id": order.id, "order_number": order.order_number, "status": order.status, "tracking": serialize_tracking(tracking)}
 
 
-def record_tracking_diagnostic(db: Session, order_id: int, actor: User, event_type: str) -> dict:
+def record_tracking_diagnostic(
+    db: Session,
+    order_id: int,
+    actor: User,
+    event_type: str,
+    *,
+    accuracy_m: float | None = None,
+    distance_m: float | None = None,
+    coordinate_changed: bool | None = None,
+) -> dict:
     order = _order_for_actor(db, order_id, actor)
     _require_assigned_technician(order, actor)
     normalized_event = (event_type or "").strip().upper()
     if normalized_event not in TRACKING_DIAGNOSTIC_EVENTS:
         raise HTTPException(status_code=400, detail="Evento de diagnóstico invalido")
+    if accuracy_m is not None and (not math.isfinite(float(accuracy_m)) or float(accuracy_m) < 0):
+        raise HTTPException(status_code=400, detail="Precisao invalida")
+    if distance_m is not None and (not math.isfinite(float(distance_m)) or float(distance_m) < 0):
+        raise HTTPException(status_code=400, detail="Distancia invalida")
     tracking = db.query(ServiceOrderTracking).filter(ServiceOrderTracking.service_order_id == order.id).first()
     if not tracking or not tracking.tracking_active:
         raise HTTPException(status_code=409, detail="Tracking nao esta ativo")
-    _add_tracking_event(db, order, actor, normalized_event, f"Diagnostico de tracking: {normalized_event}")
+    details = []
+    if accuracy_m is not None:
+        details.append(f"accuracy_m={float(accuracy_m):.1f}")
+    if distance_m is not None:
+        details.append(f"distance_m={float(distance_m):.1f}")
+    if coordinate_changed is not None:
+        details.append(f"changed={'yes' if coordinate_changed else 'no'}")
+    suffix = f" ({', '.join(details)})" if details else ""
+    _add_tracking_event(db, order, actor, normalized_event, f"Diagnostico de tracking: {normalized_event}{suffix}")
     db.commit()
     return {"recorded": True, "event_type": normalized_event}
 
