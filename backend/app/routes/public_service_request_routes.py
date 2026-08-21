@@ -58,6 +58,9 @@ def create_public_service_request(
     consent_images: bool = Form(default=False),
     idempotency_key: str | None = Form(default=None),
     public_language: str = Form(default="es-MX"),
+    customer_budget_min: str | None = Form(default=None),
+    customer_budget_max: str | None = Form(default=None),
+    pricing_zone: str | None = Form(default=None),
     files: list[UploadFile] | None = File(default=None),
     db: Session = Depends(get_db),
 ):
@@ -90,6 +93,9 @@ def create_public_service_request(
         "consent_images": consent_images,
         "idempotency_key": idempotency_key,
         "public_language": public_language,
+        "customer_budget_min": customer_budget_min,
+        "customer_budget_max": customer_budget_max,
+        "pricing_zone": pricing_zone,
     }
     try:
         service_request = create_customer_request_and_order(db, payload, files=files)

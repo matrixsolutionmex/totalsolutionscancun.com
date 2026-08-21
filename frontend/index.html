@@ -11969,6 +11969,24 @@
               </section>
 
               <section class="portal-section">
+                <h3>Presupuesto aproximado</h3>
+                <p class="portal-help">Puedes indicar un rango orientativo. La visita se calcula con la matriz vigente y el precio final requiere diagnóstico.</p>
+                <label class="portal-check"><input id="budgetProvided" type="checkbox" /> Tengo un presupuesto aproximado</label>
+                <div class="portal-grid" id="budgetFields" hidden>
+                  <div class="portal-field">
+                    <label for="customer_budget_min">Desde (MXN)</label>
+                    <input id="customer_budget_min" name="customer_budget_min" type="range" min="0" max="50000" step="50" value="1000" />
+                    <output id="customerBudgetMinLabel">MX$1,000</output>
+                  </div>
+                  <div class="portal-field">
+                    <label for="customer_budget_max">Hasta (MXN)</label>
+                    <input id="customer_budget_max" name="customer_budget_max" type="range" min="0" max="50000" step="50" value="3000" />
+                    <output id="customerBudgetMaxLabel">MX$3,000</output>
+                  </div>
+                </div>
+              </section>
+
+              <section class="portal-section">
                 <h3>Local del servicio</h3>
                 <div class="portal-grid">
                   <div class="portal-field full">
@@ -12057,6 +12075,12 @@
                 <code>${data.tracking_token}</code>
                 <p>Status: <strong>${data.status || "SALES_QUEUE"}</strong></p>
               </div>
+              ${data.pricing ? `<div class="portal-result pricing-result">
+                <p>Referencia de visita</p>
+                <strong>${data.pricing.visit_calculated_price == null ? "Se definirá tras diagnóstico" : `${data.pricing.currency || "MXN"} ${Number(data.pricing.visit_calculated_price).toLocaleString("es-MX", { minimumFractionDigits: 2 })}`}</strong>
+                <p>Zona: ${escapeHtml(data.pricing.zone || "-")} · Urgencia: ${escapeHtml(data.pricing.urgency_multiplier ? `x${data.pricing.urgency_multiplier}` : "-")}</p>
+                <p>${data.pricing.estimate_available ? "Rango de mercado disponible" : "Sin rango de mercado: requiere diagnóstico"}</p>
+              </div>` : ""}
               <div class="portal-actions" style="margin-top: 18px;">
                 <a class="portal-button" href="${trackingUrl}">Acompanhar solicitud</a>
                 <a class="portal-button secondary" href="/solicitar-servico">Crear otra solicitud</a>
@@ -12230,6 +12254,21 @@
         const locationAccuracy = document.getElementById("location_accuracy_m");
         const locationSource = document.getElementById("location_source");
         const locationConfirmed = document.getElementById("location_confirmed");
+        const budgetProvided = document.getElementById("budgetProvided");
+        const budgetFields = document.getElementById("budgetFields");
+        const budgetMin = document.getElementById("customer_budget_min");
+        const budgetMax = document.getElementById("customer_budget_max");
+        const budgetMinLabel = document.getElementById("customerBudgetMinLabel");
+        const budgetMaxLabel = document.getElementById("customerBudgetMaxLabel");
+        const formatBudget = (value) => `MX$${Number(value || 0).toLocaleString("es-MX")}`;
+        const refreshBudgetLabels = () => {
+          if (budgetMinLabel) budgetMinLabel.textContent = formatBudget(budgetMin.value);
+          if (budgetMaxLabel) budgetMaxLabel.textContent = formatBudget(budgetMax.value);
+          if (Number(budgetMin.value) > Number(budgetMax.value)) budgetMax.value = budgetMin.value;
+        };
+        budgetProvided?.addEventListener("change", () => { budgetFields.hidden = !budgetProvided.checked; });
+        budgetMin?.addEventListener("input", refreshBudgetLabels);
+        budgetMax?.addEventListener("input", refreshBudgetLabels);
         const confirmLocation = document.getElementById("confirmLocation");
         let selectedLocation = null;
         let locationMap = null;
@@ -12352,6 +12391,10 @@
           message.className = "portal-message";
           message.textContent = "Enviando solicitud...";
           const formData = new FormData(form);
+          if (!budgetProvided?.checked) {
+            formData.delete("customer_budget_min");
+            formData.delete("customer_budget_max");
+          }
           formData.set("idempotency_key", crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
           try {
             const response = await fetch(`${apiBase}/public/service-requests`, {

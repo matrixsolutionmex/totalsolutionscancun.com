@@ -22,6 +22,7 @@ from app.services.service_order_service import ensure_service_order
 from app.services.location_service import normalize_service_location
 from app.services.route_intelligence_service import calculate_route
 from app.services.tracking_health_service import tracking_health
+from app.services.pricing_engine_service import calculate_preliminary_pricing, pricing_snapshot
 
 
 ALLOWED_MEDIA_TYPES = {
@@ -261,6 +262,17 @@ def create_customer_request_and_order(
     db.flush()
     property_record.property_code = f"TS-PROP-{property_record.id:06d}"
 
+    try:
+        pricing = calculate_preliminary_pricing(
+            db, payload.get("service_category"), segment=payload.get("property_type"),
+            location={**payload, "distance_km": payload.get("pricing_distance_km"),
+                      "duration_minutes": payload.get("pricing_duration_minutes")},
+            urgency=payload.get("urgency"), customer_budget_min=payload.get("customer_budget_min"),
+            customer_budget_max=payload.get("customer_budget_max"), organization_id=organization_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     service_request = ServiceRequest(
         organization_id=organization_id,
         lead_id=lead.id,
@@ -282,6 +294,19 @@ def create_customer_request_and_order(
         consent_images=bool(payload.get("consent_images")),
         **location,
     )
+    pricing_fields = {
+        "pricing_service_type": pricing["service_type"], "pricing_segment": pricing["segment"],
+        "pricing_zone": pricing["pricing_zone"], "visit_base_price": pricing["visit_base_price"],
+        "travel_surcharge": pricing["travel_surcharge"], "urgency_level": pricing["urgency_level"],
+        "urgency_multiplier": pricing["urgency_multiplier"], "visit_calculated_price": pricing["visit_calculated_price"],
+        "market_reference_min": pricing["market_reference_min"], "market_reference_max": pricing["market_reference_max"],
+        "customer_budget_min": pricing["customer_budget_min"], "customer_budget_max": pricing["customer_budget_max"],
+        "pricing_currency": pricing["pricing_currency"], "pricing_version": pricing["pricing_version"],
+        "visit_credit_policy": pricing["visit_credit_policy"], "pricing_distance_km": pricing["pricing_distance_km"],
+        "pricing_duration_minutes": pricing["pricing_duration_minutes"], "pricing_snapshot_json": pricing_snapshot(pricing),
+    }
+    for field, value in pricing_fields.items():
+        setattr(service_request, field, value)
     db.add(service_request)
     db.flush()
 
@@ -294,6 +319,9 @@ def create_customer_request_and_order(
         property_record=property_record,
         force_new=True,
     )
+    for field, value in pricing_fields.items():
+        if hasattr(service_order, field):
+            setattr(service_order, field, value)
     db.add(
         LeadEvent(
             organization_id=organization_id,
@@ -320,6 +348,17 @@ def service_request_public_status(request: ServiceRequest) -> dict[str, Any]:
         "created_at": request.created_at,
         "order_number": order.order_number if order else None,
         "tracking_url": public_tracking_url(request.tracking_token),
+        "pricing": {
+            "service_type": request.pricing_service_type, "segment": request.pricing_segment,
+            "zone": request.pricing_zone, "currency": request.pricing_currency,
+            "visit_base_price": request.visit_base_price, "travel_surcharge": request.travel_surcharge,
+            "urgency_multiplier": request.urgency_multiplier, "visit_calculated_price": request.visit_calculated_price,
+            "market_reference_min": request.market_reference_min, "market_reference_max": request.market_reference_max,
+            "customer_budget_min": request.customer_budget_min, "customer_budget_max": request.customer_budget_max,
+            "estimate_available": request.market_reference_min is not None or request.market_reference_max is not None,
+            "requires_diagnosis": True, "visit_credit_policy": request.visit_credit_policy,
+            "pricing_version": request.pricing_version,
+        },
     }
 
 

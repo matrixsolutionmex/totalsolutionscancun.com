@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import relationship
 
 from app.database.connection import Base
@@ -29,6 +29,25 @@ class ServiceRequest(Base):
     location_accuracy_m = Column(Float, nullable=True)
     location_source = Column(String(20), nullable=True)
     location_confirmed_at = Column(DateTime, nullable=True)
+    pricing_service_type = Column(String, nullable=True)
+    pricing_segment = Column(String(30), nullable=True)
+    pricing_zone = Column(String(20), nullable=True)
+    visit_base_price = Column(Numeric(12, 2), nullable=True)
+    travel_surcharge = Column(Numeric(12, 2), nullable=True)
+    urgency_level = Column(String(20), nullable=True)
+    urgency_multiplier = Column(Numeric(6, 3), nullable=True)
+    visit_calculated_price = Column(Numeric(12, 2), nullable=True)
+    market_reference_min = Column(Numeric(12, 2), nullable=True)
+    market_reference_max = Column(Numeric(12, 2), nullable=True)
+    customer_budget_min = Column(Numeric(12, 2), nullable=True)
+    customer_budget_max = Column(Numeric(12, 2), nullable=True)
+    final_service_price = Column(Numeric(12, 2), nullable=True)
+    pricing_currency = Column(String(8), nullable=True)
+    pricing_version = Column(String(40), nullable=True)
+    visit_credit_policy = Column(String(80), nullable=True)
+    pricing_distance_km = Column(Float, nullable=True)
+    pricing_duration_minutes = Column(Float, nullable=True)
+    pricing_snapshot_json = Column(Text, nullable=True)
 
     requester_name = Column(String, nullable=False)
     requester_phone = Column(String, nullable=True)

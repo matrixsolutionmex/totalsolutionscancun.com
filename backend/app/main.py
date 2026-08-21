@@ -16,7 +16,7 @@ from app.core.organization import get_or_create_default_organization
 from app.core.storage import UPLOADS_DIR
 from app.auth.routes import router as auth_router
 from app.database.connection import Base, SessionLocal, engine
-from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, service_order_tracking, deletion_request, notification, user_lifecycle, auth_security, organization, organization_invitation, referral_attribution, service_property, service_request, service_opportunity, commercial_subscription, commercial_upgrade_intent, user_commercial_profile
+from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, service_order_tracking, deletion_request, notification, user_lifecycle, auth_security, organization, organization_invitation, referral_attribution, service_property, service_request, service_opportunity, commercial_subscription, commercial_upgrade_intent, user_commercial_profile, pricing_rate
 from app.models.lead import Lead
 from app.models.service_order import ServiceOrder
 from app.models.user import User
@@ -38,6 +38,7 @@ from app.routes.organization_routes import router as organization_router
 from app.services.service_order_service import ensure_service_order
 from app.services.notification_service import process_email_outbox
 from app.services.commercial_upgrade_service import normalize_existing_upgrade_intents
+from app.services.pricing_engine_service import seed_default_pricing_rates
 
 app = FastAPI(
     title="Total Solutions CRM",
@@ -374,6 +375,31 @@ def create_database_tables():
         add_column_if_missing(db, "service_orders", "location_accuracy_m", "DOUBLE PRECISION")
         add_column_if_missing(db, "service_orders", "location_source", "VARCHAR(20)")
         add_column_if_missing(db, "service_orders", "location_confirmed_at", "TIMESTAMP")
+        pricing_columns = {
+            "pricing_service_type": "VARCHAR", "pricing_segment": "VARCHAR(30)", "pricing_zone": "VARCHAR(20)",
+            "visit_base_price": "NUMERIC(12, 2)", "travel_surcharge": "NUMERIC(12, 2)",
+            "urgency_level": "VARCHAR(20)", "urgency_multiplier": "NUMERIC(6, 3)",
+            "visit_calculated_price": "NUMERIC(12, 2)", "market_reference_min": "NUMERIC(12, 2)",
+            "market_reference_max": "NUMERIC(12, 2)", "customer_budget_min": "NUMERIC(12, 2)",
+            "customer_budget_max": "NUMERIC(12, 2)", "final_service_price": "NUMERIC(12, 2)",
+            "pricing_currency": "VARCHAR(8)", "pricing_version": "VARCHAR(40)",
+            "visit_credit_policy": "VARCHAR(80)", "pricing_distance_km": "DOUBLE PRECISION",
+            "pricing_duration_minutes": "DOUBLE PRECISION", "pricing_snapshot_json": "TEXT",
+        }
+        for table_name in ("service_requests", "service_orders"):
+            for column_name, column_definition in pricing_columns.items():
+                add_column_if_missing(db, table_name, column_name, column_definition)
+        opportunity_pricing_columns = {
+            "pricing_service_type": "VARCHAR", "pricing_zone": "VARCHAR(20)",
+            "visit_calculated_price": "NUMERIC(12, 2)", "market_reference_min": "NUMERIC(12, 2)",
+            "market_reference_max": "NUMERIC(12, 2)", "customer_budget_min": "NUMERIC(12, 2)",
+            "customer_budget_max": "NUMERIC(12, 2)", "pricing_currency": "VARCHAR(8)",
+            "pricing_version": "VARCHAR(40)", "pricing_distance_km": "DOUBLE PRECISION",
+            "pricing_duration_minutes": "DOUBLE PRECISION", "pricing_snapshot_json": "TEXT",
+        }
+        for column_name, column_definition in opportunity_pricing_columns.items():
+            add_column_if_missing(db, "service_opportunities", column_name, column_definition)
+        seed_default_pricing_rates(db)
         add_column_if_missing(db, "leads", "foto_fachada_url", "VARCHAR")
         add_column_if_missing(db, "leads", "property_extra_json", "VARCHAR")
         db.execute(text("UPDATE leads SET urgencia = 'NORMAL' WHERE urgencia IS NULL OR urgencia = ''"))
