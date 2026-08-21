@@ -6157,6 +6157,17 @@
       return `${marketplaceMoney(low, currency)} — ${marketplaceMoney(high, currency)}`;
     }
 
+    function renderTechnicianPricing(item) {
+      const distance = item?.pricing_distance_km == null ? "No informado" : `${item.pricing_distance_km} km`;
+      const duration = item?.pricing_duration_minutes == null ? "No informado" : `${item.pricing_duration_minutes} min`;
+      return `<div class="marketplace-pricing-summary">
+        <p>Presupuesto del cliente: <strong>${marketplaceValue(marketplaceBudget(item))}</strong></p>
+        <p>Referencia Total Solutions: <strong>${marketplaceValue(marketplaceReference(item))}</strong></p>
+        <p>Visita técnica: <strong>${marketplaceValue(marketplaceMoney(item?.visit_calculated_price, item?.pricing_currency || "MXN"))}</strong> · Zona: <strong>${marketplaceValue(item?.pricing_zone)}</strong></p>
+        <p>Urgencia: <strong>${marketplaceValue(item?.urgency)}</strong> · Distancia: <strong>${marketplaceValue(distance)}</strong> · Tiempo: <strong>${marketplaceValue(duration)}</strong></p>
+      </div>`;
+    }
+
     function trackingOperationsDate(value) {
       if (!value) return "-";
       const date = new Date(value);
@@ -6435,7 +6446,7 @@
           <p>Cliente: <strong>${marketplaceValue(item.client?.name)}</strong></p>
           <p>OS: <strong>${marketplaceValue(item.service_order?.order_number)}</strong></p>
           <p>Status: ${marketplaceValue(item.service_order?.status || item.status)}</p>
-          <p>Cidade: ${marketplaceValue(item.city)}</p></article>`).join("") : '<div class="line">Você ainda não aceitou serviços.</div>';
+          <p>Cidade: ${marketplaceValue(item.city)}</p>${renderTechnicianPricing(item)}</article>`).join("") : '<div class="line">Você ainda não aceitou serviços.</div>';
       } else {
         panel.innerHTML = '<div class="panel-title">MINHA AGENDA</div><div class="line">Os atendimentos associados ao seu usuário aparecerão aqui.</div>';
       }

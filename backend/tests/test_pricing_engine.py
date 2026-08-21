@@ -1,4 +1,5 @@
 from decimal import Decimal
+from pathlib import Path
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -122,3 +123,12 @@ def test_customer_budget_shapes_are_serialized_without_mixing_reference():
             assert public_opportunity(item)["customer_budget_range"] == expected
     finally:
         db.close()
+
+
+def test_technician_marketplace_cards_render_customer_budget_and_reference_separately():
+    frontend = Path(__file__).parents[2].joinpath("frontend", "index.html").read_text()
+    assert "renderTechnicianPricing(item)" in frontend
+    assert "Presupuesto del cliente" in frontend
+    assert "Referencia Total Solutions" in frontend
+    assert "marketplaceBudget(item)" in frontend
+    assert "marketplaceReference(item)" in frontend
