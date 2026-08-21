@@ -999,6 +999,37 @@
       color: var(--text);
     }
 
+    .tracking-route-metrics,
+    .public-tracking-eta-card {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .tracking-route-metric,
+    .public-tracking-eta-card > div {
+      display: grid;
+      gap: 3px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #f8fafc;
+    }
+
+    .tracking-route-metric small,
+    .public-tracking-eta-card small {
+      color: #64748b;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .tracking-route-metric strong,
+    .public-tracking-eta-card strong {
+      color: var(--text);
+      font-size: 16px;
+    }
+
     .tracking-route-actions {
       display: flex;
       gap: 8px;
@@ -5334,6 +5365,7 @@
     let marketplaceAssignableUsers = [];
     let trackingOperationsMap = null;
     let trackingOperationsTimer = null;
+    let trackingOperationsHasFitted = false;
     const trackingOperationsMarkers = new Map();
     const TRACKING_OPERATIONS_POLL_MS = 12000;
     let activeTrackingOrderId = null;
@@ -6137,6 +6169,15 @@
       return Number.isNaN(date.getTime()) ? "-" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     }
 
+    function trackingProximityMessage(distance) {
+      const numeric = Number(distance);
+      if (!Number.isFinite(numeric) || numeric < 0) return "Tu técnico está en camino";
+      if (numeric < 300) return "Tu técnico está llegando";
+      if (numeric < 1000) return "Tu técnico está cerca";
+      if (numeric <= 5000) return "Tu técnico se está acercando";
+      return "Tu técnico está en camino";
+    }
+
     function renderTrackingOperationsRoutes(routes) {
       const list = document.getElementById("trackingOperationsRoutes");
       if (!list) return;
@@ -6152,7 +6193,7 @@
           <span>Cliente: ${escapeHtml(route.client_name || "-")}</span>
           <span>${trackingOperationsStatus(route)} · Inicio: ${escapeHtml(trackingOperationsDate(tracking.started_at))}</span>
           <span>Última actualización: ${escapeHtml(trackingOperationsDate(tracking.updated_at))} · Precisión: <span title="${tracking.accuracy_m == null ? "" : `${escapeHtml(tracking.accuracy_m)} m`}">${escapeHtml(trackingOperationsPrecision(tracking.accuracy_m))}</span></span>
-          ${route.route?.available ? `<span>${escapeHtml(formatRouteDistance(route.route.distance_m))} restantes · ETA ${escapeHtml(formatRouteEta(route.route.eta_at))}</span>` : `<span>Ruta temporalmente no disponible</span>`}
+          ${route.route?.available ? `<div class="tracking-route-metrics"><div class="tracking-route-metric"><small>Distancia restante</small><strong>${escapeHtml(formatRouteDistance(route.route.distance_m))}</strong></div><div class="tracking-route-metric"><small>Tiempo estimado</small><strong>${escapeHtml(formatRouteDuration(route.route.duration_s))}</strong></div><div class="tracking-route-metric"><small>Hora estimada</small><strong>${escapeHtml(formatRouteEta(route.route.eta_at))}</strong></div></div>` : `<span>Ruta temporalmente no disponible</span>`}
           ${trackingUrl ? `<div class="tracking-route-actions"><a class="small-btn" href="${escapeHtml(trackingUrl)}" target="_blank" rel="noopener noreferrer">Ver seguimiento</a><button class="small-btn ghost" type="button" data-tracking-copy="${escapeHtml(trackingUrl)}">Copiar enlace</button></div>` : ""}
         </article>`;
       }).join("");
@@ -6228,7 +6269,10 @@
           trackingOperationsMarkers.delete(routeId);
         }
       });
-      if (bounds.length && routes.length === 1) trackingOperationsMap.fitBounds(bounds, { padding: [30, 30], maxZoom: 16 });
+      if (bounds.length && routes.length === 1 && !trackingOperationsHasFitted) {
+        trackingOperationsMap.fitBounds(bounds, { padding: [30, 30], maxZoom: 16 });
+        trackingOperationsHasFitted = true;
+      }
       statusElement.textContent = routes.length === 1 ? trackingOperationsStatus(routes[0]) : `${routes.length} técnicos en camino`;
       renderTrackingOperationsRoutes(routes);
     }
@@ -6243,6 +6287,7 @@
         trackingOperationsMap.remove();
         trackingOperationsMap = null;
       }
+      trackingOperationsHasFitted = false;
     }
 
     async function loadActiveTrackingOperations() {
@@ -11805,6 +11850,12 @@
         .public-tracking-status strong {
           color: #15803d;
         }
+        .public-tracking-eta-card {
+          margin-top: 16px;
+        }
+        .public-tracking-eta-card > div {
+          background: #f8fafc;
+        }
         @media (max-width: 980px) {
           .portal-shell { grid-template-columns: 1fr; }
           .portal-brand {
@@ -12081,6 +12132,8 @@
                 ${data.route_started_at ? `<p>Salida: <strong>${escapeHtml(formatTrackingDate(data.route_started_at))}</strong></p>` : ""}
               </div>
               <div class="public-tracking-status" id="publicTrackingLiveStatus"><strong>${escapeHtml(locationMessage)}</strong><span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at))}</span>${data.accuracy_m == null ? "" : `<span>Precisión: ${escapeHtml(data.accuracy_m)} m</span>`}</div>
+              ${data.route_available ? `<div class="public-tracking-eta-card"><div><small>Llegada estimada</small><strong>${escapeHtml(formatRouteDuration(data.route_duration_s))}</strong></div><div><small>Distancia restante</small><strong>${escapeHtml(formatRouteDistance(data.route_distance_m))}</strong></div><div><small>Hora estimada</small><strong>${escapeHtml(formatRouteEta(data.route_eta_at))}</strong></div></div>` : ""}
+              <p id="publicTrackingProximity" class="portal-message">${escapeHtml(data.route_available ? trackingProximityMessage(data.route_distance_m) : locationMessage)}</p>
               ${(active || hasDestination) ? '<div id="publicTrackingMap" class="public-tracking-map" aria-label="Mapa de seguimiento del servicio"></div>' : ""}
               <p id="publicTrackingMapHint" class="portal-message">${active ? "El marcador azul representa al técnico y el verde el destino." : "Tu solicitud está siendo preparada."}</p>
             `;
@@ -12088,6 +12141,14 @@
           const liveStatus = document.getElementById("publicTrackingLiveStatus");
           if (liveStatus) {
             liveStatus.innerHTML = `<strong>${escapeHtml(locationMessage)}</strong><span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at))}</span>${data.accuracy_m == null ? "" : `<span>Precisión: ${escapeHtml(data.accuracy_m)} m</span>`}`;
+            const existingEtaCard = document.querySelector(".public-tracking-eta-card");
+            if (data.route_available) {
+              const etaMarkup = `<div class="public-tracking-eta-card"><div><small>Llegada estimada</small><strong>${escapeHtml(formatRouteDuration(data.route_duration_s))}</strong></div><div><small>Distancia restante</small><strong>${escapeHtml(formatRouteDistance(data.route_distance_m))}</strong></div><div><small>Hora estimada</small><strong>${escapeHtml(formatRouteEta(data.route_eta_at))}</strong></div></div>`;
+              if (existingEtaCard) existingEtaCard.outerHTML = etaMarkup;
+              else liveStatus.insertAdjacentHTML("afterend", etaMarkup);
+            } else if (existingEtaCard) existingEtaCard.remove();
+            const proximity = document.getElementById("publicTrackingProximity");
+            if (proximity) proximity.textContent = data.route_available ? trackingProximityMessage(data.route_distance_m) : locationMessage;
           }
           const mapElement = document.getElementById("publicTrackingMap");
           if (!mapElement || !window.L || window.leafletLoadFailed) return;

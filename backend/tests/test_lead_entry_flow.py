@@ -1191,6 +1191,20 @@ def test_public_tracking_portal_uses_safe_statuses_and_live_leaflet_polling():
     assert "L.polyline" in html
     assert "formatRouteDistance" in html
     assert "formatRouteDuration" in html
+    assert "public-tracking-eta-card" in html
+    assert "Llegada estimada" in html
+    assert "Distancia restante" in html
+    assert "Hora estimada" in html
+    assert "trackingProximityMessage" in html
+    assert "Tu técnico se está acercando" in html
+    assert "Tu técnico está cerca" in html
+    assert "Tu técnico está llegando" in html
+    assert "ETA aproximado" in html
+    assert "Ubicación interrumpida" in html
+    assert "Ruta temporalmente no disponible" in html
+    assert "trackingOperationsHasFitted" in html
+    assert "fitBounds(bounds" in html
+    assert "setLatLngs(routeGeometry)" in html
     assert "setTimeout(pollTracking, 12000)" in html
     assert "SALES_QUEUE" not in html.split("async function renderTracking", 1)[1].split("function bindForm", 1)[0]
 
