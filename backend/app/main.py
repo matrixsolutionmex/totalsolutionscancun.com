@@ -378,6 +378,7 @@ def create_database_tables():
         pricing_columns = {
             "pricing_service_type": "VARCHAR", "pricing_segment": "VARCHAR(30)", "pricing_zone": "VARCHAR(20)",
             "visit_base_price": "NUMERIC(12, 2)", "travel_surcharge": "NUMERIC(12, 2)",
+            "market_reference_min": "NUMERIC(12, 2)", "market_reference_max": "NUMERIC(12, 2)",
             "urgency_level": "VARCHAR(20)", "urgency_multiplier": "NUMERIC(6, 3)",
             "visit_calculated_price": "NUMERIC(12, 2)", "market_reference_min": "NUMERIC(12, 2)",
             "market_reference_max": "NUMERIC(12, 2)", "customer_budget_min": "NUMERIC(12, 2)",
@@ -399,6 +400,8 @@ def create_database_tables():
         }
         for column_name, column_definition in opportunity_pricing_columns.items():
             add_column_if_missing(db, "service_opportunities", column_name, column_definition)
+        add_column_if_missing(db, "pricing_rates", "market_reference_min", "NUMERIC(12, 2)")
+        add_column_if_missing(db, "pricing_rates", "market_reference_max", "NUMERIC(12, 2)")
         seed_default_pricing_rates(db)
         add_column_if_missing(db, "leads", "foto_fachada_url", "VARCHAR")
         add_column_if_missing(db, "leads", "property_extra_json", "VARCHAR")

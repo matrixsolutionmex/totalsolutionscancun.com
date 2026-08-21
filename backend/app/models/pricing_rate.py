@@ -19,6 +19,8 @@ class PricingRate(Base):
     pricing_zone = Column(String(20), nullable=False, default="Z0", index=True)
     visit_base_price = Column(Numeric(12, 2), nullable=False)
     travel_surcharge = Column(Numeric(12, 2), nullable=False, default=0)
+    market_reference_min = Column(Numeric(12, 2), nullable=True)
+    market_reference_max = Column(Numeric(12, 2), nullable=True)
     pricing_version = Column(String(40), nullable=False, default="CANCUN_V1")
     active = Column(Boolean, nullable=False, default=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

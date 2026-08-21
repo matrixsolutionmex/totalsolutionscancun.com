@@ -12140,7 +12140,8 @@
                 <p>Referencia de visita</p>
                 <strong>${data.pricing.visit_calculated_price == null ? "Se definirá tras diagnóstico" : `${data.pricing.currency || "MXN"} ${Number(data.pricing.visit_calculated_price).toLocaleString("es-MX", { minimumFractionDigits: 2 })}`}</strong>
                 <p>Zona: ${escapeHtml(data.pricing.zone || "-")} · Urgencia: ${escapeHtml(data.pricing.urgency_multiplier ? `x${data.pricing.urgency_multiplier}` : "-")}</p>
-                <p>${data.pricing.estimate_available ? "Rango de mercado disponible" : "Sin rango de mercado: requiere diagnóstico"}</p>
+                <p>Referencia Total Solutions: <strong>${data.pricing.market_reference_min == null ? "Aguardando diagnóstico" : `MX$${Number(data.pricing.market_reference_min).toLocaleString("en-US")} — MX$${Number(data.pricing.market_reference_max).toLocaleString("en-US")}`}</strong></p>
+                <p>Referencia preliminar basada en la categoría del servicio. El precio final depende del diagnóstico técnico.</p>
               </div>` : ""}
               <div class="portal-actions" style="margin-top: 18px;">
                 <a class="portal-button" href="${trackingUrl}">Acompanhar solicitud</a>

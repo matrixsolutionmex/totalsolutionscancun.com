@@ -31,7 +31,7 @@ def test_cancun_matrix_calculates_visit_and_urgency_without_osrm():
         assert high["visit_calculated_price"] == 562.5
         assert emergency["pricing_zone"] == "Z1"
         assert emergency["visit_calculated_price"] == 1280.0
-        assert emergency["estimate_available"] is False
+        assert emergency["estimate_available"] is True
         assert emergency["requires_diagnosis"] is True
     finally:
         db.close()
@@ -51,7 +51,8 @@ def test_matrix_separates_residential_and_commercial_and_preserves_budget():
         assert result["visit_calculated_price"] == 900.0
         assert result["customer_budget_min"] == 1200.0
         assert result["customer_budget_max"] == 3000.0
-        assert result["market_reference_min"] is None
+        assert result["market_reference_min"] == 650.0
+        assert result["market_reference_max"] == 2800.0
     finally:
         db.close()
 
@@ -65,6 +66,26 @@ def test_unknown_service_or_city_does_not_invent_price():
         assert outside["estimate_available"] is False
         assert outside["visit_calculated_price"] is None
         assert unknown["visit_calculated_price"] is None
+    finally:
+        db.close()
+
+
+def test_market_reference_matrix_examples_are_segmented_and_not_final_price():
+    db = pricing_db()
+    try:
+        seed_default_pricing_rates(db)
+        cases = [
+            ("Plomería", "Casa", (450.0, 1800.0)),
+            ("Electricidad", "Hotel", (700.0, 3000.0)),
+            ("Aire acondicionado", "residencial", (900.0, 2200.0)),
+            ("Limpieza técnica", "comercial", (900.0, 3500.0)),
+        ]
+        for service, segment, expected in cases:
+            result = calculate_preliminary_pricing(db, service, segment, {"locality": "Cancun"}, "EMERGENCIA")
+            assert (result["market_reference_min"], result["market_reference_max"]) == expected
+            assert result["market_reference_max"] != result["visit_calculated_price"]
+        unknown_segment = calculate_preliminary_pricing(db, "Electricidad", "segmento futuro", {"locality": "Cancun"})
+        assert unknown_segment["segment"] == "RESIDENTIAL"
     finally:
         db.close()
 
