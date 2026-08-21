@@ -20,6 +20,10 @@ from app.services.lead_creation_service import create_lead_record
 from app.services.entitlement_service import current_plan
 from app.services.pablo_location_service import get_active_location
 from app.services.service_order_service import ensure_service_order
+from app.services.operational_notification_service import (
+    OperationalEvent,
+    emit_operational_notification,
+)
 
 
 AVAILABLE = "AVAILABLE"
@@ -217,6 +221,14 @@ def create_opportunity_from_service_request(db: Session, service_request: Servic
                      actor_id=None, actor_name="Sistema", event_type="MARKETPLACE_OPPORTUNITY_CREATED",
                      message="Oportunidade de marketplace criada a partir de solicitação de serviço"))
     db.flush()
+    emit_operational_notification(
+        db,
+        event_type=OperationalEvent.MARKETPLACE_SERVICE_CREATED,
+        organization_id=service_request.organization_id,
+        service_request_id=service_request.id,
+        service_order_id=opportunity.service_order_id,
+        opportunity_id=opportunity.id,
+    )
     return opportunity
 
 

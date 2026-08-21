@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 class NotificationResponse(BaseModel):
     id: int
+    organization_id: int | None = None
     recipient_user_id: int
     actor_user_id: int | None = None
     actor_name: str | None = None

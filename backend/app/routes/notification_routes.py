@@ -35,6 +35,7 @@ def notification_payload(db: Session, notification: Notification) -> Notificatio
 
     return NotificationResponse(
         id=notification.id,
+        organization_id=notification.organization_id,
         recipient_user_id=notification.recipient_user_id,
         actor_user_id=notification.actor_user_id,
         actor_name=(actor.full_name or actor.username) if actor else None,

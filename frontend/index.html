@@ -1988,9 +1988,16 @@
       border-left: 3px solid var(--green);
     }
 
+    .notification-row.priority-high,
     .notification-row.priority-urgente {
       border-left-color: #dc2626;
       background: rgba(220, 38, 38, 0.08);
+    }
+
+    .notification-row.priority-critical {
+      border-left-color: #7f1d1d;
+      background: rgba(127, 29, 29, 0.12);
+      box-shadow: inset 0 0 0 1px rgba(127, 29, 29, 0.18);
     }
 
     .notification-title {
@@ -2154,6 +2161,15 @@
 
     .notification-toast.priority-urgente {
       border-left-color: #dc2626;
+    }
+
+    .notification-toast.priority-high {
+      border-left-color: #dc2626;
+    }
+
+    .notification-toast.priority-critical {
+      border-left-color: #7f1d1d;
+      box-shadow: 0 22px 58px rgba(127, 29, 29, 0.28);
     }
 
     @keyframes notificationFade {
@@ -7125,7 +7141,12 @@
     }
 
     function notificationPriorityClass(notification) {
-      return String(notification.priority || "").toUpperCase() === "URGENTE" ? "priority-urgente" : "";
+      const priority = String(notification.priority || "NORMAL").toUpperCase();
+      if (priority === "CRITICAL") return "priority-critical";
+      if (priority === "HIGH") return "priority-high";
+      if (priority === "URGENTE") return "priority-urgente";
+      if (priority === "INFO") return "priority-info";
+      return "priority-normal";
     }
 
     function notificationHighWaterKey() {
