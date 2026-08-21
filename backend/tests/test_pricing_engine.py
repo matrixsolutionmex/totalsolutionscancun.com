@@ -132,3 +132,15 @@ def test_technician_marketplace_cards_render_customer_budget_and_reference_separ
     assert "Referencia Total Solutions" in frontend
     assert "marketplaceBudget(item)" in frontend
     assert "marketplaceReference(item)" in frontend
+
+
+def test_operational_order_card_keeps_budget_independent_from_final_service_value():
+    frontend = Path(__file__).parents[2].joinpath("frontend", "index.html").read_text()
+    service = Path(__file__).parents[1].joinpath("app", "services", "marketplace_service.py").read_text()
+    schema = Path(__file__).parents[1].joinpath("app", "schemas", "lead_schema.py").read_text()
+    assert "renderOperationalPricing(lead, order)" in frontend
+    assert "final_service_price" in frontend
+    assert "customer_budget_min" in frontend and "customer_budget_max" in frontend
+    assert "Pendiente de diagnóstico" in frontend
+    assert "Keep the accepted opportunity's commercial snapshot" in service
+    assert "final_service_price: float | None" in schema

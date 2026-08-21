@@ -282,6 +282,14 @@ def _claim_for_user(db: Session, actor: User, target: User, public_id: str, *, a
     if not order:
         order = ensure_service_order(db, lead, actor=actor)
         opportunity.service_order_id = order.id
+    # Keep the accepted opportunity's commercial snapshot independent from the final quote.
+    for field in (
+        "pricing_service_type", "pricing_zone", "visit_calculated_price", "market_reference_min",
+        "market_reference_max", "customer_budget_min", "customer_budget_max", "pricing_currency",
+        "pricing_version", "pricing_distance_km", "pricing_duration_minutes", "pricing_snapshot_json",
+    ):
+        if hasattr(order, field) and hasattr(opportunity, field):
+            setattr(order, field, getattr(opportunity, field))
     order.responsible_user_id = target.id
     order.updated_at = now
     db.add(LeadEvent(organization_id=opportunity.organization_id, lead_id=lead.id, actor_id=actor.id,

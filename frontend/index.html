@@ -6168,6 +6168,27 @@
       </div>`;
     }
 
+    function renderOperationalPricing(lead, order) {
+      const snapshot = order || {};
+      const finalValue = snapshot.final_service_price != null
+        ? snapshot.final_service_price
+        : (Number(lead?.valor_negocio || 0) > 0 ? lead.valor_negocio : null);
+      const hasSnapshot = snapshot.customer_budget_min != null || snapshot.customer_budget_max != null
+        || snapshot.pricing_zone || snapshot.pricing_version;
+      if (!hasSnapshot && finalValue == null) {
+        return `<div class="deal-value">Valor del servicio: Pendiente de diagnóstico</div>`;
+      }
+      const budget = marketplaceBudget(snapshot);
+      const reference = marketplaceReference(snapshot);
+      const visit = marketplaceMoney(snapshot.visit_calculated_price, snapshot.pricing_currency || "MXN");
+      return `<div class="operational-pricing-summary">
+        <div class="status">Presupuesto del cliente: <strong>${marketplaceValue(budget)}</strong></div>
+        <div class="status">Referencia Total Solutions: <strong>${marketplaceValue(reference)}</strong></div>
+        <div class="status">Visita técnica: <strong>${marketplaceValue(visit === "No informado" ? "A definir" : visit)}</strong> · Zona: <strong>${marketplaceValue(snapshot.pricing_zone)}</strong></div>
+        ${finalValue == null ? '<div class="status">Valor del servicio: <strong>Pendiente de diagnóstico</strong></div>' : `<div class="deal-value">Valor del servicio: ${formatCurrency(finalValue)}</div>`}
+      </div>`;
+    }
+
     function trackingOperationsDate(value) {
       if (!value) return "-";
       const date = new Date(value);
@@ -6701,7 +6722,7 @@
           <div class="lead-country"><span class="flag">${country.flag}</span>${escapeHtml(territory)}</div>
           <div class="status">${t("status")}: <span>${escapeHtml(stageLabel(lead.pipeline))}</span></div>
           <div class="status">${t("score")}: <span>${lead.score ?? 0}</span></div>
-          <div class="deal-value">${t("deal")}: ${formatCurrency(value)}</div>
+          ${renderOperationalPricing(lead, order)}
           <div class="divider"></div>
           <div class="line"><strong>☎</strong>${escapeHtml(contact)}</div>
           <div class="line"><strong>✉</strong>${emailLineTemplate(lead.email)}</div>
