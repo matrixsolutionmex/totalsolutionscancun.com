@@ -12,6 +12,7 @@ from app.models.service_order_tracking import ServiceOrderTracking
 from app.models.user import User
 from app.services.customer_portal_service import public_tracking_url
 from app.services.route_intelligence_service import calculate_route
+from app.services.tracking_state_service import is_tracking_session_active, tracking_session_state
 from app.services.tracking_health_service import tracking_health
 
 
@@ -177,15 +178,16 @@ def list_active_tracking_for_actor(db: Session, actor: User) -> list[dict]:
         lead = order.lead
         service_request = order.service_request
         health = tracking_health(tracking)
-        orphaned = (
-            (order.status or "").strip().upper() != "EN_CAMINO"
-            or not order.responsible_user_id
+        session_state = tracking_session_state(order, tracking)
+        orphaned = session_state != "ACTIVE" or (
+            not order.responsible_user_id
             or order.responsible_user_id != tracking.technician_id
         )
         active_routes.append({
             "service_order_id": order.id,
             "order_number": order.order_number,
             "status": order.status,
+            "session_state": "ORPHANED" if orphaned else session_state,
             "tracking_state": "ORPHANED" if orphaned else health["tracking_health"],
             "tracking_health": health["tracking_health"],
             "client_name": lead.nome if lead else None,
@@ -215,15 +217,17 @@ def start_tracking(db: Session, order_id: int, actor: User, consent_granted: boo
     if (order.status or "").upper() in TERMINAL_ORDER_STATUSES:
         raise HTTPException(status_code=409, detail="A OS ja foi encerrada")
     normalized_status = (order.status or "").strip().upper()
+    existing_tracking = db.query(ServiceOrderTracking).filter(ServiceOrderTracking.service_order_id == order.id).first()
     if normalized_status == "EN_CAMINO":
-        existing_tracking = db.query(ServiceOrderTracking).filter(ServiceOrderTracking.service_order_id == order.id).first()
         if existing_tracking and existing_tracking.tracking_active:
             return {"service_order_id": order.id, "order_number": order.order_number, "status": order.status, "tracking": serialize_tracking(existing_tracking)}
-        raise HTTPException(status_code=409, detail="A OS esta em rota, mas o tracking nao esta ativo")
-    if not order.tracking_start_allowed:
+        if existing_tracking and existing_tracking.stopped_at is None:
+            raise HTTPException(status_code=409, detail="A OS esta em rota, mas o tracking nao esta ativo")
+    restarting_stopped_session = bool(existing_tracking and existing_tracking.stopped_at is not None)
+    if not order.tracking_start_allowed and not restarting_stopped_session:
         raise HTTPException(status_code=409, detail="A OS nao esta pronta para iniciar a rota")
     now = datetime.utcnow()
-    tracking = db.query(ServiceOrderTracking).filter(ServiceOrderTracking.service_order_id == order.id).first()
+    tracking = existing_tracking
     if tracking and tracking.tracking_active:
         return {"service_order_id": order.id, "order_number": order.order_number, "status": order.status, "tracking": serialize_tracking(tracking)}
     if not tracking:

@@ -22,6 +22,7 @@ from app.services.service_order_service import ensure_service_order
 from app.services.location_service import normalize_service_location
 from app.services.route_intelligence_service import calculate_route
 from app.services.tracking_health_service import tracking_health
+from app.services.tracking_state_service import is_tracking_session_active, tracking_session_state
 from app.services.pricing_engine_service import calculate_preliminary_pricing, pricing_snapshot
 from app.services.localization_service import normalize_language
 
@@ -383,8 +384,11 @@ PUBLIC_OPERATIONAL_STATUS_LABELS = {
 def _public_operational_status(request: ServiceRequest, order) -> str:
     internal_status = (getattr(order, "status", None) or request.status or "SALES_QUEUE").strip().upper()
     language = normalize_language(request.public_language)
-    if internal_status == "EN_CAMINO" and getattr(getattr(order, "tracking", None), "stopped_at", None):
+    session_state = tracking_session_state(order, getattr(order, "tracking", None))
+    if session_state == "STOPPED":
         return {"es": "Ruta finalizada", "en": "Route finished", "pt-BR": "Rota finalizada"}[language]
+    if session_state == "ORPHANED":
+        return {"es": "Ruta no disponible", "en": "Route unavailable", "pt-BR": "Rota indisponível"}[language]
     labels = {
         "es": PUBLIC_OPERATIONAL_STATUS_LABELS,
         "en": {"SALES_QUEUE": "Request received", "ASSIGNED": "Technician assigned", "ACCEPTED": "Technician assigned", "EN_CAMINO": "Technician on the way", "ARRIVED": "Technician arrived", "EM_ATENDIMENTO": "Service in progress", "CONCLUIDA": "Service completed", "CANCELADA": "Cancelled"},
@@ -397,12 +401,7 @@ def service_request_public_tracking(request: ServiceRequest) -> dict[str, Any]:
     """Serialize only current, token-authorized tracking data for the customer portal."""
     order = request.service_order
     tracking = getattr(order, "tracking", None) if order else None
-    tracking_active = bool(
-        tracking
-        and tracking.tracking_active
-        and order
-        and (order.status or "").strip().upper() == "EN_CAMINO"
-    )
+    tracking_active = is_tracking_session_active(order, tracking)
     property_record = request.property_record
     destination_lat = getattr(order, "location_lat", None) if order else None
     destination_lng = getattr(order, "location_lng", None) if order else None

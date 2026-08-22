@@ -32,6 +32,7 @@ from app.services.service_order_tracking_service import (
     update_tracking_position,
 )
 from app.services.tracking_health_service import tracking_health
+from app.services.tracking_state_service import is_tracking_session_active, tracking_session_state
 
 
 @pytest.fixture()
@@ -125,6 +126,45 @@ def test_assigned_technician_starts_with_consent_and_no_automatic_gps(db):
     assert result["tracking"]["consent_granted_at"] is not None
     assert db.query(ServiceOrderTracking).count() == 1
     assert db.query(LeadEvent).filter(LeadEvent.event_type == "TRACKING_STARTED").count() == 1
+
+
+def test_tracking_state_is_canonical_and_restart_clears_stopped_at(db):
+    org = make_org(db, "tracking-canonical")
+    technician = make_user(db, "tecnico-canonical", "BROKER", org)
+    order = make_order(db, org, technician)
+
+    start_tracking(db, order.id, technician, True)
+    tracking = db.query(ServiceOrderTracking).filter_by(service_order_id=order.id).one()
+    assert tracking_session_state(order, tracking) == "ACTIVE"
+    assert is_tracking_session_active(order, tracking) is True
+
+    stop_tracking(db, order.id, technician, "MANUAL")
+    db.refresh(order)
+    db.refresh(tracking)
+    assert tracking_session_state(order, tracking) == "STOPPED"
+    assert tracking.tracking_active is False
+    assert tracking.stopped_at is not None
+
+    restarted = start_tracking(db, order.id, technician, True)
+    db.refresh(tracking)
+    assert restarted["status"] == "EN_CAMINO"
+    assert tracking.tracking_active is True
+    assert tracking.stopped_at is None
+    assert tracking_session_state(order, tracking) == "ACTIVE"
+
+
+def test_tracking_state_marks_active_stopped_and_wrong_status_as_orphaned(db):
+    org = make_org(db, "tracking-canonical-orphaned")
+    technician = make_user(db, "tecnico-canonical-orphaned", "BROKER", org)
+    order = make_order(db, org, technician)
+    start_tracking(db, order.id, technician, True)
+    tracking = db.query(ServiceOrderTracking).filter_by(service_order_id=order.id).one()
+
+    tracking.stopped_at = datetime.utcnow()
+    assert tracking_session_state(order, tracking) == "ORPHANED"
+    tracking.stopped_at = None
+    order.status = "EM_ATENDIMENTO"
+    assert tracking_session_state(order, tracking) == "ORPHANED"
 
 
 def test_cotizacion_enviada_is_not_startable_and_frontend_rule_matches_backend(db):

@@ -1,7 +1,7 @@
 import json
 import re
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -1218,6 +1218,8 @@ def test_public_tracking_portal_uses_safe_statuses_and_live_leaflet_polling():
     assert "Ubicación interrumpida" in html
     assert "Ruta temporalmente no disponible" in html
     assert "trackingOperationsHasFitted" in html
+    assert "last_location_updated_at, data.technician_display_name" in html
+    assert "Esperando actualización de ubicación" in html
     assert "fitBounds(bounds" in html
     assert "setLatLngs(routeGeometry)" in html
     assert "setTimeout(pollTracking, 12000)" in html
@@ -1225,6 +1227,41 @@ def test_public_tracking_portal_uses_safe_statuses_and_live_leaflet_polling():
     assert "Recalculando ruta..." in html
     assert "else if (!active && routePolyline)" in html
     assert "SALES_QUEUE" not in html.split("async function renderTracking", 1)[1].split("function bindForm", 1)[0]
+
+
+def test_public_tracking_uses_canonical_state_for_stale_and_orphaned_sessions(db):
+    organization = make_organization(db, "public-canonical-state", "Public Canonical State")
+    technician = make_user(db, "tech-public-canonical", "BROKER", organization_id=organization.id)
+    service_request = create_customer_request_and_order(
+        db,
+        make_portal_payload(idempotency_key="public-canonical-state"),
+    )
+    order = service_request.service_order
+    order.responsible_user_id = technician.id
+    db.commit()
+
+    start_tracking(db, order.id, technician, True)
+    update_tracking_position(db, order.id, technician, 21.1610, -86.8505, 12)
+    tracking = order.tracking
+    tracking.updated_at = datetime.utcnow() - timedelta(seconds=45)
+    db.commit()
+    db.expire_all()
+
+    db.refresh(service_request)
+    stale = service_request_public_tracking(service_request)
+    assert stale["tracking_active"] is True
+    assert stale["tracking_health"] == "STALE"
+    assert stale["operational_status"] == "Técnico en camino"
+
+    tracking = db.query(ServiceOrderTracking).filter_by(service_order_id=order.id).one()
+    tracking.stopped_at = datetime.utcnow()
+    db.commit()
+    db.expire_all()
+    db.refresh(service_request)
+    orphaned = service_request_public_tracking(service_request)
+    assert orphaned["tracking_active"] is False
+    assert orphaned["operational_status"] == "Ruta no disponible"
+    assert orphaned["technician_lat"] is None
 
 
 def test_reverse_geocode_normalizes_osm_address_fields():

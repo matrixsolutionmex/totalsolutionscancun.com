@@ -12396,8 +12396,10 @@
           const date = new Date(value);
           return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
         };
-        const trackingAgeLabel = (value) => {
-          if (!value) return `${pt("technician")}: ${pt("loading")}`;
+        const trackingAgeLabel = (value, technicianName) => {
+          if (!value) return technicianName
+            ? (portalLanguage === "en" ? "Waiting for location update" : portalLanguage === "pt-BR" ? "Aguardando atualização de localização" : "Esperando actualización de ubicación")
+            : `${pt("technician")}: ${pt("loading")}`;
           const ageSeconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000));
           return ageSeconds < 5 ? (portalLanguage === "en" ? "Updated now" : portalLanguage === "pt-BR" ? "Atualizada agora" : "Actualizada ahora") : `${portalLanguage === "en" ? "Last update" : portalLanguage === "pt-BR" ? "Última atualização há" : "Última actualización hace"} ${ageSeconds} ${portalLanguage === "en" ? "seconds ago" : portalLanguage === "pt-BR" ? "segundos" : "segundos"}`;
         };
@@ -12447,7 +12449,7 @@
                 <p id="publicTrackingTechnician">${pt("technician")}: <strong>${escapeHtml(data.technician_display_name || pt("loading"))}</strong></p>
                 ${data.route_started_at ? `<p>${pt("departure")}: <strong>${escapeHtml(formatTrackingDate(data.route_started_at))}</strong></p>` : ""}
               </div>
-              <div class="public-tracking-status" id="publicTrackingLiveStatus"><strong>${escapeHtml(locationMessage)}</strong><span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at))}</span>${data.accuracy_m == null ? "" : `<span>Precisión: ${escapeHtml(data.accuracy_m)} m</span>`}</div>
+              <div class="public-tracking-status" id="publicTrackingLiveStatus"><strong>${escapeHtml(locationMessage)}</strong><span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at, data.technician_display_name))}</span>${data.accuracy_m == null ? "" : `<span>Precisión: ${escapeHtml(data.accuracy_m)} m</span>`}</div>
               ${displayRouteAvailable ? `<div class="public-tracking-eta-card"><div><small>${portalLanguage === "en" ? "Estimated arrival" : portalLanguage === "pt-BR" ? "Chegada estimada" : "Llegada estimada"}</small><strong>${escapeHtml(formatRouteDuration(displayRoute.route_duration_s))}</strong></div><div><small>${portalLanguage === "en" ? "Distance remaining" : portalLanguage === "pt-BR" ? "Distância restante" : "Distancia restante"}</small><strong>${escapeHtml(formatRouteDistance(displayRoute.route_distance_m))}</strong></div><div><small>${portalLanguage === "en" ? "Estimated time" : portalLanguage === "pt-BR" ? "Hora estimada" : "Hora estimada"}</small><strong>${escapeHtml(formatRouteEta(displayRoute.route_eta_at))}</strong></div></div>` : ""}
               <p id="publicTrackingProximity" class="portal-message">${escapeHtml(displayRouteAvailable ? trackingProximityMessage(displayRoute.route_distance_m) : locationMessage)}</p>
               ${(active || hasDestination) ? '<div id="publicTrackingMap" class="public-tracking-map" aria-label="Mapa de seguimiento del servicio"></div>' : ""}
@@ -12460,7 +12462,7 @@
             technicianElement.innerHTML = `${pt("technician")}: <strong>${escapeHtml(data.technician_display_name || pt("loading"))}</strong>`;
           }
           if (liveStatus) {
-            liveStatus.innerHTML = `<strong>${escapeHtml(locationMessage)}</strong><span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at))}</span>${data.accuracy_m == null ? "" : `<span>Precisión: ${escapeHtml(data.accuracy_m)} m</span>`}`;
+            liveStatus.innerHTML = `<strong>${escapeHtml(locationMessage)}</strong><span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at, data.technician_display_name))}</span>${data.accuracy_m == null ? "" : `<span>Precisión: ${escapeHtml(data.accuracy_m)} m</span>`}`;
             const existingEtaCard = document.querySelector(".public-tracking-eta-card");
             if (displayRouteAvailable) {
               const etaMarkup = `<div class="public-tracking-eta-card"><div><small>${portalLanguage === "en" ? "Estimated arrival" : portalLanguage === "pt-BR" ? "Chegada estimada" : "Llegada estimada"}</small><strong>${escapeHtml(formatRouteDuration(displayRoute.route_duration_s))}</strong></div><div><small>${portalLanguage === "en" ? "Distance remaining" : portalLanguage === "pt-BR" ? "Distância restante" : "Distancia restante"}</small><strong>${escapeHtml(formatRouteDistance(displayRoute.route_distance_m))}</strong></div><div><small>${portalLanguage === "en" ? "Estimated time" : portalLanguage === "pt-BR" ? "Hora estimada" : "Hora estimada"}</small><strong>${escapeHtml(formatRouteEta(displayRoute.route_eta_at))}</strong></div></div>`;
