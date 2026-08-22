@@ -1200,6 +1200,16 @@ def test_public_tracking_portal_uses_safe_statuses_and_live_leaflet_polling():
     assert "Tu técnico se está acercando" in html
     assert "Tu técnico está cerca" in html
     assert "Tu técnico está llegando" in html
+    assert "Your technician is on the way" in html
+    assert "Your technician is arriving" in html
+    assert "Your technician is nearby" in html
+    assert "Your technician is getting closer" in html
+    assert "Seu técnico está a caminho" in html
+    assert "Seu técnico está chegando" in html
+    assert "Seu técnico está perto" in html
+    assert "Seu técnico está se aproximando" in html
+    assert 'portalLanguage === "en"' in html
+    assert 'portalLanguage === "pt-BR"' in html
     assert "ETA aproximado" in html
     assert "Ubicación interrumpida" in html
     assert "Ruta temporalmente no disponible" in html

@@ -6332,11 +6332,16 @@
 
     function trackingProximityMessage(distance) {
       const numeric = Number(distance);
-      if (!Number.isFinite(numeric) || numeric < 0) return "Tu técnico está en camino";
-      if (numeric < 300) return "Tu técnico está llegando";
-      if (numeric < 1000) return "Tu técnico está cerca";
-      if (numeric <= 5000) return "Tu técnico se está acercando";
-      return "Tu técnico está en camino";
+      const messages = portalLanguage === "en"
+        ? { onWay: "Your technician is on the way", arriving: "Your technician is arriving", near: "Your technician is nearby", approaching: "Your technician is getting closer" }
+        : portalLanguage === "pt-BR"
+          ? { onWay: "Seu técnico está a caminho", arriving: "Seu técnico está chegando", near: "Seu técnico está perto", approaching: "Seu técnico está se aproximando" }
+          : { onWay: "Tu técnico está en camino", arriving: "Tu técnico está llegando", near: "Tu técnico está cerca", approaching: "Tu técnico se está acercando" };
+      if (!Number.isFinite(numeric) || numeric < 0) return messages.onWay;
+      if (numeric < 300) return messages.arriving;
+      if (numeric < 1000) return messages.near;
+      if (numeric <= 5000) return messages.approaching;
+      return messages.onWay;
     }
 
     function renderTrackingOperationsRoutes(routes) {
