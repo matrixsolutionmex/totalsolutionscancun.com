@@ -690,4 +690,12 @@ def service_worker():
 
 @app.get("/health")
 def health():
-    return {"status": "online"}
+    git_sha = next(
+        (
+            os.getenv(name, "").strip()
+            for name in ("RAILWAY_GIT_COMMIT_SHA", "GIT_SHA", "COMMIT_SHA", "APP_VERSION")
+            if os.getenv(name, "").strip()
+        ),
+        "unknown",
+    )
+    return {"status": "online", "version": git_sha, "git_sha": git_sha}

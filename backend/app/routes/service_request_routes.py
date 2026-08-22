@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.auth.jwt_handler import get_current_user as get_actor, get_db, require_admin_user
+from app.auth.jwt_handler import get_current_user as get_actor, get_db, require_admin_user, require_root_user
 from app.models.lead_event import LeadEvent
 from app.models.service_order import ServiceOrder
 from app.models.service_request import ServiceRequest
@@ -21,6 +21,7 @@ from app.services.service_order_tracking_service import (
     update_tracking_position,
     heartbeat_tracking,
     record_tracking_diagnostic,
+    diagnose_tracking_for_root,
 )
 
 
@@ -210,6 +211,15 @@ def list_active_service_order_tracking(
     actor: User = Depends(require_admin_user),
 ):
     return {"routes": list_active_tracking_for_actor(db, actor)}
+
+
+@router.get("/admin/tracking/diagnostic/{service_order_id}")
+def admin_tracking_diagnostic(
+    service_order_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    return diagnose_tracking_for_root(db, service_order_id, actor)
 
 
 @router.post("/service-orders/{order_id}/tracking/admin-stop")

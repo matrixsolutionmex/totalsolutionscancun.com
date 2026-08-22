@@ -21,6 +21,7 @@ from app.schemas.lead_schema import LeadResponse
 from app.services.service_order_tracking_service import (
     admin_stop_all_tracking,
     admin_stop_tracking,
+    diagnose_tracking_for_root,
     get_tracking_for_actor,
     heartbeat_tracking,
     record_tracking_diagnostic,
@@ -162,9 +163,68 @@ def test_tracking_state_marks_active_stopped_and_wrong_status_as_orphaned(db):
 
     tracking.stopped_at = datetime.utcnow()
     assert tracking_session_state(order, tracking) == "ORPHANED"
+
+
+def test_root_tracking_diagnostic_matches_public_projection_and_detects_inconsistency(db):
+    org = make_org(db, "tracking-diagnostic")
+    root = make_user(db, "root-diagnostic", "ROOT", org)
+    manager = make_user(db, "manager-diagnostic", "GERENTE", org)
+    technician = make_user(db, "technician-diagnostic", "BROKER", org)
+    order = make_order(db, org, technician, supervisor=manager)
+    order.service_request = ServiceRequest(
+        organization_id=org.id,
+        lead_id=order.lead_id,
+        tracking_token="diagnostic-token",
+        requester_name="Diagnostic Customer",
+        service_category="TEST",
+        status="ASSIGNED",
+    )
+    db.add(order.service_request)
+    db.commit()
+    start_tracking(db, order.id, technician, True)
+    update_tracking_position(db, order.id, technician, 21.1610, -86.8505, 12)
+    db.expire_all()
+
+    diagnostic = diagnose_tracking_for_root(db, order.id, root)
+    assert diagnostic["canonical"]["session_state"] == "ACTIVE"
+    assert diagnostic["tracking"]["tracking_active"] is True
+    assert diagnostic["tracking_record_count"] == 1
+    assert diagnostic["tracking_service_order_unique_constraint"] is True
+    assert diagnostic["public_projection"]["tracking_active"] is True
+    assert diagnostic["public_projection"]["technician_display_name"] == technician.full_name
+    assert "MULTIPLE_TRACKING_RECORDS" not in diagnostic["inconsistencies"]
+
+    tracking = db.query(ServiceOrderTracking).filter_by(service_order_id=order.id).one()
+    tracking.stopped_at = datetime.utcnow()
+    db.commit()
+    db.expire_all()
+    orphaned = diagnose_tracking_for_root(db, order.id, root)
+    assert orphaned["canonical"]["session_state"] == "ORPHANED"
+    assert "ACTIVE_WITH_STOPPED_AT" in orphaned["inconsistencies"]
+    assert "PUBLIC_ADMIN_ACTIVE_MISMATCH" in orphaned["inconsistencies"]
+
+    with pytest.raises(HTTPException) as blocked:
+        diagnose_tracking_for_root(db, order.id, manager)
+    assert blocked.value.status_code == 403
+    with pytest.raises(HTTPException) as blocked:
+        diagnose_tracking_for_root(db, order.id, technician)
+    assert blocked.value.status_code == 403
     tracking.stopped_at = None
     order.status = "EM_ATENDIMENTO"
     assert tracking_session_state(order, tracking) == "ORPHANED"
+
+
+def test_health_exposes_safe_deploy_sha_from_environment(monkeypatch):
+    from app.main import health
+
+    monkeypatch.delenv("RAILWAY_GIT_COMMIT_SHA", raising=False)
+    monkeypatch.delenv("GIT_SHA", raising=False)
+    monkeypatch.delenv("COMMIT_SHA", raising=False)
+    monkeypatch.delenv("APP_VERSION", raising=False)
+    assert health() == {"status": "online", "version": "unknown", "git_sha": "unknown"}
+
+    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "abc123")
+    assert health() == {"status": "online", "version": "abc123", "git_sha": "abc123"}
 
 
 def test_cotizacion_enviada_is_not_startable_and_frontend_rule_matches_backend(db):

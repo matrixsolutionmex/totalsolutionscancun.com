@@ -404,3 +404,107 @@ def admin_stop_all_tracking(db: Session, actor: User, reason: str) -> list[dict]
     for route in routes:
         results.append(admin_stop_tracking(db, route["service_order_id"], actor, normalized_reason))
     return results
+
+
+def diagnose_tracking_for_root(db: Session, order_id: int, actor: User) -> dict:
+    """Build a read-only comparison of backend and public tracking projections."""
+    if actor.role != "ROOT":
+        raise HTTPException(status_code=403, detail="Somente root pode consultar este diagnostico")
+    order = _order_for_actor(db, order_id, actor)
+    tracking_records = (
+        db.query(ServiceOrderTracking)
+        .filter(ServiceOrderTracking.service_order_id == order.id)
+        .order_by(ServiceOrderTracking.id)
+        .all()
+    )
+    tracking = order.tracking
+    session_state = tracking_session_state(order, tracking)
+    health = tracking_health(tracking)
+    technician = getattr(tracking, "technician", None) if tracking else None
+    technician_name = _actor_name(technician) if technician else None
+    route = route_for_order(order, tracking)
+
+    # Import locally because the tracking service already owns the public URL helper.
+    from app.services.customer_portal_service import service_request_public_tracking
+
+    public_projection = service_request_public_tracking(order.service_request) if order.service_request else None
+    inconsistencies = []
+    if tracking and tracking.tracking_active and tracking.stopped_at is not None:
+        inconsistencies.append("ACTIVE_WITH_STOPPED_AT")
+    if tracking and tracking.tracking_active and technician is None:
+        inconsistencies.append("ACTIVE_WITHOUT_TECHNICIAN")
+    if tracking and tracking.tracking_active and (tracking.current_lat is None or tracking.current_lng is None):
+        inconsistencies.append("ACTIVE_WITHOUT_COORDINATES")
+    if len(tracking_records) > 1:
+        inconsistencies.append("MULTIPLE_TRACKING_RECORDS")
+    if public_projection is not None:
+        if public_projection["tracking_active"] != bool(tracking and tracking.tracking_active):
+            inconsistencies.append("PUBLIC_ADMIN_ACTIVE_MISMATCH")
+        if is_tracking_session_active(order, tracking) and not public_projection.get("technician_display_name"):
+            inconsistencies.append("PUBLIC_MISSING_TECHNICIAN_NAME")
+        if is_tracking_session_active(order, tracking) and not public_projection.get("last_location_updated_at"):
+            inconsistencies.append("PUBLIC_MISSING_LOCATION_TIMESTAMP")
+    if (
+        tracking
+        and tracking.updated_at
+        and health["seconds_since_last_update"] is not None
+        and health["seconds_since_last_update"] <= 120
+        and health["tracking_health"] == "OFFLINE"
+    ):
+        inconsistencies.append("RECENT_POSITION_BUT_OFFLINE")
+    if tracking and session_state == "ORPHANED":
+        inconsistencies.append("ORDER_STATUS_TRACKING_MISMATCH")
+
+    return {
+        "service_order": {
+            "id": order.id,
+            "number": order.order_number,
+            "status": order.status,
+        },
+        "tracking": {
+            "id": tracking.id if tracking else None,
+            "tracking_active": tracking.tracking_active if tracking else False,
+            "stopped_at": tracking.stopped_at if tracking else None,
+            "updated_at": tracking.updated_at if tracking else None,
+            "last_location_at": health["last_location_at"],
+            "last_heartbeat_at": health["last_heartbeat_at"],
+            "technician_id": tracking.technician_id if tracking else None,
+            "latitude": tracking.current_lat if tracking else None,
+            "longitude": tracking.current_lng if tracking else None,
+        },
+        "canonical": {
+            "session_state": session_state,
+            "tracking_health": health["tracking_health"],
+        },
+        "technician": {
+            "id": technician.id if technician else None,
+            "display_name": technician_name,
+        },
+        "destination": {
+            "latitude": order.location_lat,
+            "longitude": order.location_lng,
+        },
+        "route": {
+            "available": bool(route.get("available")),
+            "distance_m": route.get("distance_m"),
+            "duration_s": route.get("duration_s"),
+            "eta_at": route.get("eta_at"),
+            "geometry_present": bool(route.get("geometry")),
+        },
+        "public_projection": public_projection,
+        "tracking_records": [
+            {
+                "id": item.id,
+                "tracking_active": item.tracking_active,
+                "stopped_at": item.stopped_at,
+                "technician_id": item.technician_id,
+                "updated_at": item.updated_at,
+                "last_location_at": tracking_health(item)["last_location_at"],
+                "last_heartbeat_at": item.last_heartbeat_at,
+            }
+            for item in tracking_records
+        ],
+        "tracking_record_count": len(tracking_records),
+        "tracking_service_order_unique_constraint": bool(ServiceOrderTracking.__table__.c.service_order_id.unique),
+        "inconsistencies": sorted(set(inconsistencies)),
+    }
