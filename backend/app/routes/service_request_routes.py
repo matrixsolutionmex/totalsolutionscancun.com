@@ -13,6 +13,8 @@ from app.services.customer_portal_service import service_request_sales_summary
 from app.services.service_order_tracking_service import (
     get_tracking_for_actor,
     list_active_tracking_for_actor,
+    admin_stop_all_tracking,
+    admin_stop_tracking,
     start_tracking,
     stop_tracking,
     stop_tracking_for_order,
@@ -46,6 +48,10 @@ class TrackingPositionPayload(BaseModel):
 
 class TrackingStopPayload(BaseModel):
     reason: str = "MANUAL"
+
+
+class AdminTrackingStopPayload(BaseModel):
+    reason: str
 
 
 class TrackingDiagnosticPayload(BaseModel):
@@ -204,6 +210,25 @@ def list_active_service_order_tracking(
     actor: User = Depends(require_admin_user),
 ):
     return {"routes": list_active_tracking_for_actor(db, actor)}
+
+
+@router.post("/service-orders/{order_id}/tracking/admin-stop")
+def admin_stop_service_order_tracking(
+    order_id: int,
+    payload: AdminTrackingStopPayload,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_user),
+):
+    return admin_stop_tracking(db, order_id, actor, payload.reason)
+
+
+@router.post("/service-orders/tracking/admin-stop-all")
+def admin_stop_all_service_order_tracking(
+    payload: AdminTrackingStopPayload,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_user),
+):
+    return {"stopped": admin_stop_all_tracking(db, actor, payload.reason)}
 
 
 @router.get("/service-orders/{order_id}/tracking")

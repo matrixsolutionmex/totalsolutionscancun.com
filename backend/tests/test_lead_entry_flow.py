@@ -1174,6 +1174,10 @@ def test_tracking_operations_map_polls_only_for_authorized_operational_view():
     assert "Ver seguimiento" in html
     assert "Copiar enlace" in html
     assert "data-tracking-copy" in html
+    assert "/tracking/admin-stop" in html
+    assert "/service-orders/tracking/admin-stop-all" in html
+    assert "data-admin-stop-tracking" in html
+    assert "adminStopAllTrackingButton" in html
     assert "navigator.clipboard.writeText" in html
     assert "document.execCommand(\"copy\")" in html
     assert "trackingOperationsPrecision" in html
@@ -1443,6 +1447,29 @@ def test_public_tracking_uses_active_order_status_when_request_status_is_stale(d
     assert public_state["technician_display_name"] == technician.full_name
     assert public_state["technician_lat"] == pytest.approx(21.1610)
     assert public_state["technician_lng"] == pytest.approx(-86.8505)
+
+
+def test_public_tracking_uses_tracking_technician_when_order_responsible_snapshot_is_missing(db):
+    organization = make_organization(db, "public-technician-fallback", "Public Technician Fallback")
+    technician = make_user(db, "tech-tracking-fallback", "BROKER", organization_id=organization.id)
+    service_request = create_customer_request_and_order(
+        db,
+        make_portal_payload(idempotency_key="public-technician-fallback"),
+    )
+    order = service_request.service_order
+    order.responsible_user_id = technician.id
+    order.location_lat = 21.1619
+    order.location_lng = -86.8515
+    db.commit()
+    start_tracking(db, order.id, technician, True)
+    update_tracking_position(db, order.id, technician, 21.1610, -86.8505, 12)
+    order.responsible_user_id = None
+    db.commit()
+    db.expire_all()
+
+    public_state = public_service_request_tracking(service_request.tracking_token, db)
+    assert public_state["tracking_active"] is True
+    assert public_state["technician_display_name"] == technician.full_name
 
 
 @pytest.mark.parametrize("reason", ["ARRIVED", "COMPLETED", "CANCELLED"])

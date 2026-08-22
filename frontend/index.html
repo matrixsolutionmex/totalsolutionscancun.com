@@ -3729,6 +3729,9 @@
       <div class="panel-box manager-only" style="grid-column: 1 / -1;">
         <div class="panel-title">Técnicos en ruta</div>
         <div class="line" id="trackingOperationsStatus">Esperando ubicación...</div>
+        <div class="pablo-action-card-actions" style="margin: 10px 0;">
+          <button type="button" class="root-only" id="adminStopAllTrackingButton">Encerrar todas las rutas activas</button>
+        </div>
         <div id="trackingOperationsMap" class="tracking-operations-map" aria-label="Mapa de técnicos en ruta"></div>
         <div id="trackingOperationsRoutes" class="tracking-route-list"></div>
       </div>
@@ -6357,10 +6360,11 @@
         return `<article class="tracking-route-row">
           <strong>${escapeHtml(route.order_number || `OS ${route.service_order_id}`)} · ${escapeHtml(route.technician?.name || t("uiTechnician"))}</strong>
           <span>Cliente: ${escapeHtml(route.client_name || "-")}</span>
-          <span>${trackingOperationsStatus(route)} · Inicio: ${escapeHtml(trackingOperationsDate(tracking.started_at))}</span>
+          <span>${escapeHtml(route.tracking_state || trackingOperationsStatus(route))} · Inicio: ${escapeHtml(trackingOperationsDate(tracking.started_at))}</span>
           <span>${t("uiLastUpdate")}: ${escapeHtml(trackingOperationsDate(tracking.updated_at))} · ${t("uiPrecision")}: <span title="${tracking.accuracy_m == null ? "" : `${escapeHtml(tracking.accuracy_m)} m`}">${escapeHtml(trackingOperationsPrecision(tracking.accuracy_m))}</span></span>
           ${route.route?.available ? `<div class="tracking-route-metrics"><div class="tracking-route-metric"><small>${t("uiRemainingDistance")}</small><strong>${escapeHtml(formatRouteDistance(route.route.distance_m))}</strong></div><div class="tracking-route-metric"><small>${t("uiEstimatedTime")}</small><strong>${escapeHtml(formatRouteDuration(route.route.duration_s))}</strong></div><div class="tracking-route-metric"><small>${t("uiEstimatedArrival")}</small><strong>${escapeHtml(formatRouteEta(route.route.eta_at))}</strong></div></div>` : `<span>${t("uiRouteWaiting")}</span>`}
           ${trackingUrl ? `<div class="tracking-route-actions"><a class="small-btn" href="${escapeHtml(trackingUrl)}" target="_blank" rel="noopener noreferrer">${t("uiViewTracking")}</a><button class="small-btn ghost" type="button" data-tracking-copy="${escapeHtml(trackingUrl)}">${t("uiCopyLink")}</button></div>` : ""}
+          <div class="tracking-route-actions"><button class="small-btn ghost" type="button" data-admin-stop-tracking="${escapeHtml(route.service_order_id)}">Encerrar rota</button></div>
         </article>`;
       }).join("");
     }
@@ -6515,6 +6519,36 @@
       window.setTimeout(() => {
         if (button.isConnected) button.textContent = previousLabel;
       }, 1800);
+    }
+
+    async function adminStopTracking(orderId) {
+      if (!window.confirm("Tem certeza que deseja encerrar esta rota? O serviço não será finalizado.")) return;
+      const reason = window.prompt("Motivo administrativo", "OPERATIONAL_CORRECTION");
+      if (!reason) return;
+      const response = await apiFetch(`${API_BASE}/service-orders/${encodeURIComponent(orderId)}/tracking/admin-stop`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "No fue posible encerrar la ruta.");
+      await loadActiveTrackingOperations();
+    }
+
+    async function adminStopAllTracking() {
+      const activeRoutes = document.querySelectorAll("[data-admin-stop-tracking]").length;
+      if (!activeRoutes) return;
+      if (!window.confirm(`Você está prestes a encerrar ${activeRoutes} rotas ativas. Esta ação não finaliza os serviços.`)) return;
+      const reason = window.prompt("Motivo administrativo", "TEST_COMPLETED");
+      if (!reason) return;
+      const response = await apiFetch(`${API_BASE}/service-orders/tracking/admin-stop-all`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "No fue posible encerrar las rutas.");
+      await loadActiveTrackingOperations();
     }
 
     async function loadMarketplaceAssignableUsers() {
@@ -11416,6 +11450,14 @@
         target.textContent = "No fue posible copiar";
       });
     });
+    document.getElementById("trackingOperationsRoutes")?.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || !target.matches("[data-admin-stop-tracking]")) return;
+      adminStopTracking(target.dataset.adminStopTracking).catch((error) => addPabloV2Message(error.message, "ai"));
+    });
+    document.getElementById("adminStopAllTrackingButton")?.addEventListener("click", () => {
+      adminStopAllTracking().catch((error) => addPabloV2Message(error.message, "ai"));
+    });
 
     document.getElementById("commercialPlanCards")?.addEventListener("click", (event) => {
       const target = event.target;
@@ -12393,7 +12435,7 @@
                 <code>${escapeHtml(data.order_number || "En preparacion")}</code>
                 <p>${pt("status")}</p>
                 <strong>${escapeHtml(data.operational_status || "Solicitud recibida")}</strong>
-                ${data.technician_display_name ? `<p>${pt("technician")}: <strong>${escapeHtml(data.technician_display_name)}</strong></p>` : ""}
+                <p id="publicTrackingTechnician">${pt("technician")}: <strong>${escapeHtml(data.technician_display_name || pt("loading"))}</strong></p>
                 ${data.route_started_at ? `<p>${pt("departure")}: <strong>${escapeHtml(formatTrackingDate(data.route_started_at))}</strong></p>` : ""}
               </div>
               <div class="public-tracking-status" id="publicTrackingLiveStatus"><strong>${escapeHtml(locationMessage)}</strong><span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at))}</span>${data.accuracy_m == null ? "" : `<span>Precisión: ${escapeHtml(data.accuracy_m)} m</span>`}</div>
@@ -12404,6 +12446,10 @@
             `;
           }
           const liveStatus = document.getElementById("publicTrackingLiveStatus");
+          const technicianElement = document.getElementById("publicTrackingTechnician");
+          if (technicianElement) {
+            technicianElement.innerHTML = `${pt("technician")}: <strong>${escapeHtml(data.technician_display_name || pt("loading"))}</strong>`;
+          }
           if (liveStatus) {
             liveStatus.innerHTML = `<strong>${escapeHtml(locationMessage)}</strong><span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at))}</span>${data.accuracy_m == null ? "" : `<span>Precisión: ${escapeHtml(data.accuracy_m)} m</span>`}`;
             const existingEtaCard = document.querySelector(".public-tracking-eta-card");

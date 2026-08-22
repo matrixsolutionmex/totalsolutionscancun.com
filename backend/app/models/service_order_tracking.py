@@ -23,3 +23,4 @@ class ServiceOrderTracking(Base):
     stopped_at = Column(DateTime, nullable=True)
 
     service_order = relationship("ServiceOrder", back_populates="tracking")
+    technician = relationship("User", foreign_keys=[technician_id])

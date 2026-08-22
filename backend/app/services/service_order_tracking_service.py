@@ -165,7 +165,6 @@ def list_active_tracking_for_actor(db: Session, actor: User) -> list[dict]:
         .filter(
             ServiceOrder.organization_id == actor.organization_id,
             ServiceOrderTracking.tracking_active.is_(True),
-            ServiceOrder.status == "EN_CAMINO",
         )
         .order_by(ServiceOrderTracking.updated_at.desc(), ServiceOrder.id)
         .all()
@@ -177,10 +176,18 @@ def list_active_tracking_for_actor(db: Session, actor: User) -> list[dict]:
             continue
         lead = order.lead
         service_request = order.service_request
+        health = tracking_health(tracking)
+        orphaned = (
+            (order.status or "").strip().upper() != "EN_CAMINO"
+            or not order.responsible_user_id
+            or order.responsible_user_id != tracking.technician_id
+        )
         active_routes.append({
             "service_order_id": order.id,
             "order_number": order.order_number,
             "status": order.status,
+            "tracking_state": "ORPHANED" if orphaned else health["tracking_health"],
+            "tracking_health": health["tracking_health"],
             "client_name": lead.nome if lead else None,
             "tracking_public_url": public_tracking_url(service_request.tracking_token) if service_request else None,
             "technician": {
@@ -325,6 +332,7 @@ def stop_tracking_for_order(
     actor: User | None,
     reason: str,
     preserve_status: bool = False,
+    administrative_reason: str | None = None,
 ) -> dict:
     normalized_reason = (reason or "MANUAL").strip().upper()
     if normalized_reason not in {"MANUAL", "ARRIVED", "COMPLETED", "CANCELLED"}:
@@ -336,7 +344,8 @@ def stop_tracking_for_order(
         tracking.stopped_at = now
         tracking.updated_at = now
         event_type = "TECHNICIAN_ARRIVED" if normalized_reason == "ARRIVED" else "TRACKING_STOPPED"
-        _add_tracking_event(db, order, actor, event_type, f"Tracking encerrado para OS {order.order_number or order.id}: {normalized_reason}")
+        suffix = f" administrative_reason={administrative_reason}" if administrative_reason else ""
+        _add_tracking_event(db, order, actor, event_type, f"Tracking encerrado para OS {order.order_number or order.id}: {normalized_reason}{suffix}")
     if not preserve_status and normalized_reason == "ARRIVED":
         order.status = "EM_ATENDIMENTO"
     elif not preserve_status and normalized_reason == "COMPLETED":
@@ -349,3 +358,45 @@ def stop_tracking_for_order(
     if tracking:
         db.refresh(tracking)
     return {"service_order_id": order.id, "order_number": order.order_number, "status": order.status, "tracking": serialize_tracking(tracking)}
+
+
+ADMIN_STOP_REASONS = {
+    "TEST_COMPLETED",
+    "ABANDONED_ROUTE",
+    "DEVICE_DISCONNECTED",
+    "DUPLICATE_ROUTE",
+    "OPERATIONAL_CORRECTION",
+    "OTHER",
+}
+
+
+def admin_stop_tracking(db: Session, order_id: int, actor: User, reason: str) -> dict:
+    if actor.role not in {"ROOT", "GERENTE"}:
+        raise HTTPException(status_code=403, detail="Somente root ou gerente pode encerrar rotas administrativamente")
+    normalized_reason = (reason or "").strip().upper()
+    if normalized_reason not in ADMIN_STOP_REASONS:
+        raise HTTPException(status_code=400, detail="Motivo administrativo invalido")
+    order = _order_for_actor(db, order_id, actor)
+    if not _is_visible_to_actor(db, order, actor):
+        raise HTTPException(status_code=403, detail="Tracking fora da sua estrutura")
+    return stop_tracking_for_order(
+        db,
+        order,
+        actor=actor,
+        reason="MANUAL",
+        preserve_status=True,
+        administrative_reason=normalized_reason,
+    )
+
+
+def admin_stop_all_tracking(db: Session, actor: User, reason: str) -> list[dict]:
+    if actor.role != "ROOT":
+        raise HTTPException(status_code=403, detail="Somente root pode encerrar todas as rotas")
+    normalized_reason = (reason or "").strip().upper()
+    if normalized_reason not in ADMIN_STOP_REASONS:
+        raise HTTPException(status_code=400, detail="Motivo administrativo invalido")
+    routes = list_active_tracking_for_actor(db, actor)
+    results = []
+    for route in routes:
+        results.append(admin_stop_tracking(db, route["service_order_id"], actor, normalized_reason))
+    return results

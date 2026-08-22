@@ -19,6 +19,8 @@ from app.models.service_request import ServiceRequest
 from app.models.user import User
 from app.schemas.lead_schema import LeadResponse
 from app.services.service_order_tracking_service import (
+    admin_stop_all_tracking,
+    admin_stop_tracking,
     get_tracking_for_actor,
     heartbeat_tracking,
     record_tracking_diagnostic,
@@ -350,3 +352,71 @@ def test_operations_tracking_list_is_scoped_and_excludes_finished_routes(db):
     with pytest.raises(HTTPException) as blocked:
         list_active_tracking_for_actor(db, make_user(db, "client-operations", "CLIENTE", org_a))
     assert blocked.value.status_code == 403
+
+
+def test_admin_stop_preserves_order_status_history_and_is_idempotent(db):
+    org = make_org(db, "admin-stop-org")
+    root = make_user(db, "admin-stop-root", "ROOT", org)
+    technician = make_user(db, "admin-stop-tech", "BROKER", org)
+    order = make_order(db, org, technician, status="ABERTA")
+    order.location_lat = 21.16
+    order.location_lng = -86.85
+    db.commit()
+    start_tracking(db, order.id, technician, True)
+    update_tracking_position(db, order.id, technician, 21.17, -86.86, 10)
+
+    result = admin_stop_tracking(db, order.id, root, "TEST_COMPLETED")
+    assert result["status"] == "EN_CAMINO"
+    assert result["tracking"]["tracking_active"] is False
+    assert db.query(ServiceOrderTracking).filter_by(service_order_id=order.id).one().current_lat == pytest.approx(21.17)
+    assert db.query(LeadEvent).filter_by(event_type="TRACKING_STOPPED").count() == 1
+
+    again = admin_stop_tracking(db, order.id, root, "TEST_COMPLETED")
+    assert again["status"] == "EN_CAMINO"
+    assert db.query(LeadEvent).filter_by(event_type="TRACKING_STOPPED").count() == 1
+
+
+def test_admin_stop_scope_and_stop_all_require_roles_and_preserve_status(db):
+    org_a = make_org(db, "admin-stop-scope-a")
+    org_b = make_org(db, "admin-stop-scope-b")
+    root = make_user(db, "admin-scope-root", "ROOT", org_a)
+    manager = make_user(db, "admin-scope-manager", "GERENTE", org_a)
+    technician = make_user(db, "admin-scope-tech", "BROKER", org_a, manager_id=manager.id)
+    foreign_tech = make_user(db, "admin-scope-foreign", "BROKER", org_b)
+    order_a = make_order(db, org_a, technician, manager, status="ABERTA")
+    order_b = make_order(db, org_b, foreign_tech, status="ABERTA")
+    db.commit()
+    start_tracking(db, order_a.id, technician, True)
+    start_tracking(db, order_b.id, foreign_tech, True)
+
+    with pytest.raises(HTTPException) as denied:
+        admin_stop_tracking(db, order_a.id, technician, "OTHER")
+    assert denied.value.status_code == 403
+    with pytest.raises(HTTPException) as foreign_denied:
+        admin_stop_tracking(db, order_b.id, root, "OTHER")
+    assert foreign_denied.value.status_code == 404
+    with pytest.raises(HTTPException) as stop_all_denied:
+        admin_stop_all_tracking(db, manager, "OTHER")
+    assert stop_all_denied.value.status_code == 403
+
+    stopped = admin_stop_all_tracking(db, root, "OPERATIONAL_CORRECTION")
+    assert len(stopped) == 1
+    assert db.query(ServiceOrder).filter_by(id=order_a.id).one().status == "EN_CAMINO"
+    assert db.query(ServiceOrderTracking).filter_by(service_order_id=order_a.id).one().tracking_active is False
+    assert db.query(ServiceOrderTracking).filter_by(service_order_id=order_b.id).one().tracking_active is True
+
+
+def test_active_tracking_with_non_route_order_status_is_flagged_orphaned(db):
+    org = make_org(db, "orphaned-route-org")
+    root = make_user(db, "orphaned-route-root", "ROOT", org)
+    technician = make_user(db, "orphaned-route-tech", "BROKER", org)
+    order = make_order(db, org, technician, status="ABERTA")
+    db.commit()
+    start_tracking(db, order.id, technician, True)
+    order.status = "EM_ATENDIMENTO"
+    db.commit()
+
+    routes = list_active_tracking_for_actor(db, root)
+    assert len(routes) == 1
+    assert routes[0]["tracking_state"] == "ORPHANED"
+    assert routes[0]["tracking"]["tracking_active"] is True

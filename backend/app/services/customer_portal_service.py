@@ -411,6 +411,8 @@ def service_request_public_tracking(request: ServiceRequest) -> dict[str, Any]:
     if destination_lng is None:
         destination_lng = getattr(property_record, "location_lng", None)
     technician = getattr(order, "responsible_user", None) if order else None
+    if technician is None and tracking:
+        technician = getattr(tracking, "technician", None)
     technician_name = (technician.full_name or technician.username) if technician else None
     health = tracking_health(tracking) if tracking_active else tracking_health(None)
     route = {"available": False, "distance_m": None, "duration_s": None, "eta_at": None, "geometry": None}
