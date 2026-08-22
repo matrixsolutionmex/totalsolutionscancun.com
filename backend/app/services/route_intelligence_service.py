@@ -11,6 +11,7 @@ import httpx
 
 ROUTE_RECALC_DISTANCE_M = 100
 ROUTE_RECALC_INTERVAL_S = 60
+ROUTE_FAILURE_GRACE_S = 300
 ROUTE_TIMEOUT_S = 4.0
 _cache = {}
 _cache_lock = threading.Lock()
@@ -59,20 +60,37 @@ def _cached_result(cache_key, origin, destination):
     return dict(item["result"])
 
 
+def _stale_cached_result(cache_key):
+    """Keep the last known route briefly when a recalculation is transiently unavailable."""
+    if not cache_key:
+        return None
+    with _cache_lock:
+        item = _cache.get(cache_key)
+    if not item or time.monotonic() - item["created_monotonic"] > ROUTE_FAILURE_GRACE_S:
+        return None
+    result = dict(item["result"])
+    if result.get("duration_s") is not None:
+        result["eta_at"] = (datetime.now(timezone.utc) + timedelta(seconds=float(result["duration_s"]))).isoformat()
+    result["stale"] = True
+    result["reason"] = "provider_transient"
+    return result
+
+
 def calculate_route(origin_lat, origin_lng, destination_lat, destination_lng, *, cache_key=None):
     origin = _valid_point(origin_lat, origin_lng)
     destination = _valid_point(destination_lat, destination_lng)
     if not origin or not destination:
         return _unavailable("invalid_coordinates")
 
-    provider_url = os.getenv("ROUTING_PROVIDER_URL", "").strip().rstrip("/")
-    if not provider_url:
-        return _unavailable("provider_not_configured")
     cached = _cached_result(cache_key, origin, destination)
     if cached:
         if cached.get("duration_s") is not None:
             cached["eta_at"] = (datetime.now(timezone.utc) + timedelta(seconds=float(cached["duration_s"]))).isoformat()
         return cached
+
+    provider_url = os.getenv("ROUTING_PROVIDER_URL", "").strip().rstrip("/")
+    if not provider_url:
+        return _stale_cached_result(cache_key) or _unavailable("provider_not_configured")
 
     url = f"{provider_url}/route/v1/driving/{origin[1]},{origin[0]};{destination[1]},{destination[0]}"
     params = {"overview": "full", "geometries": "geojson", "steps": "false"}
@@ -86,9 +104,9 @@ def calculate_route(origin_lat, origin_lng, destination_lat, destination_lng, *,
         duration_s = float((route or {}).get("duration"))
         geometry = [[float(lat), float(lng)] for lng, lat in coordinates]
         if not geometry or not math.isfinite(distance_m) or distance_m <= 0 or not math.isfinite(duration_s) or duration_s <= 0:
-            return _unavailable("invalid_provider_response")
+            return _stale_cached_result(cache_key) or _unavailable("invalid_provider_response")
     except (httpx.HTTPError, ValueError, TypeError, KeyError, IndexError):
-        return _unavailable("provider_error")
+        return _stale_cached_result(cache_key) or _unavailable("provider_error")
 
     result = {
         "available": True,

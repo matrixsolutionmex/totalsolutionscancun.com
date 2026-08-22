@@ -12389,6 +12389,7 @@
         let destinationMarker = null;
         let routePolyline = null;
         let lastTrackingData = null;
+        let lastValidRouteData = null;
 
         const formatTrackingDate = (value) => {
           if (!value) return "-";
@@ -12414,6 +12415,14 @@
           const technicianLng = Number(data.technician_lng);
           const hasDestination = Number.isFinite(destinationLat) && Number.isFinite(destinationLng);
           const hasTechnician = active && Number.isFinite(technicianLat) && Number.isFinite(technicianLng);
+          const incomingRouteGeometry = Array.isArray(data.route_geometry) ? data.route_geometry.filter((point) => Array.isArray(point) && point.length === 2 && point.every((value) => Number.isFinite(Number(value)))) : [];
+          if (data.route_available === true && incomingRouteGeometry.length >= 2) {
+            lastValidRouteData = data;
+          }
+          const displayRoute = data.route_available === true && incomingRouteGeometry.length >= 2
+            ? data
+            : active ? lastValidRouteData : null;
+          const displayRouteAvailable = Boolean(displayRoute);
           const ageMs = data.last_location_updated_at ? Date.now() - new Date(data.last_location_updated_at).getTime() : Infinity;
           const locationHealth = data.tracking_health || (ageMs > 120000 ? "OFFLINE" : ageMs > 30000 ? "STALE" : "LIVE");
           const locationStatusText = locationHealth === "OFFLINE"
@@ -12424,8 +12433,8 @@
           const locationMessage = !active
             ? (data.operational_status || "Tu solicitud está siendo preparada")
             : (hasTechnician ? locationStatusText : waitingTechnicianLabel);
-          const routeMessage = data.route_available
-            ? `${locationHealth === "STALE" ? (portalLanguage === "en" ? "Approximate ETA" : portalLanguage === "pt-BR" ? "ETA aproximado" : "ETA aproximado") : (portalLanguage === "en" ? "Estimated arrival" : portalLanguage === "pt-BR" ? "Chegada estimada" : "Llegada estimada")}: ${formatRouteDuration(data.route_duration_s)} · ${portalLanguage === "en" ? "Distance remaining" : portalLanguage === "pt-BR" ? "Distância restante" : "Distancia restante"}: ${formatRouteDistance(data.route_distance_m)} · ${portalLanguage === "en" ? "Time" : portalLanguage === "pt-BR" ? "Hora" : "Hora"}: ${formatRouteEta(data.route_eta_at)}`
+          const routeMessage = displayRouteAvailable
+            ? `${data.route_available ? "" : (portalLanguage === "en" ? "Recalculating route... · " : portalLanguage === "pt-BR" ? "Recalculando rota... · " : "Recalculando ruta... · ")}${locationHealth === "STALE" ? (portalLanguage === "en" ? "Approximate ETA" : portalLanguage === "pt-BR" ? "ETA aproximado" : "ETA aproximado") : (portalLanguage === "en" ? "Estimated arrival" : portalLanguage === "pt-BR" ? "Chegada estimada" : "Llegada estimada")}: ${formatRouteDuration(displayRoute.route_duration_s)} · ${portalLanguage === "en" ? "Distance remaining" : portalLanguage === "pt-BR" ? "Distância restante" : "Distancia restante"}: ${formatRouteDistance(displayRoute.route_distance_m)} · ${portalLanguage === "en" ? "Time" : portalLanguage === "pt-BR" ? "Hora" : "Hora"}: ${formatRouteEta(displayRoute.route_eta_at)}`
             : (active && locationHealth === "OFFLINE" ? (portalLanguage === "en" ? "ETA temporarily unavailable" : portalLanguage === "pt-BR" ? "ETA temporariamente indisponível" : "ETA temporalmente no disponible") : pt("route"));
           const needsShell = !document.getElementById("publicTrackingMap");
           if (needsShell) {
@@ -12439,8 +12448,8 @@
                 ${data.route_started_at ? `<p>${pt("departure")}: <strong>${escapeHtml(formatTrackingDate(data.route_started_at))}</strong></p>` : ""}
               </div>
               <div class="public-tracking-status" id="publicTrackingLiveStatus"><strong>${escapeHtml(locationMessage)}</strong><span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at))}</span>${data.accuracy_m == null ? "" : `<span>Precisión: ${escapeHtml(data.accuracy_m)} m</span>`}</div>
-              ${data.route_available ? `<div class="public-tracking-eta-card"><div><small>${portalLanguage === "en" ? "Estimated arrival" : portalLanguage === "pt-BR" ? "Chegada estimada" : "Llegada estimada"}</small><strong>${escapeHtml(formatRouteDuration(data.route_duration_s))}</strong></div><div><small>${portalLanguage === "en" ? "Distance remaining" : portalLanguage === "pt-BR" ? "Distância restante" : "Distancia restante"}</small><strong>${escapeHtml(formatRouteDistance(data.route_distance_m))}</strong></div><div><small>${portalLanguage === "en" ? "Estimated time" : portalLanguage === "pt-BR" ? "Hora estimada" : "Hora estimada"}</small><strong>${escapeHtml(formatRouteEta(data.route_eta_at))}</strong></div></div>` : ""}
-              <p id="publicTrackingProximity" class="portal-message">${escapeHtml(data.route_available ? trackingProximityMessage(data.route_distance_m) : locationMessage)}</p>
+              ${displayRouteAvailable ? `<div class="public-tracking-eta-card"><div><small>${portalLanguage === "en" ? "Estimated arrival" : portalLanguage === "pt-BR" ? "Chegada estimada" : "Llegada estimada"}</small><strong>${escapeHtml(formatRouteDuration(displayRoute.route_duration_s))}</strong></div><div><small>${portalLanguage === "en" ? "Distance remaining" : portalLanguage === "pt-BR" ? "Distância restante" : "Distancia restante"}</small><strong>${escapeHtml(formatRouteDistance(displayRoute.route_distance_m))}</strong></div><div><small>${portalLanguage === "en" ? "Estimated time" : portalLanguage === "pt-BR" ? "Hora estimada" : "Hora estimada"}</small><strong>${escapeHtml(formatRouteEta(displayRoute.route_eta_at))}</strong></div></div>` : ""}
+              <p id="publicTrackingProximity" class="portal-message">${escapeHtml(displayRouteAvailable ? trackingProximityMessage(displayRoute.route_distance_m) : locationMessage)}</p>
               ${(active || hasDestination) ? '<div id="publicTrackingMap" class="public-tracking-map" aria-label="Mapa de seguimiento del servicio"></div>' : ""}
               <p id="publicTrackingMapHint" class="portal-message">${active ? pt("mapHint") : pt("preparingShort")}</p>
             `;
@@ -12453,13 +12462,13 @@
           if (liveStatus) {
             liveStatus.innerHTML = `<strong>${escapeHtml(locationMessage)}</strong><span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at))}</span>${data.accuracy_m == null ? "" : `<span>Precisión: ${escapeHtml(data.accuracy_m)} m</span>`}`;
             const existingEtaCard = document.querySelector(".public-tracking-eta-card");
-            if (data.route_available) {
-              const etaMarkup = `<div class="public-tracking-eta-card"><div><small>${portalLanguage === "en" ? "Estimated arrival" : portalLanguage === "pt-BR" ? "Chegada estimada" : "Llegada estimada"}</small><strong>${escapeHtml(formatRouteDuration(data.route_duration_s))}</strong></div><div><small>${portalLanguage === "en" ? "Distance remaining" : portalLanguage === "pt-BR" ? "Distância restante" : "Distancia restante"}</small><strong>${escapeHtml(formatRouteDistance(data.route_distance_m))}</strong></div><div><small>${portalLanguage === "en" ? "Estimated time" : portalLanguage === "pt-BR" ? "Hora estimada" : "Hora estimada"}</small><strong>${escapeHtml(formatRouteEta(data.route_eta_at))}</strong></div></div>`;
+            if (displayRouteAvailable) {
+              const etaMarkup = `<div class="public-tracking-eta-card"><div><small>${portalLanguage === "en" ? "Estimated arrival" : portalLanguage === "pt-BR" ? "Chegada estimada" : "Llegada estimada"}</small><strong>${escapeHtml(formatRouteDuration(displayRoute.route_duration_s))}</strong></div><div><small>${portalLanguage === "en" ? "Distance remaining" : portalLanguage === "pt-BR" ? "Distância restante" : "Distancia restante"}</small><strong>${escapeHtml(formatRouteDistance(displayRoute.route_distance_m))}</strong></div><div><small>${portalLanguage === "en" ? "Estimated time" : portalLanguage === "pt-BR" ? "Hora estimada" : "Hora estimada"}</small><strong>${escapeHtml(formatRouteEta(displayRoute.route_eta_at))}</strong></div></div>`;
               if (existingEtaCard) existingEtaCard.outerHTML = etaMarkup;
               else liveStatus.insertAdjacentHTML("afterend", etaMarkup);
             } else if (existingEtaCard) existingEtaCard.remove();
             const proximity = document.getElementById("publicTrackingProximity");
-            if (proximity) proximity.textContent = data.route_available ? trackingProximityMessage(data.route_distance_m) : locationMessage;
+            if (proximity) proximity.textContent = displayRouteAvailable ? trackingProximityMessage(displayRoute.route_distance_m) : locationMessage;
           }
           const mapElement = document.getElementById("publicTrackingMap");
           if (!mapElement || !window.L || window.leafletLoadFailed) return;
@@ -12467,11 +12476,11 @@
             trackingMap = L.map(mapElement).setView(hasDestination ? [destinationLat, destinationLng] : [21.1619, -86.8515], hasDestination ? 15 : 12);
             L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(trackingMap);
           }
-          const routeGeometry = Array.isArray(data.route_geometry) ? data.route_geometry.filter((point) => Array.isArray(point) && point.length === 2 && point.every((value) => Number.isFinite(Number(value)))) : [];
-          if (routeGeometry.length >= 2 && data.route_available) {
+          const routeGeometry = displayRoute ? (Array.isArray(displayRoute.route_geometry) ? displayRoute.route_geometry : []) : [];
+          if (routeGeometry.length >= 2 && displayRouteAvailable) {
             if (!routePolyline) routePolyline = L.polyline(routeGeometry, { color: "#2563eb", weight: 5, opacity: 0.72 }).addTo(trackingMap);
             else routePolyline.setLatLngs(routeGeometry);
-          } else if (routePolyline) {
+          } else if (!active && routePolyline) {
             routePolyline.remove();
             routePolyline = null;
           }

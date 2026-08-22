@@ -62,6 +62,41 @@ def test_route_adapter_returns_safe_fallback_when_provider_fails(monkeypatch):
     assert "provider" in result["reason"]
 
 
+def test_route_adapter_preserves_recent_route_when_recalculation_fails(monkeypatch):
+    monkeypatch.setenv("ROUTING_PROVIDER_URL", "https://routing.test")
+    routing.clear_route_cache()
+    responses = [
+        FakeResponse({
+            "code": "Ok",
+            "routes": [{
+                "distance": 1200,
+                "duration": 600,
+                "geometry": {"coordinates": [[-86.8450, 21.1550], [-86.8440, 21.1560]]},
+            }],
+        }),
+        routing.httpx.ReadTimeout("temporary timeout"),
+    ]
+
+    def fake_get(*args, **kwargs):
+        response = responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    monkeypatch.setattr(routing.httpx, "get", fake_get)
+    first = routing.calculate_route(21.1550, -86.8450, 21.2, -86.8, cache_key="order:resilient")
+    routing._cache["order:resilient"]["created_monotonic"] -= routing.ROUTE_RECALC_INTERVAL_S + 1
+    second = routing.calculate_route(21.1570, -86.8430, 21.2, -86.8, cache_key="order:resilient")
+
+    assert first["available"] is True
+    assert second["available"] is True
+    assert second["stale"] is True
+    assert second["reason"] == "provider_transient"
+    assert second["geometry"] == first["geometry"]
+    assert second["distance_m"] == first["distance_m"]
+    assert second["duration_s"] == first["duration_s"]
+
+
 def test_route_adapter_rejects_invalid_coordinates_without_provider_call(monkeypatch):
     monkeypatch.setenv("ROUTING_PROVIDER_URL", "https://routing.test")
     called = []

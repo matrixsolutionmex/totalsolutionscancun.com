@@ -1221,6 +1221,9 @@ def test_public_tracking_portal_uses_safe_statuses_and_live_leaflet_polling():
     assert "fitBounds(bounds" in html
     assert "setLatLngs(routeGeometry)" in html
     assert "setTimeout(pollTracking, 12000)" in html
+    assert "lastValidRouteData" in html
+    assert "Recalculando ruta..." in html
+    assert "else if (!active && routePolyline)" in html
     assert "SALES_QUEUE" not in html.split("async function renderTracking", 1)[1].split("function bindForm", 1)[0]
 
 
