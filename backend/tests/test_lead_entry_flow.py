@@ -1413,6 +1413,38 @@ def test_public_tracking_exposes_only_current_active_position_and_hides_it_after
     assert after_stop["destination_lat"] == pytest.approx(21.1619)
 
 
+@pytest.mark.parametrize(
+    ("language", "expected_status"),
+    [("es-MX", "Técnico en camino"), ("en-US", "Technician on the way"), ("pt-BR", "Técnico a caminho")],
+)
+def test_public_tracking_uses_active_order_status_when_request_status_is_stale(db, language, expected_status):
+    organization = make_organization(db, f"public-status-sync-{language}", "Public Status Sync")
+    technician = make_user(db, f"tech-status-sync-{language}", "BROKER", organization_id=organization.id)
+    service_request = create_customer_request_and_order(
+        db,
+        make_portal_payload(idempotency_key=f"public-status-sync-{language}", public_language=language),
+    )
+    order = service_request.service_order
+    order.responsible_user_id = technician.id
+    order.location_lat = 21.1619
+    order.location_lng = -86.8515
+    db.commit()
+
+    start_tracking(db, order.id, technician, True)
+    update_tracking_position(db, order.id, technician, 21.1610, -86.8505, 12)
+    service_request.status = "SALES_QUEUE"
+    db.commit()
+    db.expire_all()
+
+    public_state = public_service_request_tracking(service_request.tracking_token, db)
+    assert public_state["tracking_active"] is True
+    assert public_state["operational_status"] == expected_status
+    assert public_state["service_status"] == expected_status
+    assert public_state["technician_display_name"] == technician.full_name
+    assert public_state["technician_lat"] == pytest.approx(21.1610)
+    assert public_state["technician_lng"] == pytest.approx(-86.8505)
+
+
 @pytest.mark.parametrize("reason", ["ARRIVED", "COMPLETED", "CANCELLED"])
 def test_public_tracking_hides_position_after_terminal_or_arrival_stop(db, reason):
     organization = make_organization(db, f"portal-public-stop-{reason.lower()}", f"Portal Public Stop {reason}")
