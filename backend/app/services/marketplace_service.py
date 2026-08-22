@@ -221,14 +221,15 @@ def create_opportunity_from_service_request(db: Session, service_request: Servic
                      actor_id=None, actor_name="Sistema", event_type="MARKETPLACE_OPPORTUNITY_CREATED",
                      message="Oportunidade de marketplace criada a partir de solicitação de serviço"))
     db.flush()
-    emit_operational_notification(
+    notification_ids = emit_operational_notification(
         db,
-        event_type=OperationalEvent.MARKETPLACE_SERVICE_CREATED,
+        event_type=OperationalEvent.SALES_SERVICE_REQUEST_CREATED,
         organization_id=service_request.organization_id,
         service_request_id=service_request.id,
         service_order_id=opportunity.service_order_id,
         opportunity_id=opportunity.id,
     )
+    opportunity._notification_ids = notification_ids
     return opportunity
 
 

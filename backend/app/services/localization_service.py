@@ -37,11 +37,23 @@ NOTIFICATION_TRANSLATIONS = {
         "es": ("Nuevo servicio disponible", "{service} · {city}"),
         "en": ("New service available", "{service} · {city}"),
         "pt-BR": ("Novo serviço disponível", "{service} · {city}"),
-    }
+    },
+    "SALES_SERVICE_REQUEST_CREATED": {
+        "es": ("Nueva solicitud de servicio", "{order} · {service} · {city}"),
+        "en": ("New service request", "{order} · {service} · {city}"),
+        "pt-BR": ("Nova solicitação de serviço", "{order} · {service} · {city}"),
+    },
 }
 
 
-def localized_notification(event_type: str, language: str | None, *, service: str, city: str) -> tuple[str, str]:
+def localized_notification(
+    event_type: str,
+    language: str | None,
+    *,
+    service: str,
+    city: str,
+    order: str | None = None,
+) -> tuple[str, str]:
     translations = NOTIFICATION_TRANSLATIONS.get(event_type, {})
     title, message = translations.get(normalize_language(language), translations.get("es", (event_type, "")))
-    return title, message.format(service=service, city=city)
+    return title, message.format(service=service, city=city, order=order or "Total Solutions")

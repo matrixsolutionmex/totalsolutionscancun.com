@@ -9,12 +9,14 @@ from enum import Enum
 from sqlalchemy.orm import Session
 
 from app.models.service_opportunity import ServiceOpportunity
+from app.models.service_order import ServiceOrder
 from app.models.user import User
 from app.services.notification_service import create_notification
 from app.services.localization_service import localized_notification
 
 
 class OperationalEvent(str, Enum):
+    SALES_SERVICE_REQUEST_CREATED = "SALES_SERVICE_REQUEST_CREATED"
     MARKETPLACE_SERVICE_CREATED = "MARKETPLACE_SERVICE_CREATED"
     MARKETPLACE_SERVICE_ACCEPTED = "MARKETPLACE_SERVICE_ACCEPTED"
     MARKETPLACE_SERVICE_ASSIGNED = "MARKETPLACE_SERVICE_ASSIGNED"
@@ -43,6 +45,7 @@ class OperationalPriority(str, Enum):
 
 
 EVENT_PRIORITIES = {
+    OperationalEvent.SALES_SERVICE_REQUEST_CREATED: OperationalPriority.NORMAL,
     OperationalEvent.MARKETPLACE_SERVICE_CREATED: OperationalPriority.NORMAL,
 }
 
@@ -74,6 +77,18 @@ def _recipients_for_event(
     event_type: OperationalEvent,
     opportunity: ServiceOpportunity,
 ) -> list[User]:
+    if event_type == OperationalEvent.SALES_SERVICE_REQUEST_CREATED:
+        return (
+            db.query(User)
+            .filter(
+                User.organization_id == opportunity.organization_id,
+                User.role == "ROOT",
+                User.status == "ACTIVE",
+                User.is_active.is_(True),
+            )
+            .order_by(User.id.asc())
+            .all()
+        )
     if event_type != OperationalEvent.MARKETPLACE_SERVICE_CREATED:
         return []
 
@@ -98,10 +113,10 @@ def _safe_value(value):
     return str(value)
 
 
-def _marketplace_metadata(opportunity: ServiceOpportunity) -> dict:
+def _marketplace_metadata(opportunity: ServiceOpportunity, event_type: OperationalEvent = OperationalEvent.MARKETPLACE_SERVICE_CREATED) -> dict:
     """Keep the marketplace broadcast free of customer PII and private IDs."""
     return {
-        "event_type": OperationalEvent.MARKETPLACE_SERVICE_CREATED.value,
+        "event_type": event_type.value,
         "entity_type": "service_opportunity",
         "entity_public_id": opportunity.public_id,
         "organization_id": opportunity.organization_id,
@@ -151,7 +166,7 @@ def emit_operational_notification(
 
     recipients = _recipients_for_event(db, event, opportunity) if opportunity else []
     priority = EVENT_PRIORITIES.get(event, OperationalPriority.NORMAL).value
-    base_metadata = _marketplace_metadata(opportunity) if opportunity else {
+    base_metadata = _marketplace_metadata(opportunity, event) if opportunity else {
         "event_type": event.value,
         "organization_id": organization_id,
     }
@@ -160,15 +175,30 @@ def emit_operational_notification(
 
     service = opportunity.service_type or "Servicio" if opportunity else "Evento operativo"
     city = opportunity.city or "zona no informada" if opportunity else "Total Solutions"
-    title, message = localized_notification(event.value, "es", service=service, city=city) if event == OperationalEvent.MARKETPLACE_SERVICE_CREATED else (event.value.replace("_", " ").title(), f"{service} · {city}")
+    order_number = None
+    if opportunity.service_order_id:
+        order = db.query(ServiceOrder).filter(ServiceOrder.id == opportunity.service_order_id).first()
+        order_number = order.order_number if order else None
+    title, message = localized_notification(
+        event.value,
+        "es",
+        service=service,
+        city=city,
+        order=order_number,
+    ) if event in {OperationalEvent.MARKETPLACE_SERVICE_CREATED, OperationalEvent.SALES_SERVICE_REQUEST_CREATED} else (event.value.replace("_", " ").title(), f"{service} · {city}")
     public_id = opportunity.public_id if opportunity else None
-    action_url = f"/?section=agenda&opportunity={public_id}" if public_id else "/"
+    request_identifier = (opportunity.service_request_id or service_request_id) if opportunity else service_request_id
+    action_url = (
+        f"/?section=clients&lead={opportunity.lead_id}&service_request={request_identifier}"
+        if event == OperationalEvent.SALES_SERVICE_REQUEST_CREATED and opportunity else
+        f"/?section=agenda&opportunity={public_id}" if public_id else "/"
+    )
     dedupe_base = f"{event.value}:org:{organization_id}:opportunity:{public_id or opportunity_id or service_order_id or service_request_id}"
 
     notification_ids: list[int] = []
     for recipient in recipients:
-        if event == OperationalEvent.MARKETPLACE_SERVICE_CREATED:
-            title, message = localized_notification(event.value, recipient.idioma, service=service, city=city)
+        if event in {OperationalEvent.MARKETPLACE_SERVICE_CREATED, OperationalEvent.SALES_SERVICE_REQUEST_CREATED}:
+            title, message = localized_notification(event.value, recipient.idioma, service=service, city=city, order=order_number)
         notification = create_notification(
             db,
             recipient=recipient,

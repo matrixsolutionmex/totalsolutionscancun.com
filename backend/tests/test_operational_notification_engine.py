@@ -141,6 +141,56 @@ def test_marketplace_notification_is_deduplicated_per_recipient(db):
     assert db.query(Notification).filter(Notification.recipient_user_id == root.id).count() == 1
 
 
+def test_sales_request_notifies_only_root_commercial_queue(db):
+    org = make_org(db, "sales-notification-org")
+    other_org = make_org(db, "sales-other-org")
+    root = make_user(db, "sales-root", "ROOT", org.id)
+    manager = make_user(db, "sales-manager", "GERENTE", org.id)
+    technician = make_user(db, "sales-technician", "BROKER", org.id)
+    other_root = make_user(db, "sales-other-root", "ROOT", other_org.id)
+    root.idioma = "pt-BR"
+    db.commit()
+    opportunity = make_opportunity(db, org.id)
+
+    ids = emit_operational_notification(
+        db,
+        event_type=OperationalEvent.SALES_SERVICE_REQUEST_CREATED,
+        organization_id=org.id,
+        service_request_id=42,
+        opportunity_id=opportunity.id,
+    )
+    db.commit()
+
+    notifications = db.query(Notification).all()
+    assert len(ids) == 1
+    assert {item.recipient_user_id for item in notifications} == {root.id}
+    assert manager.id not in {item.recipient_user_id for item in notifications}
+    assert technician.id not in {item.recipient_user_id for item in notifications}
+    assert other_root.id not in {item.recipient_user_id for item in notifications}
+    assert notifications[0].type == "sales_service_request_created"
+    assert notifications[0].title == "Nova solicitação de serviço"
+    assert "Plomería" in notifications[0].message
+    assert "Cancún" in notifications[0].message
+    assert notifications[0].action_url == f"/?section=clients&lead={opportunity.lead_id}&service_request=42"
+
+
+def test_sales_request_notification_is_deduplicated(db):
+    org = make_org(db, "sales-dedupe-org")
+    root = make_user(db, "sales-dedupe-root", "ROOT", org.id)
+    opportunity = make_opportunity(db, org.id)
+
+    first = emit_operational_notification(
+        db, event_type="SALES_SERVICE_REQUEST_CREATED", organization_id=org.id, opportunity_id=opportunity.id
+    )
+    second = emit_operational_notification(
+        db, event_type="SALES_SERVICE_REQUEST_CREATED", organization_id=org.id, opportunity_id=opportunity.id
+    )
+    db.commit()
+
+    assert first == second
+    assert db.query(Notification).filter(Notification.recipient_user_id == root.id).count() == 1
+
+
 def test_marketplace_notification_metadata_is_sanitized(db):
     org = make_org(db, "sanitized-notification-org")
     root = make_user(db, "root-sanitized", "ROOT", org.id)

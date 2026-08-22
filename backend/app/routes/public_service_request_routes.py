@@ -7,6 +7,7 @@ from app.auth.jwt_handler import get_db
 from app.models.service_request import ServiceRequest
 from app.services.customer_portal_service import create_customer_request_and_order, service_request_public_status, service_request_public_tracking
 from app.services.marketplace_service import create_opportunity_from_service_request
+from app.services.notification_service import dispatch_web_push_for_notification_ids
 from app.services.reverse_geocode_service import reverse_geocode
 from app.services.localization_service import resolve_language
 
@@ -101,8 +102,12 @@ def create_public_service_request(
     }
     try:
         service_request = create_customer_request_and_order(db, payload, files=files)
-        create_opportunity_from_service_request(db, service_request)
+        opportunity = create_opportunity_from_service_request(db, service_request)
         db.commit()
+        try:
+            dispatch_web_push_for_notification_ids(db, getattr(opportunity, "_notification_ids", []))
+        except Exception:  # noqa: BLE001 - push delivery must not break request creation.
+            db.rollback()
         db.refresh(service_request)
         return service_request_public_status(service_request)
     except HTTPException:
