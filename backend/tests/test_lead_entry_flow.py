@@ -1178,6 +1178,11 @@ def test_tracking_operations_map_polls_only_for_authorized_operational_view():
     assert "/service-orders/tracking/admin-stop-all" in html
     assert "data-admin-stop-tracking" in html
     assert "adminStopAllTrackingButton" in html
+    assert "adminTrackingDiagnostic51Button" in html
+    assert "/admin/tracking/diagnostic/" in html
+    assert "data-admin-tracking-diagnostic" in html
+    assert "JSON.stringify(payload, null, 2)" in html
+    assert "openTrackingDiagnostic(51)" in html
     assert "navigator.clipboard.writeText" in html
     assert "document.execCommand(\"copy\")" in html
     assert "trackingOperationsPrecision" in html

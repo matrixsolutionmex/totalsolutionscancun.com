@@ -3731,6 +3731,7 @@
         <div class="line" id="trackingOperationsStatus">Esperando ubicación...</div>
         <div class="pablo-action-card-actions" style="margin: 10px 0;">
           <button type="button" class="root-only" id="adminStopAllTrackingButton">Encerrar todas las rutas activas</button>
+          <button type="button" class="root-only" id="adminTrackingDiagnostic51Button">Diagnóstico de ruta · OS 51</button>
         </div>
         <div id="trackingOperationsMap" class="tracking-operations-map" aria-label="Mapa de técnicos en ruta"></div>
         <div id="trackingOperationsRoutes" class="tracking-route-list"></div>
@@ -3747,6 +3748,18 @@
       </div>
     </div>
   </section>
+
+  <div class="modal-backdrop" id="trackingDiagnosticModal" hidden>
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="trackingDiagnosticTitle">
+      <div class="modal-header">
+        <div class="modal-title" id="trackingDiagnosticTitle">Diagnóstico de ruta</div>
+        <button class="ghost" type="button" id="closeTrackingDiagnosticModal">Cerrar</button>
+      </div>
+      <div class="modal-body">
+        <pre id="trackingDiagnosticOutput" style="max-height: 70vh; overflow: auto; white-space: pre-wrap;"></pre>
+      </div>
+    </section>
+  </div>
 
   <section class="view" id="view-relatorios">
     <div class="view-grid">
@@ -6364,7 +6377,7 @@
           <span>${t("uiLastUpdate")}: ${escapeHtml(trackingOperationsDate(tracking.updated_at))} · ${t("uiPrecision")}: <span title="${tracking.accuracy_m == null ? "" : `${escapeHtml(tracking.accuracy_m)} m`}">${escapeHtml(trackingOperationsPrecision(tracking.accuracy_m))}</span></span>
           ${route.route?.available ? `<div class="tracking-route-metrics"><div class="tracking-route-metric"><small>${t("uiRemainingDistance")}</small><strong>${escapeHtml(formatRouteDistance(route.route.distance_m))}</strong></div><div class="tracking-route-metric"><small>${t("uiEstimatedTime")}</small><strong>${escapeHtml(formatRouteDuration(route.route.duration_s))}</strong></div><div class="tracking-route-metric"><small>${t("uiEstimatedArrival")}</small><strong>${escapeHtml(formatRouteEta(route.route.eta_at))}</strong></div></div>` : `<span>${t("uiRouteWaiting")}</span>`}
           ${trackingUrl ? `<div class="tracking-route-actions"><a class="small-btn" href="${escapeHtml(trackingUrl)}" target="_blank" rel="noopener noreferrer">${t("uiViewTracking")}</a><button class="small-btn ghost" type="button" data-tracking-copy="${escapeHtml(trackingUrl)}">${t("uiCopyLink")}</button></div>` : ""}
-          <div class="tracking-route-actions"><button class="small-btn ghost" type="button" data-admin-stop-tracking="${escapeHtml(route.service_order_id)}">Encerrar rota</button></div>
+          <div class="tracking-route-actions"><button class="small-btn ghost root-only" type="button" data-admin-tracking-diagnostic="${escapeHtml(route.service_order_id)}">Diagnóstico de ruta</button><button class="small-btn ghost" type="button" data-admin-stop-tracking="${escapeHtml(route.service_order_id)}">Encerrar rota</button></div>
         </article>`;
       }).join("");
     }
@@ -6519,6 +6532,34 @@
       window.setTimeout(() => {
         if (button.isConnected) button.textContent = previousLabel;
       }, 1800);
+    }
+
+    async function openTrackingDiagnostic(orderId) {
+      if (currentUser?.role !== "ROOT" || !orderId) return;
+      const modal = document.getElementById("trackingDiagnosticModal");
+      const output = document.getElementById("trackingDiagnosticOutput");
+      if (!modal || !output) return;
+      modal.hidden = false;
+      modal.classList.add("open");
+      output.textContent = "Cargando diagnóstico...";
+      try {
+        const response = await apiFetch(`${API_BASE}/admin/tracking/diagnostic/${encodeURIComponent(orderId)}`);
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.detail || "No fue posible cargar el diagnóstico.");
+        output.textContent = JSON.stringify(payload, null, 2);
+      } catch (error) {
+        output.textContent = error.message || "No fue posible cargar el diagnóstico.";
+      }
+    }
+
+    function closeTrackingDiagnostic() {
+      const modal = document.getElementById("trackingDiagnosticModal");
+      const output = document.getElementById("trackingDiagnosticOutput");
+      if (modal) {
+        modal.hidden = true;
+        modal.classList.remove("open");
+      }
+      if (output) output.textContent = "";
     }
 
     async function adminStopTracking(orderId) {
@@ -11455,8 +11496,20 @@
       if (!(target instanceof HTMLElement) || !target.matches("[data-admin-stop-tracking]")) return;
       adminStopTracking(target.dataset.adminStopTracking).catch((error) => addPabloV2Message(error.message, "ai"));
     });
+    document.getElementById("trackingOperationsRoutes")?.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || !target.matches("[data-admin-tracking-diagnostic]")) return;
+      openTrackingDiagnostic(target.dataset.adminTrackingDiagnostic).catch((error) => addPabloV2Message(error.message, "ai"));
+    });
     document.getElementById("adminStopAllTrackingButton")?.addEventListener("click", () => {
       adminStopAllTracking().catch((error) => addPabloV2Message(error.message, "ai"));
+    });
+    document.getElementById("adminTrackingDiagnostic51Button")?.addEventListener("click", () => {
+      openTrackingDiagnostic(51).catch((error) => addPabloV2Message(error.message, "ai"));
+    });
+    document.getElementById("closeTrackingDiagnosticModal")?.addEventListener("click", closeTrackingDiagnostic);
+    document.getElementById("trackingDiagnosticModal")?.addEventListener("click", (event) => {
+      if (event.target === event.currentTarget) closeTrackingDiagnostic();
     });
 
     document.getElementById("commercialPlanCards")?.addEventListener("click", (event) => {

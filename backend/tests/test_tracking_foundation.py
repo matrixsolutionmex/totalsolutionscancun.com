@@ -192,6 +192,7 @@ def test_root_tracking_diagnostic_matches_public_projection_and_detects_inconsis
     assert diagnostic["tracking_service_order_unique_constraint"] is True
     assert diagnostic["public_projection"]["tracking_active"] is True
     assert diagnostic["public_projection"]["technician_display_name"] == technician.full_name
+    assert "tracking_token" not in diagnostic["public_projection"]
     assert "MULTIPLE_TRACKING_RECORDS" not in diagnostic["inconsistencies"]
 
     tracking = db.query(ServiceOrderTracking).filter_by(service_order_id=order.id).one()

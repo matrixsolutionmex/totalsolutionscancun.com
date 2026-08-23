@@ -428,6 +428,9 @@ def diagnose_tracking_for_root(db: Session, order_id: int, actor: User) -> dict:
     from app.services.customer_portal_service import service_request_public_tracking
 
     public_projection = service_request_public_tracking(order.service_request) if order.service_request else None
+    if public_projection is not None:
+        public_projection = dict(public_projection)
+        public_projection.pop("tracking_token", None)
     inconsistencies = []
     if tracking and tracking.tracking_active and tracking.stopped_at is not None:
         inconsistencies.append("ACTIVE_WITH_STOPPED_AT")
