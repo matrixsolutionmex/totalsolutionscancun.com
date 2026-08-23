@@ -4412,6 +4412,7 @@
     const API_BASE = window.location.protocol === "file:"
       ? "http://127.0.0.1:8010"
       : window.location.origin;
+    const FRONTEND_BUILD_SHA = "6900e01";
     let accessToken = localStorage.getItem("totalsolutions_access_token") || "";
     let csrfToken = document.cookie.split("; ").find((row) => row.startsWith("ts_csrf="))?.split("=")[1] || "";
     let authPublicConfig = { turnstile_required: false, turnstile_site_key: null, google_client_id: null, public_signup_enabled: true };
@@ -6546,7 +6547,19 @@
         const response = await apiFetch(`${API_BASE}/admin/tracking/diagnostic/${encodeURIComponent(orderId)}`);
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.detail || "No fue posible cargar el diagnóstico.");
-        output.textContent = JSON.stringify(payload, null, 2);
+        let backendGitSha = "unknown";
+        try {
+          const healthResponse = await apiFetch(`${API_BASE}/health`);
+          const health = await healthResponse.json().catch(() => ({}));
+          if (healthResponse.ok) backendGitSha = health.git_sha || health.version || "unknown";
+        } catch (_error) {
+          // The tracking diagnostic remains useful when the optional health probe fails.
+        }
+        output.textContent = JSON.stringify({
+          frontend_build_sha: FRONTEND_BUILD_SHA,
+          backend_git_sha: backendGitSha,
+          diagnostic: payload
+        }, null, 2);
       } catch (error) {
         output.textContent = error.message || "No fue posible cargar el diagnóstico.";
       }
@@ -12443,6 +12456,27 @@
         let routePolyline = null;
         let lastTrackingData = null;
         let lastValidRouteData = null;
+        let trackingRequestSeq = 0;
+        let trackingAppliedSeq = 0;
+        const trackingDiagnosticEnabled = localStorage.getItem("ts_tracking_diagnostic") === "1";
+
+        const trackingDiagnosticPayload = (data, requestSeq, appliedSeq) => ({
+          requestSeq,
+          appliedSeq,
+          tracking_active: data.tracking_active === true,
+          operational_status: data.operational_status || null,
+          tracking_health: data.tracking_health || null,
+          technician_display_name: data.technician_display_name || null,
+          technician_lat: data.technician_lat ?? null,
+          technician_lng: data.technician_lng ?? null,
+          destination_lat: data.destination_lat ?? null,
+          destination_lng: data.destination_lng ?? null,
+          route_available: data.route_available === true,
+          route_geometry_length: Array.isArray(data.route_geometry) ? data.route_geometry.length : 0,
+          route_distance_m: data.route_distance_m ?? null,
+          route_duration_s: data.route_duration_s ?? null,
+          route_eta_at: data.route_eta_at || null
+        });
 
         const formatTrackingDate = (value) => {
           if (!value) return "-";
@@ -12464,6 +12498,7 @@
         };
         const renderPublicTracking = (data) => {
           const active = data.tracking_active === true;
+          if (!active) lastValidRouteData = null;
           const destinationLat = Number(data.destination_lat);
           const destinationLng = Number(data.destination_lng);
           const technicianLat = Number(data.technician_lat);
@@ -12555,15 +12590,20 @@
           if (bounds.length && needsShell) trackingMap.fitBounds(bounds, { padding: [30, 30], maxZoom: 16 });
         };
         const pollTracking = async () => {
+          const requestSeq = ++trackingRequestSeq;
           removeTrackingTimer();
           try {
             const response = await fetch(`${apiBase}/public/service-requests/${encodeURIComponent(token)}/tracking`, { headers: { Accept: "application/json" } });
             if (!response.ok) throw new Error("not-found");
             const data = await response.json();
+            if (requestSeq !== trackingRequestSeq) return;
+            trackingAppliedSeq = requestSeq;
+            if (trackingDiagnosticEnabled) console.info("[tracking-diagnostic]", trackingDiagnosticPayload(data, requestSeq, trackingAppliedSeq));
             lastTrackingData = data;
             renderPublicTracking(data);
             if (data.tracking_active === true && !document.hidden) trackingTimer = window.setTimeout(pollTracking, 12000);
           } catch (_error) {
+            if (requestSeq !== trackingRequestSeq) return;
             if (lastTrackingData) {
               const liveStatus = document.getElementById("publicTrackingLiveStatus");
               if (liveStatus) liveStatus.innerHTML = `<strong>${pt("route")}</strong><span>${pt("retry")}</span>`;

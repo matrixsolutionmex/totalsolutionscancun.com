@@ -1181,7 +1181,8 @@ def test_tracking_operations_map_polls_only_for_authorized_operational_view():
     assert "adminTrackingDiagnostic51Button" in html
     assert "/admin/tracking/diagnostic/" in html
     assert "data-admin-tracking-diagnostic" in html
-    assert "JSON.stringify(payload, null, 2)" in html
+    assert "frontend_build_sha: FRONTEND_BUILD_SHA" in html
+    assert "backend_git_sha: backendGitSha" in html
     assert "openTrackingDiagnostic(51)" in html
     assert "navigator.clipboard.writeText" in html
     assert "document.execCommand(\"copy\")" in html
@@ -1231,7 +1232,40 @@ def test_public_tracking_portal_uses_safe_statuses_and_live_leaflet_polling():
     assert "lastValidRouteData" in html
     assert "Recalculando ruta..." in html
     assert "else if (!active && routePolyline)" in html
+    assert "trackingRequestSeq" in html
+    assert "trackingAppliedSeq" in html
+    assert "requestSeq !== trackingRequestSeq" in html
+    assert "trackingDiagnosticPayload" in html
+    assert 'localStorage.getItem("ts_tracking_diagnostic") === "1"' in html
+    assert 'if (!active) lastValidRouteData = null;' in html
     assert "SALES_QUEUE" not in html.split("async function renderTracking", 1)[1].split("function bindForm", 1)[0]
+
+
+def test_public_tracking_os85_fixture_is_renderable_without_fallback():
+    html = (Path(__file__).resolve().parents[2] / "frontend" / "index.html").read_text()
+    fixture_path = Path(__file__).resolve().parent / "fixtures" / "public_tracking_os85.json"
+    payload = json.loads(fixture_path.read_text())
+
+    assert payload["tracking_active"] is True
+    assert payload["tracking_health"] == "LIVE"
+    assert payload["route_available"] is True
+    assert len(payload["route_geometry"]) >= 2
+    assert payload["technician_display_name"] == "Global Express"
+    assert payload["route_distance_m"] > 0
+    assert payload["route_duration_s"] > 0
+    assert payload["route_eta_at"]
+    assert "const displayRouteAvailable = Boolean(displayRoute);" in html
+    assert "const hasTechnician = active && Number.isFinite(technicianLat) && Number.isFinite(technicianLng);" in html
+    assert "if (routeGeometry.length >= 2 && displayRouteAvailable)" in html
+    assert "L.polyline(routeGeometry" in html
+
+
+def test_public_tracking_rejects_delayed_stale_response_before_rendering():
+    html = (Path(__file__).resolve().parents[2] / "frontend" / "index.html").read_text()
+    assert "if (requestSeq !== trackingRequestSeq) return;" in html
+    assert "trackingAppliedSeq = requestSeq;" in html
+    assert html.index("trackingAppliedSeq = requestSeq;") < html.index("lastTrackingData = data;")
+    assert html.count("if (requestSeq !== trackingRequestSeq) return;") == 2
 
 
 def test_public_tracking_uses_canonical_state_for_stale_and_orphaned_sessions(db):

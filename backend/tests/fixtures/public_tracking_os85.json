@@ -1,0 +1,20 @@
+{
+  "service_order_id": 85,
+  "tracking_active": true,
+  "operational_status": "Technician on the way",
+  "tracking_health": "LIVE",
+  "technician_display_name": "Global Express",
+  "technician_lat": 21.161,
+  "technician_lng": -86.8505,
+  "destination_lat": 21.162,
+  "destination_lng": -86.8515,
+  "route_available": true,
+  "route_geometry": [
+    [21.161, -86.8505],
+    [21.1615, -86.851],
+    [21.162, -86.8515]
+  ],
+  "route_distance_m": 2718,
+  "route_duration_s": 266,
+  "route_eta_at": "2026-08-23T12:04:26Z"
+}
