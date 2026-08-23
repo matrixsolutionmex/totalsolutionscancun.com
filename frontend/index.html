@@ -4412,7 +4412,7 @@
     const API_BASE = window.location.protocol === "file:"
       ? "http://127.0.0.1:8010"
       : window.location.origin;
-    const FRONTEND_BUILD_SHA = "6900e01";
+    const FRONTEND_BUILD_SHA = "unknown";
     let accessToken = localStorage.getItem("totalsolutions_access_token") || "";
     let csrfToken = document.cookie.split("; ").find((row) => row.startsWith("ts_csrf="))?.split("=")[1] || "";
     let authPublicConfig = { turnstile_required: false, turnstile_site_key: null, google_client_id: null, public_signup_enabled: true };
@@ -12456,6 +12456,9 @@
         let routePolyline = null;
         let lastTrackingData = null;
         let lastValidRouteData = null;
+        let lastValidRouteSessionKey = null;
+        let lastAppliedSessionKey = null;
+        let lastAppliedTrackingActive = false;
         let trackingRequestSeq = 0;
         let trackingAppliedSeq = 0;
         const trackingDiagnosticEnabled = localStorage.getItem("ts_tracking_diagnostic") === "1";
@@ -12496,9 +12499,20 @@
             trackingTimer = null;
           }
         };
+        const trackingSessionKey = (data) => data.tracking_session_id || data.route_started_at || data.technician_display_name || null;
+        const connectionRecoveryMessages = () => portalLanguage === "en"
+          ? ["Reconnecting...", "Showing the last available route."]
+          : portalLanguage === "pt-BR"
+            ? ["Atualizando conexão...", "Exibindo a última rota disponível."]
+            : ["Actualizando conexión...", "Mostrando la última ruta disponible."];
         const renderPublicTracking = (data) => {
           const active = data.tracking_active === true;
-          if (!active) lastValidRouteData = null;
+          const sessionKey = trackingSessionKey(data);
+          const newActiveSession = active && lastAppliedTrackingActive && lastAppliedSessionKey && sessionKey && sessionKey !== lastAppliedSessionKey;
+          if (!active || newActiveSession) {
+            lastValidRouteData = null;
+            lastValidRouteSessionKey = null;
+          }
           const destinationLat = Number(data.destination_lat);
           const destinationLng = Number(data.destination_lng);
           const technicianLat = Number(data.technician_lat);
@@ -12508,23 +12522,27 @@
           const incomingRouteGeometry = Array.isArray(data.route_geometry) ? data.route_geometry.filter((point) => Array.isArray(point) && point.length === 2 && point.every((value) => Number.isFinite(Number(value)))) : [];
           if (data.route_available === true && incomingRouteGeometry.length >= 2) {
             lastValidRouteData = data;
+            lastValidRouteSessionKey = sessionKey;
           }
           const displayRoute = data.route_available === true && incomingRouteGeometry.length >= 2
             ? data
-            : active ? lastValidRouteData : null;
+            : active && lastValidRouteSessionKey === sessionKey ? lastValidRouteData : null;
           const displayRouteAvailable = Boolean(displayRoute);
           const ageMs = data.last_location_updated_at ? Date.now() - new Date(data.last_location_updated_at).getTime() : Infinity;
           const locationHealth = data.tracking_health || (ageMs > 120000 ? "OFFLINE" : ageMs > 30000 ? "STALE" : "LIVE");
           const locationStatusText = locationHealth === "OFFLINE"
             ? (portalLanguage === "en" ? "Location interrupted" : portalLanguage === "pt-BR" ? "Localização interrompida" : "Ubicación interrumpida")
             : locationHealth === "STALE"
-              ? (portalLanguage === "en" ? "Updating location..." : portalLanguage === "pt-BR" ? "Atualizando localização..." : "Actualizando ubicación...")
+              ? (portalLanguage === "en" ? "Location has not updated recently" : portalLanguage === "pt-BR" ? "Localização sem atualização recente" : "Ubicación sin actualización reciente")
               : (portalLanguage === "en" ? "Your technician is on the way" : portalLanguage === "pt-BR" ? "Seu técnico está a caminho" : "Tu técnico está en camino");
           const locationMessage = !active
             ? (data.operational_status || "Tu solicitud está siendo preparada")
             : (hasTechnician ? locationStatusText : waitingTechnicianLabel);
+          const retainedRouteMessage = displayRouteAvailable && locationHealth !== "LIVE"
+            ? (portalLanguage === "en" ? "Showing the last available route · " : portalLanguage === "pt-BR" ? "Exibindo a última rota disponível · " : "Mostrando la última ruta disponible · ")
+            : "";
           const routeMessage = displayRouteAvailable
-            ? `${data.route_available ? "" : (portalLanguage === "en" ? "Recalculating route... · " : portalLanguage === "pt-BR" ? "Recalculando rota... · " : "Recalculando ruta... · ")}${locationHealth === "STALE" ? (portalLanguage === "en" ? "Approximate ETA" : portalLanguage === "pt-BR" ? "ETA aproximado" : "ETA aproximado") : (portalLanguage === "en" ? "Estimated arrival" : portalLanguage === "pt-BR" ? "Chegada estimada" : "Llegada estimada")}: ${formatRouteDuration(displayRoute.route_duration_s)} · ${portalLanguage === "en" ? "Distance remaining" : portalLanguage === "pt-BR" ? "Distância restante" : "Distancia restante"}: ${formatRouteDistance(displayRoute.route_distance_m)} · ${portalLanguage === "en" ? "Time" : portalLanguage === "pt-BR" ? "Hora" : "Hora"}: ${formatRouteEta(displayRoute.route_eta_at)}`
+            ? `${retainedRouteMessage}${data.route_available ? "" : (portalLanguage === "en" ? "Recalculating route... · " : portalLanguage === "pt-BR" ? "Recalculando rota... · " : "Recalculando ruta... · ")}${locationHealth === "STALE" ? (portalLanguage === "en" ? "Approximate ETA" : portalLanguage === "pt-BR" ? "ETA aproximado" : "ETA aproximado") : (portalLanguage === "en" ? "Estimated arrival" : portalLanguage === "pt-BR" ? "Chegada estimada" : "Llegada estimada")}: ${formatRouteDuration(displayRoute.route_duration_s)} · ${portalLanguage === "en" ? "Distance remaining" : portalLanguage === "pt-BR" ? "Distância restante" : "Distancia restante"}: ${formatRouteDistance(displayRoute.route_distance_m)} · ${portalLanguage === "en" ? "Time" : portalLanguage === "pt-BR" ? "Hora" : "Hora"}: ${formatRouteEta(displayRoute.route_eta_at)}`
             : (active && locationHealth === "OFFLINE" ? (portalLanguage === "en" ? "ETA temporarily unavailable" : portalLanguage === "pt-BR" ? "ETA temporariamente indisponível" : "ETA temporalmente no disponible") : pt("route"));
           const needsShell = !document.getElementById("publicTrackingMap");
           if (needsShell) {
@@ -12561,7 +12579,11 @@
             if (proximity) proximity.textContent = displayRouteAvailable ? trackingProximityMessage(displayRoute.route_distance_m) : locationMessage;
           }
           const mapElement = document.getElementById("publicTrackingMap");
-          if (!mapElement || !window.L || window.leafletLoadFailed) return;
+          if (!mapElement || !window.L || window.leafletLoadFailed) {
+            lastAppliedSessionKey = sessionKey;
+            lastAppliedTrackingActive = active;
+            return;
+          }
           if (!trackingMap) {
             trackingMap = L.map(mapElement).setView(hasDestination ? [destinationLat, destinationLng] : [21.1619, -86.8515], hasDestination ? 15 : 12);
             L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(trackingMap);
@@ -12588,6 +12610,8 @@
             technicianMarker.remove();
           }
           if (bounds.length && needsShell) trackingMap.fitBounds(bounds, { padding: [30, 30], maxZoom: 16 });
+          lastAppliedSessionKey = sessionKey;
+          lastAppliedTrackingActive = active;
         };
         const pollTracking = async () => {
           const requestSeq = ++trackingRequestSeq;
@@ -12606,7 +12630,15 @@
             if (requestSeq !== trackingRequestSeq) return;
             if (lastTrackingData) {
               const liveStatus = document.getElementById("publicTrackingLiveStatus");
-              if (liveStatus) liveStatus.innerHTML = `<strong>${pt("route")}</strong><span>${pt("retry")}</span>`;
+              const canShowLastRoute = lastTrackingData.tracking_active === true && lastValidRouteData !== null;
+              if (liveStatus) {
+                if (canShowLastRoute) {
+                  const [reconnecting, showingLastRoute] = connectionRecoveryMessages();
+                  liveStatus.innerHTML = `<strong>${escapeHtml(reconnecting)}</strong><span>${escapeHtml(showingLastRoute)}</span>`;
+                } else {
+                  liveStatus.innerHTML = `<strong>${pt("route")}</strong><span>${pt("retry")}</span>`;
+                }
+              }
               if (!document.hidden) trackingTimer = window.setTimeout(pollTracking, 12000);
             } else {
               removeTrackingTimer();

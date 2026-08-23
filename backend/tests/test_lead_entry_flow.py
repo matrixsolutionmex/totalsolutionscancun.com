@@ -1237,7 +1237,18 @@ def test_public_tracking_portal_uses_safe_statuses_and_live_leaflet_polling():
     assert "requestSeq !== trackingRequestSeq" in html
     assert "trackingDiagnosticPayload" in html
     assert 'localStorage.getItem("ts_tracking_diagnostic") === "1"' in html
-    assert 'if (!active) lastValidRouteData = null;' in html
+    assert "if (!active || newActiveSession)" in html
+    assert 'const FRONTEND_BUILD_SHA = "unknown";' in html
+    assert "connectionRecoveryMessages" in html
+    assert "Reconnecting..." in html
+    assert "Showing the last available route." in html
+    assert "Atualizando conexão..." in html
+    assert "Exibindo a última rota disponível." in html
+    assert "Actualizando conexión..." in html
+    assert "Mostrando la última ruta disponible." in html
+    assert "Showing the last available route · " in html
+    assert "Exibindo a última rota disponível · " in html
+    assert "Mostrando la última ruta disponible · " in html
     assert "SALES_QUEUE" not in html.split("async function renderTracking", 1)[1].split("function bindForm", 1)[0]
 
 
@@ -1266,6 +1277,24 @@ def test_public_tracking_rejects_delayed_stale_response_before_rendering():
     assert "trackingAppliedSeq = requestSeq;" in html
     assert html.index("trackingAppliedSeq = requestSeq;") < html.index("lastTrackingData = data;")
     assert html.count("if (requestSeq !== trackingRequestSeq) return;") == 2
+
+
+def test_public_tracking_failure_keeps_last_route_and_only_shows_unavailable_without_one():
+    html = (Path(__file__).resolve().parents[2] / "frontend" / "index.html").read_text()
+    assert "const canShowLastRoute = lastTrackingData.tracking_active === true && lastValidRouteData !== null;" in html
+    assert "if (canShowLastRoute)" in html
+    assert "if (!active || newActiveSession)" in html
+    assert "lastValidRouteSessionKey === sessionKey" in html
+    assert 'locationHealth === "STALE"' in html
+    assert 'locationHealth === "OFFLINE"' in html
+
+
+def test_public_tracking_reassignment_uses_new_session_key():
+    html = (Path(__file__).resolve().parents[2] / "frontend" / "index.html").read_text()
+    assert "tracking_session_id || data.route_started_at || data.technician_display_name" in html
+    assert "newActiveSession" in html
+    assert "lastAppliedSessionKey = sessionKey" in html
+    assert "lastAppliedTrackingActive = active" in html
 
 
 def test_public_tracking_uses_canonical_state_for_stale_and_orphaned_sessions(db):
