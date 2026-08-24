@@ -1,4 +1,5 @@
 from datetime import datetime
+import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -36,6 +37,8 @@ from app.services.commercial_upgrade_service import (
 from app.services.user_lifecycle_service import record_user_lifecycle_event, revoke_user_access, transition_user_status
 from app.services.entitlement_service import current_plan, ensure_user_commercial_profile, resolve_plan, set_user_entitlement_plan
 from app.services.legacy_workspace_migration_service import legacy_workspace_candidates, legacy_workspace_diagnostics, migrate_legacy_user_to_primary
+from app.services.organization_onboarding_service import send_invitation_email
+from app.services.organization_provisioning_service import provision_organization, provision_response
 from app.services.platform_admin_service import (
     get_platform_organization,
     get_platform_user,
@@ -74,6 +77,19 @@ class PlatformRoleRequest(BaseModel):
 class LegacyMigrationRequest(BaseModel):
     confirm: bool = False
     reason: str | None = None
+
+
+class OrganizationProvisionPayload(BaseModel):
+    name: str
+    slug: str | None = None
+    country: str = "MX"
+    language: str = "es"
+    currency: str = "MXN"
+    timezone: str = "America/Cancun"
+    plan: str = "FREE"
+    manager_full_name: str
+    manager_email: str
+    manager_language: str = "es"
 
 
 def require_reason(reason: str) -> str:
@@ -403,6 +419,55 @@ def admin_platform_organizations(
     actor: User = Depends(require_root_user),
 ):
     return {"organizations": list_platform_organizations(db, search=search, plan=plan, status=status)}
+
+
+@router.post("/platform/organizations/provision", status_code=201)
+def admin_provision_organization(
+    payload: OrganizationProvisionPayload,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    if not payload.manager_full_name.strip():
+        raise HTTPException(status_code=422, detail="Nome completo do gerente é obrigatório")
+    try:
+        organization, invitation, raw_token = provision_organization(
+            db,
+            name=payload.name,
+            slug=payload.slug,
+            country=payload.country,
+            language=payload.language,
+            currency=payload.currency,
+            timezone=payload.timezone,
+            plan=payload.plan,
+            manager_full_name=payload.manager_full_name,
+            manager_email=payload.manager_email,
+            invited_by=actor,
+        )
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Não foi possível provisionar a organização") from exc
+
+    base_url = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    invite_url = f"{base_url}/invite/{raw_token}" if base_url else f"/invite/{raw_token}"
+    email_sent = send_invitation_email(
+        to_email=invitation.invited_email,
+        organization_name=organization.name,
+        role=invitation.role,
+        invite_url=invite_url,
+    )
+    return provision_response(
+        organization,
+        invitation,
+        email_delivery_status="sent" if email_sent else "unavailable",
+        warnings=[
+            "region_and_city_not_persisted: Organization ainda não possui campos para localização regional",
+            "manager_name_and_language_are_collected_for_future_invite_metadata",
+        ],
+    )
 
 
 @router.get("/platform/organizations/{organization_id}")

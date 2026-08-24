@@ -3907,6 +3907,24 @@
         <div class="broker-list" id="brokerList"></div>
       </div>
       <div class="panel-box root-only" style="grid-column: 1 / -1;">
+        <div class="panel-title">Nueva empresa</div>
+        <div class="line">Crea un tenant vacío e invita a su primer gerente. La invitación no incluye contraseña ni expone el token.</div>
+        <form id="platformProvisionOrganizationForm" class="admin-grid" style="margin-top: 14px;">
+          <input id="platformProvisionName" required placeholder="Nombre de la empresa">
+          <input id="platformProvisionSlug" placeholder="Slug opcional">
+          <select id="platformProvisionCountry" aria-label="País"><option value="MX">México</option><option value="US">EUA</option><option value="BR">Brasil</option><option value="CA">Canadá</option></select>
+          <select id="platformProvisionLanguage" aria-label="Idioma"><option value="es">Español</option><option value="en">English</option><option value="pt-BR">Português</option></select>
+          <select id="platformProvisionCurrency" aria-label="Moneda"><option value="MXN">MXN</option><option value="USD">USD</option><option value="BRL">BRL</option><option value="CAD">CAD</option></select>
+          <input id="platformProvisionTimezone" value="America/Cancun" required placeholder="Timezone IANA">
+          <select id="platformProvisionPlan" aria-label="Plan"><option value="FREE">FREE</option><option value="PRO">PRO</option><option value="BUSINESS">BUSINESS</option></select>
+          <input id="platformProvisionManagerName" required placeholder="Nombre completo del gerente">
+          <input id="platformProvisionManagerEmail" type="email" required placeholder="E-mail del gerente">
+          <select id="platformProvisionManagerLanguage" aria-label="Idioma del gerente"><option value="es">Español</option><option value="en">English</option><option value="pt-BR">Português</option></select>
+          <button class="primary-btn" type="submit">Crear empresa</button>
+        </form>
+        <div id="platformProvisionStatus" class="line" role="status" style="margin-top: 12px;"></div>
+      </div>
+      <div class="panel-box root-only" style="grid-column: 1 / -1;">
         <div class="panel-title">Directorio global ROOT</div>
         <div class="line">Equipo de mi organización permanece separado de los usuarios de toda la plataforma.</div>
         <div class="metric-row" id="platformDirectoryMetrics" style="margin: 14px 0;"></div>
@@ -11554,6 +11572,42 @@
     });
     document.getElementById("platformUserSearchButton")?.addEventListener("click", () => {
       loadPlatformDirectory().catch(() => {});
+    });
+    document.getElementById("platformProvisionOrganizationForm")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const status = document.getElementById("platformProvisionStatus");
+      const button = form.querySelector("button[type=submit]");
+      if (button) button.disabled = true;
+      if (status) status.textContent = "Creando empresa...";
+      try {
+        const response = await apiFetch(`${API_BASE}/admin/platform/organizations/provision`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            name: document.getElementById("platformProvisionName")?.value.trim(),
+            slug: document.getElementById("platformProvisionSlug")?.value.trim() || null,
+            country: document.getElementById("platformProvisionCountry")?.value,
+            language: document.getElementById("platformProvisionLanguage")?.value,
+            currency: document.getElementById("platformProvisionCurrency")?.value,
+            timezone: document.getElementById("platformProvisionTimezone")?.value.trim(),
+            plan: document.getElementById("platformProvisionPlan")?.value,
+            manager_full_name: document.getElementById("platformProvisionManagerName")?.value.trim(),
+            manager_email: document.getElementById("platformProvisionManagerEmail")?.value.trim(),
+            manager_language: document.getElementById("platformProvisionManagerLanguage")?.value
+          })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || "No fue posible crear la empresa.");
+        if (status) status.textContent = `Empresa creada correctamente: ${data.organization_name} · Gerente: ${data.manager_email} · Invitación: ${data.email_delivery_status}.`;
+        form.reset();
+        document.getElementById("platformProvisionTimezone").value = "America/Cancun";
+        await loadPlatformDirectory();
+      } catch (error) {
+        if (status) status.textContent = error.message || "No fue posible crear la empresa.";
+      } finally {
+        if (button) button.disabled = false;
+      }
     });
     document.getElementById("platformOrganizationList")?.addEventListener("click", async (event) => {
       const target = event.target;

@@ -23,6 +23,7 @@ from app.models.user import User
 from app.models import service_order, service_property
 from app.services.entitlement_service import current_plan, ensure_user_commercial_profile
 from app.services.organization_onboarding_service import accept_invitation, create_invitation, record_referral
+from app.services.organization_provisioning_service import provision_organization
 from app import main as _app_main  # registers the application's relationship models
 from app.auth.routes import login
 from app.routes.admin_routes import PlatformRoleRequest, PlatformSupervisorRequest, admin_platform_assign_supervisor, admin_platform_change_role, admin_platform_user_access_diagnostic, approve_pending_user, pending_onboarding_users, pending_users
@@ -98,6 +99,60 @@ def test_independent_workspace_is_free_and_does_not_inherit_paid_plan(onboarding
     assert independent.plan == "FREE"
     assert db.query(CommercialSubscription).filter_by(organization_id=independent.id).one().status == "LAUNCH_ACCESS"
     assert current_plan(db, user) == "FREE"
+
+
+def test_root_provisions_empty_tenant_with_gerente_invitation(onboarding_db):
+    db = onboarding_db
+    root = make_user(db, username="platform-root", role="ROOT")
+
+    organization, invitation, raw_token = provision_organization(
+        db,
+        name="Hotel Riviera Maya",
+        slug=None,
+        country="MX",
+        language="es",
+        currency="MXN",
+        timezone="America/Cancun",
+        plan="FREE",
+        manager_full_name="Ana Gerente",
+        manager_email="ana@hotel.example",
+        invited_by=root,
+    )
+    db.commit()
+
+    assert organization.slug == "hotel-riviera-maya"
+    assert organization.status == "ACTIVE"
+    assert invitation.role == "GERENTE"
+    assert invitation.organization_id == organization.id
+    assert raw_token
+    assert db.query(User).filter(User.organization_id == organization.id).count() == 0
+    assert db.query(CommercialSubscription).filter_by(organization_id=organization.id).one().plan == "FREE"
+
+
+def test_provisioning_rolls_back_if_manager_invitation_fails(onboarding_db, monkeypatch):
+    db = onboarding_db
+    root = make_user(db, username="rollback-root", role="ROOT")
+
+    def fail_invitation(*args, **kwargs):
+        raise RuntimeError("invitation failure")
+
+    monkeypatch.setattr("app.services.organization_provisioning_service.create_invitation", fail_invitation)
+    with pytest.raises(RuntimeError):
+        provision_organization(
+            db,
+            name="Rollback Company",
+            slug="rollback-company",
+            country="MX",
+            language="es",
+            currency="MXN",
+            timezone="America/Cancun",
+            plan="FREE",
+            manager_full_name="Rollback Manager",
+            manager_email="rollback@hotel.example",
+            invited_by=root,
+        )
+    db.rollback()
+    assert db.query(Organization).filter_by(slug="rollback-company").first() is None
 
 
 def test_root_queue_matches_login_gate_for_non_independent_gerente_pro(onboarding_db):
