@@ -24,6 +24,7 @@ from app.models.service_order import ServiceOrder
 from app.models.service_order_tracking import ServiceOrderTracking
 from app.models.service_property import ServiceProperty
 from app.models.service_request import ServiceRequest, ServiceRequestMedia
+from app.models.service_opportunity import ServiceOpportunity
 from app.models.user import User
 from app.routes.integration_routes import create_integration_lead, require_integration_token
 from app.routes.lead_document_routes import (
@@ -82,6 +83,7 @@ def db():
             ServiceRequestMedia.__table__,
             ServiceOrder.__table__,
             ServiceOrderTracking.__table__,
+            ServiceOpportunity.__table__,
             LeadEvent.__table__,
             LeadDocument.__table__,
             DeletionRequest.__table__,
@@ -141,6 +143,81 @@ def test_root_scope_is_limited_to_own_organization(db):
     visible = list_leads(db=db, actor=root_a, limit=100, offset=0)
 
     assert [lead.id for lead in visible] == [lead_a.id]
+
+
+def test_tenant_isolation_covers_leads_marketplace_notifications_and_documents(db):
+    org_a = make_organization(db, "tenant-a", "Empresa A")
+    org_b = make_organization(db, "tenant-b", "Empresa B")
+    admin_a = make_user(db, "admin-a", "BROKER", organization_id=org_a.id)
+    admin_b = make_user(db, "admin-b", "BROKER", organization_id=org_b.id)
+
+    lead_a = Lead(nome="Cliente A", contato="9980000001", organization_id=org_a.id, assigned_to_user_id=admin_a.id)
+    lead_b = Lead(nome="Cliente B", contato="9980000002", organization_id=org_b.id, assigned_to_user_id=admin_b.id)
+    db.add_all([lead_a, lead_b])
+    db.flush()
+    db.add_all(
+        [
+            LeadDocument(
+                organization_id=org_a.id,
+                lead_id=lead_a.id,
+                uploaded_by_user_id=admin_a.id,
+                document_type="NOTA",
+                file_name="a.txt",
+                file_path="/tmp/a.txt",
+            ),
+            LeadDocument(
+                organization_id=org_b.id,
+                lead_id=lead_b.id,
+                uploaded_by_user_id=admin_b.id,
+                document_type="NOTA",
+                file_name="b.txt",
+                file_path="/tmp/b.txt",
+            ),
+            ServiceOpportunity(
+                public_id="MKT-TENANT-A",
+                organization_id=org_a.id,
+                source="MARKETPLACE",
+                service_type="HIDRAULICA",
+                city="Cancun",
+            ),
+            ServiceOpportunity(
+                public_id="MKT-TENANT-B",
+                organization_id=org_b.id,
+                source="MARKETPLACE",
+                service_type="HIDRAULICA",
+                city="Cancun",
+            ),
+            Notification(
+                organization_id=org_a.id,
+                recipient_user_id=admin_a.id,
+                type="TESTE",
+                title="A",
+                message="A",
+                idempotency_key="tenant-a-notification",
+            ),
+            Notification(
+                organization_id=org_b.id,
+                recipient_user_id=admin_b.id,
+                type="TESTE",
+                title="B",
+                message="B",
+                idempotency_key="tenant-b-notification",
+            ),
+        ]
+    )
+    db.commit()
+
+    assert [lead.nome for lead in list_leads(db=db, actor=admin_a, limit=100, offset=0)] == ["Cliente A"]
+
+    from app.services.marketplace_service import list_opportunities
+
+    assert [item["public_id"] for item in list_opportunities(db, admin_a)] == ["MKT-TENANT-A"]
+    assert [item.title for item in list_notifications(limit=20, after_id=None, db=db, actor=admin_a)] == ["A"]
+    assert [doc["file_name"] for doc in list_lead_documents(lead_id=lead_a.id, db=db, actor=admin_a)] == ["a.txt"]
+
+    with pytest.raises(HTTPException) as cross_org_documents:
+        list_lead_documents(lead_id=lead_b.id, db=db, actor=admin_a)
+    assert cross_org_documents.value.status_code == 403
 
 
 def test_duplicate_detection_is_scoped_by_organization(db):
