@@ -7,12 +7,12 @@ from sqlalchemy.orm import Session
 
 from app.core.auth_security import audit_auth_event
 from app.models.commercial_upgrade_intent import CommercialUpgradeIntent
-from app.models.commercial_subscription import CommercialSubscription
+from app.models.commercial_subscription import CommercialSubscription, PlanChangeEvent
 from app.models.auth_security import AuthAuditEvent
 from app.models.organization import Organization
 from app.models.user import User
 from app.services.billing_provider import MockBillingProvider
-from app.services.entitlement_service import PLANS, current_plan, normalize_plan
+from app.services.entitlement_service import PLANS, current_plan, normalize_plan, resolve_plan, subscription_for_organization
 
 
 CHECKOUT_URLS = {
@@ -166,7 +166,7 @@ def activate_upgrade_intent(db: Session, actor: User, intent_id: int, *, request
         raise HTTPException(status_code=403, detail="Somente ROOT pode ativar planos globalmente")
     intent = _intent_or_404(db, actor, intent_id, global_scope=global_scope)
     if intent.status == "ACTIVATED":
-        return intent, None
+        return intent, subscription_for_organization(db, intent.organization_id)
     if intent.status not in CONFIRMED_INTENT_STATUSES:
         raise HTTPException(status_code=409, detail="Confirme o pagamento antes de ativar o plano")
     subscription = MockBillingProvider().change_plan(
@@ -184,6 +184,83 @@ def activate_upgrade_intent(db: Session, actor: User, intent_id: int, *, request
     db.commit()
     db.refresh(intent)
     return intent, subscription
+
+
+def commercial_subscription_diagnostic(db: Session, organization_id: int) -> dict | None:
+    organization = db.query(Organization).filter(Organization.id == organization_id).first()
+    if not organization:
+        return None
+
+    subscriptions = (
+        db.query(CommercialSubscription)
+        .filter(CommercialSubscription.organization_id == organization_id)
+        .order_by(CommercialSubscription.id.asc())
+        .all()
+    )
+    subscription = subscriptions[0] if subscriptions else None
+    representative = db.query(User).filter(User.organization_id == organization_id).order_by(User.id.asc()).first()
+    resolved = resolve_plan(db, representative) if representative else {
+        "plan": normalize_plan(subscription.plan if subscription else organization.plan),
+        "source": "ORGANIZATION_SUBSCRIPTION_FALLBACK" if subscription else "ORGANIZATION_PLAN_FALLBACK",
+    }
+    plan = resolved["plan"]
+    latest_intents = (
+        db.query(CommercialUpgradeIntent)
+        .filter(CommercialUpgradeIntent.organization_id == organization_id)
+        .order_by(CommercialUpgradeIntent.created_at.desc(), CommercialUpgradeIntent.id.desc())
+        .limit(3)
+        .all()
+    )
+    intent_rows = []
+    for intent in latest_intents:
+        change = (
+            db.query(PlanChangeEvent)
+            .filter(
+                PlanChangeEvent.organization_id == organization_id,
+                PlanChangeEvent.reason == f"upgrade_intent:{intent.id}",
+            )
+            .order_by(PlanChangeEvent.created_at.desc(), PlanChangeEvent.id.desc())
+            .first()
+        )
+        intent_rows.append({
+            "id": intent.id,
+            "from_plan": normalize_plan(change.previous_plan) if change else None,
+            "target_plan": normalize_plan(intent.requested_plan),
+            "status": _normalized_intent_status(intent),
+            "payment_status": "CONFIRMED" if intent.status in CONFIRMED_INTENT_STATUSES or intent.payment_confirmed_at else "PENDING",
+            "confirmation_source": intent.confirmation_source,
+            "activation_method": change.provider if change else None,
+            "created_at": intent.created_at.isoformat(),
+            "updated_at": intent.updated_at.isoformat() if intent.updated_at else None,
+        })
+    return {
+        "organization": {
+            "id": organization.id,
+            "name": organization.name,
+            "plan": normalize_plan(organization.plan),
+            "status": organization.status,
+        },
+        "subscription_count": len(subscriptions),
+        "subscription": {
+            "id": subscription.id,
+            "organization_id": subscription.organization_id,
+            "plan": normalize_plan(subscription.plan),
+            "status": subscription.status,
+            "started_at": subscription.started_at.isoformat() if subscription.started_at else None,
+            "expires_at": subscription.expires_at.isoformat() if subscription.expires_at else None,
+            "updated_at": subscription.updated_at.isoformat() if subscription.updated_at else None,
+            "provider": subscription.provider,
+            "reference_price": subscription.reference_price,
+        } if subscription else None,
+        "resolved": {
+            "current_plan": plan,
+            "resolve_plan": resolved,
+            "entitlements": sorted(PLANS[plan]["features"]),
+            "max_users": PLANS[plan]["limits"]["users"],
+            "max_clients": PLANS[plan]["limits"]["clients"],
+        },
+        "latest_intents": intent_rows,
+    }
 
 
 def cancel_upgrade_intent(db: Session, actor: User, intent_id: int, *, request=None, global_scope: bool = False):

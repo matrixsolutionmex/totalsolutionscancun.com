@@ -33,6 +33,7 @@ from app.services.notification_service import dispatch_web_push_for_notification
 from app.services.commercial_upgrade_service import (
     activate_upgrade_intent,
     cancel_upgrade_intent,
+    commercial_subscription_diagnostic,
     global_commercial_metrics,
     list_global_upgrade_intents,
     mark_payment_confirmed,
@@ -402,6 +403,18 @@ def admin_commercial_metrics(
     actor: User = Depends(require_root_user),
 ):
     return global_commercial_metrics(db)
+
+
+@router.get("/commercial/diagnostic/{organization_id}")
+def admin_commercial_diagnostic(
+    organization_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    diagnostic = commercial_subscription_diagnostic(db, organization_id)
+    if not diagnostic:
+        raise HTTPException(status_code=404, detail="Organização não encontrada")
+    return diagnostic
 
 
 @router.get("/platform/metrics")

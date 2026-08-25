@@ -24,13 +24,14 @@ from app.services.commercial_upgrade_service import (
     activate_upgrade_intent,
     create_or_reuse_upgrade_intent,
     create_upgrade_intent,
+    commercial_subscription_diagnostic,
     get_active_upgrade_intent,
     global_commercial_metrics,
     list_global_upgrade_intents,
     mark_payment_confirmed,
     normalize_existing_upgrade_intents,
 )
-from app.services.entitlement_service import account_snapshot, can_use_feature, get_plan_limits, plan_catalog
+from app.services.entitlement_service import account_snapshot, can_use_feature, current_plan, get_plan_limits, plan_catalog
 from app.services.platform_admin_service import (
     get_platform_organization,
     get_platform_user,
@@ -375,3 +376,55 @@ def test_available_organizations_uses_subscription_plan_over_legacy_organization
 
     row = next(item for item in rows if item["id"] == organization.id)
     assert row["plan"] == subscription_plan
+
+
+def test_activation_updates_canonical_subscription_and_is_idempotent(commercial_db):
+    db, actor, _, _ = commercial_db
+    organization = db.query(Organization).filter_by(id=actor.organization_id).one()
+    subscription = CommercialSubscription(
+        organization_id=organization.id,
+        plan="FREE",
+        status="LAUNCH_ACCESS",
+        provider="MOCK",
+    )
+    db.add(subscription)
+    db.commit()
+
+    intent = create_upgrade_intent(db, actor, "PRO")
+    mark_payment_confirmed(db, actor, intent.id)
+    activated, first_subscription = activate_upgrade_intent(db, actor, intent.id)
+    activated_again, second_subscription = activate_upgrade_intent(db, actor, intent.id)
+
+    assert activated.status == "ACTIVATED"
+    assert activated_again.id == intent.id
+    assert first_subscription.id == second_subscription.id == subscription.id
+    assert subscription.plan == organization.plan == "PRO"
+    assert current_plan(db, actor) == "PRO"
+    assert db.query(CommercialSubscription).filter_by(organization_id=organization.id).count() == 1
+    assert db.query(PlanChangeEvent).filter_by(organization_id=organization.id).count() == 1
+
+
+def test_commercial_subscription_diagnostic_reports_plan_sources_and_history(commercial_db):
+    db, actor, _, _ = commercial_db
+    organization = db.query(Organization).filter_by(id=actor.organization_id).one()
+    db.add(CommercialSubscription(
+        organization_id=organization.id,
+        plan="FREE",
+        status="LAUNCH_ACCESS",
+        provider="MOCK",
+    ))
+    db.commit()
+    intent = create_upgrade_intent(db, actor, "PRO")
+    mark_payment_confirmed(db, actor, intent.id)
+    activate_upgrade_intent(db, actor, intent.id)
+
+    diagnostic = commercial_subscription_diagnostic(db, organization.id)
+
+    assert diagnostic["organization"]["plan"] == "PRO"
+    assert diagnostic["subscription_count"] == 1
+    assert diagnostic["subscription"]["plan"] == "PRO"
+    assert diagnostic["subscription"]["status"] == "LAUNCH_ACCESS"
+    assert diagnostic["resolved"]["current_plan"] == "PRO"
+    assert diagnostic["resolved"]["resolve_plan"]["source"] == "ORGANIZATION_SUBSCRIPTION_FALLBACK"
+    assert diagnostic["latest_intents"][0]["from_plan"] == "FREE"
+    assert diagnostic["latest_intents"][0]["target_plan"] == "PRO"
