@@ -1,4 +1,5 @@
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -19,9 +20,10 @@ from app.services.marketplace_service import create_opportunity_from_service_req
 from app.services.organization_marketplace_service import (
     create_marketplace_link,
     ensure_default_marketplace_link,
+    list_organization_marketplace_links,
     resolve_marketplace_link,
 )
-from app.routes.public_service_request_routes import public_marketplace
+from app.routes.public_service_request_routes import public_marketplace, public_marketplace_campaign
 from app.routes.admin_routes import MarketplaceLinkCreateRequest, admin_create_marketplace_link
 from app.routes.public_service_request_routes import create_public_service_request
 
@@ -53,6 +55,46 @@ def test_each_organization_gets_one_idempotent_default_link(db):
     payload = public_marketplace(organization.slug, db)
     assert payload["organization_slug"] == organization.slug
     assert payload["link"]["slug"] == "default"
+
+
+def test_admin_link_payload_contains_own_organization_slug_for_each_tenant(db):
+    organization_a = make_org(db, "Global Express")
+    organization_a.slug = "global-solutions-goiania"
+    organization_b = make_org(db, "Otra Empresa")
+    organization_b.slug = "otra-empresa"
+    ensure_default_marketplace_link(db, organization_a)
+    campaign = create_marketplace_link(db, organization_id=organization_a.id, name="Super Promo", slug="super-promo")
+    ensure_default_marketplace_link(db, organization_b)
+    db.commit()
+
+    rows = list_organization_marketplace_links(db, organization_a.id)
+    by_slug = {row["slug"]: row for row in rows}
+    assert by_slug["default"]["organization_slug"] == "global-solutions-goiania"
+    assert by_slug["super-promo"]["organization_slug"] == "global-solutions-goiania"
+    assert campaign.slug == "super-promo"
+
+    other_rows = list_organization_marketplace_links(db, organization_b.id)
+    assert other_rows[0]["organization_slug"] == "otra-empresa"
+
+
+def test_public_default_and_campaign_urls_resolve_by_organization_slug(db):
+    organization = make_org(db, "Global Express")
+    organization.slug = "global-solutions-goiania"
+    default_link = ensure_default_marketplace_link(db, organization)
+    campaign = create_marketplace_link(db, organization_id=organization.id, name="Super Promo", slug="super-promo")
+    db.commit()
+
+    assert public_marketplace(organization.slug, db)["link"]["slug"] == default_link.slug
+    assert public_marketplace_campaign(organization.slug, campaign.slug, db)["link"]["slug"] == "super-promo"
+    with pytest.raises(HTTPException) as error:
+        public_marketplace("slug-inexistente", db)
+    assert error.value.status_code == 404
+
+
+def test_frontend_does_not_render_marketplace_url_without_organization_slug():
+    html = (Path(__file__).parents[2] / "frontend" / "index.html").read_text(encoding="utf-8")
+    assert 'typeof link.organization_slug === "string"' in html
+    assert "No disponible: la organización no tiene un slug público." in html
 
 
 def test_campaigns_are_tenant_scoped_and_inactive_links_are_not_public(db):

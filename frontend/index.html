@@ -6685,7 +6685,12 @@
       const list = document.getElementById("organizationMarketplaceLinks");
       if (!list) return;
       list.innerHTML = data.length ? data.map((link) => {
-        const publicPath = `/m/${encodeURIComponent(link.organization_slug)}${link.slug === "default" ? "" : `/${encodeURIComponent(link.slug)}`}`;
+        const organizationSlug = typeof link.organization_slug === "string" ? link.organization_slug.trim() : "";
+        if (!organizationSlug) {
+          return `<article class="panel-box"><div class="panel-title">${marketplaceValue(link.name)}</div>
+            <div class="line">No disponible: la organización no tiene un slug público.</div></article>`;
+        }
+        const publicPath = `/m/${encodeURIComponent(organizationSlug)}${link.slug === "default" ? "" : `/${encodeURIComponent(link.slug)}`}`;
         const url = `${window.location.origin}${publicPath}`;
         return `<article class="panel-box"><div class="panel-title">${marketplaceValue(link.name)}</div>
           <div class="line">${marketplaceValue(url)}</div>

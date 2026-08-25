@@ -94,6 +94,7 @@ def list_organization_marketplace_links(db: Session, organization_id: int) -> li
         "visibility_scope": link.visibility_scope,
         "active": bool(link.active),
         "organization_name": organization.name,
+        "organization_slug": organization.slug,
     } for link in links]
 
 
