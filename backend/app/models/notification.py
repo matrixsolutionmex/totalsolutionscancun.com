@@ -51,6 +51,7 @@ class EmailOutbox(Base):
     to_email = Column(String, nullable=False)
     subject = Column(String, nullable=False)
     body_text = Column(Text, nullable=False)
+    body_html = Column(Text, nullable=True)
     status = Column(String, nullable=False, default="PENDING", index=True)
     attempts = Column(Integer, nullable=False, default=0)
     last_attempt_at = Column(DateTime, nullable=True)

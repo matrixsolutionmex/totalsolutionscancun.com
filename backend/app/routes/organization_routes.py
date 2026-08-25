@@ -37,6 +37,17 @@ def invitation_payload(invitation: OrganizationInvitation, organization: Organiz
     }
 
 
+def public_invitation_payload(invitation: OrganizationInvitation, organization: Organization) -> dict:
+    """Expose only the fields needed to render the public invitation screen."""
+    return {
+        "organization_name": organization.name,
+        "invited_email": invitation.invited_email,
+        "role": invitation.role,
+        "status": invitation.status,
+        "expires_at": invitation.expires_at.isoformat(),
+    }
+
+
 @router.post("/invitations")
 def create_organization_invitation(
     payload: InvitationCreateRequest,
@@ -135,7 +146,7 @@ def available_organizations(
 def preview_organization_invitation(token: str, db: Session = Depends(get_db)):
     invitation = invitation_for_token(db, token)
     organization = db.query(Organization).filter(Organization.id == invitation.organization_id).first()
-    return invitation_payload(invitation, organization)
+    return public_invitation_payload(invitation, organization)
 
 
 @router.post("/invitations/accept")

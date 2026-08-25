@@ -26,11 +26,11 @@ from app.services.organization_onboarding_service import accept_invitation, crea
 from app.services.organization_provisioning_service import provision_organization
 from app.services import notification_service
 from app import main as _app_main  # registers the application's relationship models
-from app.auth.routes import login
+from app.auth.routes import login, register
 from app.routes.admin_routes import PlatformRoleRequest, PlatformSupervisorRequest, admin_platform_assign_supervisor, admin_platform_change_role, admin_platform_user_access_diagnostic, admin_resend_organization_invitation, approve_pending_user, pending_onboarding_users, pending_users
-from app.routes.organization_routes import current_team
+from app.routes.organization_routes import current_team, preview_organization_invitation
 from app.routes.user_routes import update_user
-from app.schemas.auth_schema import AuthLoginRequest, UserApprovalRequest
+from app.schemas.auth_schema import AuthLoginRequest, RegisterRequest, UserApprovalRequest
 from app.schemas.user_schema import UserUpdate
 
 
@@ -129,9 +129,59 @@ def test_root_provisions_empty_tenant_with_gerente_invitation(onboarding_db):
     outbox = db.query(EmailOutbox).filter_by(invitation_id=invitation.id).one()
     assert outbox.status == "PENDING"
     assert outbox.body_text == ""
+    assert outbox.body_html == ""
     assert outbox.to_email == "ana@hotel.example"
     assert db.query(User).filter(User.organization_id == organization.id).count() == 0
     assert db.query(CommercialSubscription).filter_by(organization_id=organization.id).one().plan == "FREE"
+
+
+def test_public_invitation_preview_exposes_only_onboarding_fields(onboarding_db):
+    db = onboarding_db
+    root = make_user(db, username="preview-root", role="ROOT")
+    organization = create_independent_organization(db, name="Preview Company")
+    invitation, raw_token = create_invitation(
+        db,
+        organization=organization,
+        invited_by=root,
+        invited_email="manager@preview.example",
+        role="GERENTE",
+    )
+
+    payload = preview_organization_invitation(raw_token, db)
+
+    assert payload["organization_name"] == "Preview Company"
+    assert payload["invited_email"] == "manager@preview.example"
+    assert payload["role"] == "GERENTE"
+    assert "organization_id" not in payload
+    assert "invitation_id" not in payload
+    assert "token_hash" not in payload
+
+
+def test_invitation_registration_rejects_email_substitution(onboarding_db):
+    db = onboarding_db
+    root = make_user(db, username="email-lock-root", role="ROOT")
+    organization = create_independent_organization(db, name="Email Lock Company")
+    _, raw_token = create_invitation(
+        db,
+        organization=organization,
+        invited_by=root,
+        invited_email="invited@email-lock.example",
+        role="GERENTE",
+    )
+
+    with pytest.raises(HTTPException) as error:
+        register(
+            RegisterRequest(
+                full_name="Wrong Recipient",
+                email="other@email-lock.example",
+                password="strong-password",
+                invite_token=raw_token,
+            ),
+            login_request(),
+            db,
+        )
+    assert error.value.status_code == 403
+    assert db.query(User).filter(User.email == "other@email-lock.example").first() is None
 
 
 def test_provisioning_rolls_back_if_manager_invitation_fails(onboarding_db, monkeypatch):
@@ -188,6 +238,7 @@ def test_invitation_outbox_delivers_without_persisting_raw_token_and_can_be_rese
     db.refresh(invitation)
     assert outbox.status == "SENT"
     assert outbox.body_text == ""
+    assert outbox.body_html == ""
     assert outbox.provider == "SMTP"
     assert invitation.token_hash != original_hash
 
@@ -201,6 +252,7 @@ def test_invitation_outbox_delivers_without_persisting_raw_token_and_can_be_rese
     db.refresh(outbox)
     assert outbox.status == "PENDING"
     assert outbox.body_text == ""
+    assert outbox.body_html == ""
     assert outbox.idempotency_key != original_delivery_key
 
 

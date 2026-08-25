@@ -490,6 +490,8 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
         raise HTTPException(status_code=403, detail="Registro temporalmente no disponible.")
     email = normalized_email(payload.email)
     invitation = invitation_for_token(db, payload.invite_token) if payload.invite_token else None
+    if invitation and email != invitation.invited_email:
+        raise HTTPException(status_code=403, detail="O convite foi enviado para outro e-mail")
     apply_public_rate_limits(db, request, email, "register")
     verify_turnstile_or_403(db, request, token=payload.turnstile_token, expected_action="register")
     if len(payload.password) < 8:

@@ -448,6 +448,7 @@ def create_database_tables():
         add_column_if_missing(db, "email_outbox", "claimed_at", "TIMESTAMP")
         add_column_if_missing(db, "email_outbox", "provider", "VARCHAR")
         add_column_if_missing(db, "email_outbox", "provider_message_id", "VARCHAR")
+        add_column_if_missing(db, "email_outbox", "body_html", "TEXT")
         if db.bind.dialect.name == "postgresql":
             try:
                 db.execute(text("ALTER TABLE email_outbox ALTER COLUMN recipient_user_id DROP NOT NULL"))
@@ -657,6 +658,23 @@ def service_portal():
             },
         )
     return {"status": "portal-not-found"}
+
+
+@app.get("/invite/{token}", include_in_schema=False)
+def organization_invitation_page(token: str):
+    frontend_index = frontend_dir / "index.html"
+    if frontend_index.exists():
+        return FileResponse(
+            frontend_index,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+                "CDN-Cache-Control": "no-store",
+                "Referrer-Policy": "no-referrer",
+            },
+        )
+    return {"status": "invitation-page-not-found"}
 
 
 @app.get("/acompanhar/{tracking_token}", include_in_schema=False)

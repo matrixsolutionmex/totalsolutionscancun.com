@@ -3380,6 +3380,7 @@
         </div>
         <h1 id="registerTitle">Crear cuenta</h1>
         <div class="subtitle" id="registerSubtitle">Regístrate para solicitar acceso a la operación.</div>
+        <div class="subtitle hidden" id="registerInviteSummary"></div>
         <div class="login-form">
           <button class="auth-switch identity-provider-button" id="googleLoginButton" type="button">
             <span class="identity-provider-icon" aria-hidden="true">G</span>
@@ -4444,6 +4445,7 @@
     const pendingInviteToken = window.location.pathname.startsWith("/invite/")
       ? decodeURIComponent(window.location.pathname.slice("/invite/".length).split("/")[0] || "")
       : "";
+    let pendingInviteData = null;
 
     function authHeaders(headers = {}) {
       const authenticatedHeaders = new Headers(headers);
@@ -4611,6 +4613,24 @@
       setAuthStatus("mfaStatus");
     }
 
+    async function loadPendingInvitation() {
+      if (!pendingInviteToken) return null;
+      const response = await fetch(`${API_BASE}/organization/invitations/${encodeURIComponent(pendingInviteToken)}`, { credentials: "include" });
+      if (!response.ok) {
+        throw new Error(await responseMessage(response, "Este convite não é válido ou já expirou."));
+      }
+      pendingInviteData = await response.json();
+      const emailInput = document.getElementById("registerEmail");
+      emailInput.value = pendingInviteData.invited_email || "";
+      emailInput.readOnly = true;
+      const summary = document.getElementById("registerInviteSummary");
+      summary.textContent = `Organização: ${pendingInviteData.organization_name} · Rol: ${pendingInviteData.role}`;
+      summary.classList.remove("hidden");
+      document.getElementById("registerSubtitle").textContent = "Has sido invitado a administrar esta organización.";
+      document.getElementById("registerButton").textContent = "Crear mi cuenta";
+      return pendingInviteData;
+    }
+
     function showRegisterForm() {
       if (authPublicConfig.public_signup_enabled === false) {
         setAuthStatus("loginStatus", t("signupDisabled"), "error");
@@ -4624,15 +4644,11 @@
       document.getElementById("registerForm").classList.remove("hidden");
       setAuthStatus("loginStatus");
       if (pendingInviteToken) {
-        fetch(`${API_BASE}/organization/invitations/${encodeURIComponent(pendingInviteToken)}`)
-          .then((response) => response.ok ? response.json() : null)
-          .then((invitation) => {
-            if (invitation) {
-              document.getElementById("registerSubtitle").textContent =
-                `Você foi convidado para entrar em ${invitation.organization_name}. Aceite criando sua conta com o e-mail convidado.`;
-            }
-          })
-          .catch(() => {});
+        const registerButton = document.getElementById("registerButton");
+        registerButton.disabled = true;
+        loadPendingInvitation()
+          .catch((error) => setAuthStatus("registerStatus", error.message || "Convite inválido.", "error"))
+          .finally(() => { registerButton.disabled = Boolean(!pendingInviteData); });
       }
     }
 
@@ -9010,6 +9026,11 @@
       const passwordConfirmation = document.getElementById("registerPasswordConfirm").value;
       setAuthStatus("registerStatus");
 
+      if (pendingInviteToken && !pendingInviteData) {
+        setAuthStatus("registerStatus", "Não foi possível validar o convite.", "error");
+        return;
+      }
+
       if (password !== passwordConfirmation) {
         setAuthStatus("registerStatus", t("passwordsMismatch"), "error");
         return;
@@ -11825,6 +11846,11 @@
 
     async function restoreSession() {
       const savedUser = localStorage.getItem("totalsolutions_user");
+      if (pendingInviteToken) {
+        showRegisterForm();
+        hideSplash();
+        return;
+      }
       if (!savedUser || !accessToken) {
         localStorage.removeItem("totalsolutions_user");
         localStorage.removeItem("totalsolutions_access_token");

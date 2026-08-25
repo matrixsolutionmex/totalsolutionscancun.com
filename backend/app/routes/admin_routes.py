@@ -505,6 +505,7 @@ def admin_resend_organization_invitation(
         outbox.sent_at = None
         outbox.provider_message_id = None
         outbox.body_text = ""
+        outbox.body_html = ""
         outbox.next_attempt_at = now
     db.commit()
     return {

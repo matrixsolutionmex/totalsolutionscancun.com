@@ -1,4 +1,5 @@
 import json
+import html
 import logging
 import os
 import secrets
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.models.lead import Lead
 from app.models.notification import EmailOutbox, Notification, NotificationPreference, WebPushSubscription
 from app.models.organization_invitation import OrganizationInvitation
+from app.models.organization import Organization
 from app.core.auth_security import hash_value
 from app.models.service_order import ServiceOrder
 from app.models.user import User
@@ -394,6 +396,7 @@ def enqueue_invitation_email(db: Session, *, invitation: OrganizationInvitation,
         to_email=invitation.invited_email,
         subject=f"Convite para entrar em {organization_name}",
         body_text="",
+        body_html="",
         status="PENDING",
         provider="RESEND" if _resend_api_key() else "SMTP",
         idempotency_key=f"organization_invitation:{invitation.id}",
@@ -546,20 +549,37 @@ def _prepare_invitation_email(db: Session, item: EmailOutbox) -> None:
     ).with_for_update().first()
     if not invitation or invitation.status != "PENDING":
         raise RuntimeError("invitation_not_pending")
+    organization = db.query(Organization).filter(Organization.id == invitation.organization_id).first()
+    organization_name = organization.name if organization else "Total Solutions"
     raw_token = secrets.token_urlsafe(32)
     invitation.token_hash = hash_value(raw_token)
     invitation.expires_at = datetime.utcnow() + timedelta(days=7)
     base_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
     invite_url = f"{base_url}/invite/{raw_token}" if base_url else f"/invite/{raw_token}"
     item.body_text = (
-        "Você foi convidado para entrar em uma organização Total Solutions.\n\n"
+        f"Você foi convidado para administrar a organização {organization_name} como {invitation.role}.\n\n"
         f"Abra o convite: {invite_url}\n\n"
-        "O convite expira em 7 dias e pode ser usado uma única vez."
+        f"O convite expira em {7} dias e pode ser usado uma única vez."
+    )
+    safe_name = html.escape(organization_name)
+    safe_role = html.escape(invitation.role)
+    safe_url = html.escape(invite_url, quote=True)
+    item.body_html = (
+        '<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#172033">'
+        '<h1 style="color:#20b957">Total Solutions</h1>'
+        f"<p>Você foi convidado para administrar <strong>{safe_name}</strong>.</p>"
+        f"<p>Função: <strong>{safe_role}</strong></p>"
+        f'<p><a href="{safe_url}" style="display:inline-block;background:#20b957;color:#fff;padding:12px 20px;text-decoration:none;border-radius:6px">Aceitar convite</a></p>'
+        '<p>Este convite expira em 7 dias e pode ser usado uma única vez.</p>'
+        '<p style="color:#667085;font-size:12px">Se você não esperava este convite, ignore esta mensagem.</p>'
+        '</div>'
     )
 
 
 def _send_outbox_with_resend(item: EmailOutbox, *, api_key: str, sender: str) -> str | None:
     payload = {"from": sender, "to": [item.to_email], "subject": item.subject, "text": item.body_text}
+    if item.body_html:
+        payload["html"] = item.body_html
     request = urlrequest.Request(
         "https://api.resend.com/emails",
         data=json.dumps(payload).encode("utf-8"),
@@ -600,6 +620,8 @@ def _send_outbox_with_smtp(item: EmailOutbox, *, host: str, sender: str) -> None
     if host.lower() == "smtp.resend.com":
         message["Resend-Idempotency-Key"] = item.idempotency_key
     message.set_content(item.body_text)
+    if item.body_html:
+        message.add_alternative(item.body_html, subtype="html")
     smtp_factory = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
     with smtp_factory(host, port, timeout=15) as smtp:
         if use_tls and not use_ssl:
@@ -668,12 +690,14 @@ def process_email_outbox(db: Session, *, limit: int = 10) -> int:
             item.last_error = None
             if item.invitation_id:
                 item.body_text = ""
+                item.body_html = ""
             sent += 1
         except Exception as exc:  # noqa: BLE001 - delivery must not break application work.
             item.status = "FAILED" if item.attempts >= EMAIL_OUTBOX_MAX_ATTEMPTS else "RETRY"
             item.last_error = (str(exc)[:160] if isinstance(exc, RuntimeError) else exc.__class__.__name__)
             if item.invitation_id:
                 item.body_text = ""
+                item.body_html = ""
             item.claimed_at = None
             item.next_attempt_at = datetime.utcnow() + timedelta(minutes=min(30, 2 ** item.attempts))
         db.commit()
