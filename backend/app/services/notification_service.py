@@ -1,14 +1,20 @@
 import json
 import logging
 import os
+import secrets
 import smtplib
+from urllib import error as urlerror
+from urllib import request as urlrequest
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.lead import Lead
 from app.models.notification import EmailOutbox, Notification, NotificationPreference, WebPushSubscription
+from app.models.organization_invitation import OrganizationInvitation
+from app.core.auth_security import hash_value
 from app.models.service_order import ServiceOrder
 from app.models.user import User
 
@@ -377,6 +383,26 @@ def enqueue_notification_email(
     return outbox
 
 
+def enqueue_invitation_email(db: Session, *, invitation: OrganizationInvitation, organization_name: str) -> EmailOutbox:
+    existing = db.query(EmailOutbox).filter(EmailOutbox.invitation_id == invitation.id).first()
+    if existing:
+        return existing
+    outbox = EmailOutbox(
+        organization_id=invitation.organization_id,
+        invitation_id=invitation.id,
+        recipient_user_id=None,
+        to_email=invitation.invited_email,
+        subject=f"Convite para entrar em {organization_name}",
+        body_text="",
+        status="PENDING",
+        provider="RESEND" if _resend_api_key() else "SMTP",
+        idempotency_key=f"organization_invitation:{invitation.id}",
+        next_attempt_at=datetime.utcnow(),
+    )
+    db.add(outbox)
+    return outbox
+
+
 def notify_assignment_change(
     db: Session,
     *,
@@ -505,52 +531,151 @@ def notify_client_created(
     return notification_ids
 
 
+def _resend_api_key() -> str:
+    explicit = os.getenv("RESEND_API_KEY", "").strip()
+    if explicit:
+        return explicit
+    if os.getenv("SMTP_HOST", "").strip().lower() == "smtp.resend.com":
+        return os.getenv("SMTP_PASSWORD", "").strip()
+    return ""
+
+
+def _prepare_invitation_email(db: Session, item: EmailOutbox) -> None:
+    invitation = db.query(OrganizationInvitation).filter(
+        OrganizationInvitation.id == item.invitation_id,
+    ).with_for_update().first()
+    if not invitation or invitation.status != "PENDING":
+        raise RuntimeError("invitation_not_pending")
+    raw_token = secrets.token_urlsafe(32)
+    invitation.token_hash = hash_value(raw_token)
+    invitation.expires_at = datetime.utcnow() + timedelta(days=7)
+    base_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    invite_url = f"{base_url}/invite/{raw_token}" if base_url else f"/invite/{raw_token}"
+    item.body_text = (
+        "Você foi convidado para entrar em uma organização Total Solutions.\n\n"
+        f"Abra o convite: {invite_url}\n\n"
+        "O convite expira em 7 dias e pode ser usado uma única vez."
+    )
+
+
+def _send_outbox_with_resend(item: EmailOutbox, *, api_key: str, sender: str) -> str | None:
+    payload = {"from": sender, "to": [item.to_email], "subject": item.subject, "text": item.body_text}
+    request = urlrequest.Request(
+        "https://api.resend.com/emails",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Idempotency-Key": item.idempotency_key,
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "TotalSolutionsCRM/1.0 (+https://totalsolutionscancun.com)",
+        },
+        method="POST",
+    )
+    try:
+        with urlrequest.urlopen(request, timeout=15) as response:
+            body = response.read().decode("utf-8", errors="replace")
+            if not 200 <= response.status < 300:
+                raise RuntimeError(f"resend_http_{response.status}")
+            try:
+                return str(json.loads(body).get("id", ""))[:80] or None
+            except json.JSONDecodeError:
+                return None
+    except urlerror.HTTPError as exc:
+        raise RuntimeError(f"resend_http_{getattr(exc, 'code', 'unknown')}") from exc
+    except (urlerror.URLError, TimeoutError) as exc:
+        raise RuntimeError(f"resend_{exc.__class__.__name__}") from exc
+
+
+def _send_outbox_with_smtp(item: EmailOutbox, *, host: str, sender: str) -> None:
+    port = int(os.getenv("SMTP_PORT", "587"))
+    username = os.getenv("SMTP_USERNAME", "").strip()
+    password = os.getenv("SMTP_PASSWORD", "").strip()
+    use_ssl = os.getenv("SMTP_USE_SSL", "false").lower() == "true"
+    use_tls = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+    message = EmailMessage()
+    message["From"] = sender
+    message["To"] = item.to_email
+    message["Subject"] = item.subject
+    if host.lower() == "smtp.resend.com":
+        message["Resend-Idempotency-Key"] = item.idempotency_key
+    message.set_content(item.body_text)
+    smtp_factory = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
+    with smtp_factory(host, port, timeout=15) as smtp:
+        if use_tls and not use_ssl:
+            smtp.starttls()
+        if username and password:
+            smtp.login(username, password)
+        smtp.send_message(message)
+
+
+EMAIL_OUTBOX_LEASE_SECONDS = 120
+EMAIL_OUTBOX_MAX_ATTEMPTS = 5
+
+
+def _claim_next_email_outbox(db: Session) -> EmailOutbox | None:
+    now = datetime.utcnow()
+    lease_expired_at = now - timedelta(seconds=EMAIL_OUTBOX_LEASE_SECONDS)
+    item = (
+        db.query(EmailOutbox)
+        .filter(
+            or_(
+                (EmailOutbox.status.in_(["PENDING", "RETRY"]) & (EmailOutbox.next_attempt_at <= now)),
+                (EmailOutbox.status == "PROCESSING") & (EmailOutbox.claimed_at <= lease_expired_at),
+            )
+        )
+        .order_by(EmailOutbox.next_attempt_at.asc(), EmailOutbox.id.asc())
+        .with_for_update(skip_locked=True)
+        .first()
+    )
+    if not item:
+        db.rollback()
+        return None
+
+    item.status = "PROCESSING"
+    item.claimed_at = now
+    item.attempts = (item.attempts or 0) + 1
+    item.last_attempt_at = now
+    db.commit()
+    return item
+
+
 def process_email_outbox(db: Session, *, limit: int = 10) -> int:
     smtp_host = os.getenv("SMTP_HOST", "").strip()
     smtp_from = os.getenv("SMTP_FROM", "").strip()
-    if not smtp_host or not smtp_from:
+    resend_key = _resend_api_key()
+    if not smtp_from or (not resend_key and not smtp_host):
         return 0
 
-    smtp_port = int(os.getenv("SMTP_PORT", "587"))
-    smtp_username = os.getenv("SMTP_USERNAME", "").strip()
-    smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
-    use_tls = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
-
-    messages = (
-        db.query(EmailOutbox)
-        .filter(EmailOutbox.status.in_(["PENDING", "RETRY"]), EmailOutbox.next_attempt_at <= datetime.utcnow())
-        .order_by(EmailOutbox.next_attempt_at.asc(), EmailOutbox.id.asc())
-        .limit(limit)
-        .all()
-    )
     sent = 0
 
-    for item in messages:
+    for _ in range(limit):
+        item = _claim_next_email_outbox(db)
+        if not item:
+            break
         try:
-            message = EmailMessage()
-            message["From"] = smtp_from
-            message["To"] = item.to_email
-            message["Subject"] = item.subject
-            message.set_content(item.body_text)
-
-            with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as smtp:
-                if use_tls:
-                    smtp.starttls()
-                if smtp_username and smtp_password:
-                    smtp.login(smtp_username, smtp_password)
-                smtp.send_message(message)
-
+            if item.invitation_id:
+                _prepare_invitation_email(db, item)
+            if resend_key:
+                item.provider = "RESEND"
+                item.provider_message_id = _send_outbox_with_resend(item, api_key=resend_key, sender=smtp_from)
+            else:
+                item.provider = "SMTP"
+                _send_outbox_with_smtp(item, host=smtp_host, sender=smtp_from)
             item.status = "SENT"
             item.sent_at = datetime.utcnow()
+            item.claimed_at = None
             item.last_error = None
+            if item.invitation_id:
+                item.body_text = ""
             sent += 1
-        except Exception as exc:  # noqa: BLE001 - avoid breaking assignments because of email delivery.
-            item.attempts += 1
-            item.status = "FAILED" if item.attempts >= 5 else "RETRY"
-            item.last_error = exc.__class__.__name__
+        except Exception as exc:  # noqa: BLE001 - delivery must not break application work.
+            item.status = "FAILED" if item.attempts >= EMAIL_OUTBOX_MAX_ATTEMPTS else "RETRY"
+            item.last_error = (str(exc)[:160] if isinstance(exc, RuntimeError) else exc.__class__.__name__)
+            if item.invitation_id:
+                item.body_text = ""
+            item.claimed_at = None
             item.next_attempt_at = datetime.utcnow() + timedelta(minutes=min(30, 2 ** item.attempts))
-
-    if messages:
         db.commit()
 
     return sent

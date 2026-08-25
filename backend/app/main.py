@@ -443,6 +443,17 @@ def create_database_tables():
         add_column_if_missing(db, "users", "plan_max_brokers", "INTEGER DEFAULT 1")
         add_column_if_missing(db, "users", "plan_max_leads", "INTEGER DEFAULT 100")
         add_column_if_missing(db, "users", "registered_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        add_column_if_missing(db, "email_outbox", "invitation_id", "INTEGER")
+        add_column_if_missing(db, "email_outbox", "last_attempt_at", "TIMESTAMP")
+        add_column_if_missing(db, "email_outbox", "claimed_at", "TIMESTAMP")
+        add_column_if_missing(db, "email_outbox", "provider", "VARCHAR")
+        add_column_if_missing(db, "email_outbox", "provider_message_id", "VARCHAR")
+        if db.bind.dialect.name == "postgresql":
+            try:
+                db.execute(text("ALTER TABLE email_outbox ALTER COLUMN recipient_user_id DROP NOT NULL"))
+                db.commit()
+            except SQLAlchemyError:
+                db.rollback()
         add_column_if_missing(db, "service_orders", "property_record_id", "INTEGER")
         add_column_if_missing(db, "service_orders", "service_request_id", "INTEGER")
         db.execute(text("UPDATE users SET organization_id = :organization_id WHERE organization_id IS NULL"), {"organization_id": default_organization_id})

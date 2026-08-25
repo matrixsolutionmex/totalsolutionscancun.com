@@ -17,16 +17,17 @@ from app.models.organization_invitation import OrganizationInvitation
 from app.models.referral_attribution import ReferralAttribution
 from app.models.auth_security import AuthRateLimit, UserSession
 from app.models.auth_security import AuthAuditEvent
-from app.models.notification import WebPushSubscription
+from app.models.notification import EmailOutbox, WebPushSubscription
 from app.models.user_lifecycle import UserLifecycleEvent
 from app.models.user import User
 from app.models import service_order, service_property
 from app.services.entitlement_service import current_plan, ensure_user_commercial_profile
 from app.services.organization_onboarding_service import accept_invitation, create_invitation, record_referral
 from app.services.organization_provisioning_service import provision_organization
+from app.services import notification_service
 from app import main as _app_main  # registers the application's relationship models
 from app.auth.routes import login
-from app.routes.admin_routes import PlatformRoleRequest, PlatformSupervisorRequest, admin_platform_assign_supervisor, admin_platform_change_role, admin_platform_user_access_diagnostic, approve_pending_user, pending_onboarding_users, pending_users
+from app.routes.admin_routes import PlatformRoleRequest, PlatformSupervisorRequest, admin_platform_assign_supervisor, admin_platform_change_role, admin_platform_user_access_diagnostic, admin_resend_organization_invitation, approve_pending_user, pending_onboarding_users, pending_users
 from app.routes.organization_routes import current_team
 from app.routes.user_routes import update_user
 from app.schemas.auth_schema import AuthLoginRequest, UserApprovalRequest
@@ -48,6 +49,7 @@ def onboarding_db():
             AuthRateLimit.__table__,
             AuthAuditEvent.__table__,
             WebPushSubscription.__table__,
+            EmailOutbox.__table__,
             UserLifecycleEvent.__table__,
         ],
     )
@@ -105,7 +107,7 @@ def test_root_provisions_empty_tenant_with_gerente_invitation(onboarding_db):
     db = onboarding_db
     root = make_user(db, username="platform-root", role="ROOT")
 
-    organization, invitation, raw_token = provision_organization(
+    organization, invitation = provision_organization(
         db,
         name="Hotel Riviera Maya",
         slug=None,
@@ -124,7 +126,10 @@ def test_root_provisions_empty_tenant_with_gerente_invitation(onboarding_db):
     assert organization.status == "ACTIVE"
     assert invitation.role == "GERENTE"
     assert invitation.organization_id == organization.id
-    assert raw_token
+    outbox = db.query(EmailOutbox).filter_by(invitation_id=invitation.id).one()
+    assert outbox.status == "PENDING"
+    assert outbox.body_text == ""
+    assert outbox.to_email == "ana@hotel.example"
     assert db.query(User).filter(User.organization_id == organization.id).count() == 0
     assert db.query(CommercialSubscription).filter_by(organization_id=organization.id).one().plan == "FREE"
 
@@ -153,6 +158,111 @@ def test_provisioning_rolls_back_if_manager_invitation_fails(onboarding_db, monk
         )
     db.rollback()
     assert db.query(Organization).filter_by(slug="rollback-company").first() is None
+
+
+def test_invitation_outbox_delivers_without_persisting_raw_token_and_can_be_resent(onboarding_db, monkeypatch):
+    db = onboarding_db
+    root = make_user(db, username="delivery-root", role="ROOT")
+    organization, invitation = provision_organization(
+        db,
+        name="Delivery Company",
+        slug="delivery-company",
+        country="MX",
+        language="es",
+        currency="MXN",
+        timezone="America/Cancun",
+        plan="FREE",
+        manager_full_name="Delivery Manager",
+        manager_email="delivery@example.com",
+        invited_by=root,
+    )
+    db.commit()
+    outbox = db.query(EmailOutbox).filter_by(invitation_id=invitation.id).one()
+    original_hash = invitation.token_hash
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("SMTP_FROM", "no-reply@example.com")
+    monkeypatch.setattr(notification_service, "_send_outbox_with_smtp", lambda *_args, **_kwargs: None)
+
+    assert notification_service.process_email_outbox(db) == 1
+    db.refresh(outbox)
+    db.refresh(invitation)
+    assert outbox.status == "SENT"
+    assert outbox.body_text == ""
+    assert outbox.provider == "SMTP"
+    assert invitation.token_hash != original_hash
+
+    outbox.last_attempt_at = datetime.utcnow() - timedelta(minutes=2)
+    original_delivery_key = outbox.idempotency_key
+    db.commit()
+    response = admin_resend_organization_invitation(invitation.id, db, root)
+    assert response["status"] == "PENDING"
+    assert response["recipient"] == "del***@example.com"
+    assert "token" not in response
+    db.refresh(outbox)
+    assert outbox.status == "PENDING"
+    assert outbox.body_text == ""
+    assert outbox.idempotency_key != original_delivery_key
+
+
+def test_email_outbox_claim_is_exclusive_and_recovers_expired_processing(onboarding_db):
+    db = onboarding_db
+    item = EmailOutbox(
+        organization_id=None,
+        recipient_user_id=None,
+        to_email="claim@example.com",
+        subject="Claim test",
+        body_text="body",
+        status="PENDING",
+        idempotency_key="claim-test-1",
+        next_attempt_at=datetime.utcnow(),
+    )
+    db.add(item)
+    db.commit()
+
+    claimed = notification_service._claim_next_email_outbox(db)
+    assert claimed is not None
+    assert claimed.status == "PROCESSING"
+    assert claimed.claimed_at is not None
+    assert claimed.attempts == 1
+
+    assert notification_service._claim_next_email_outbox(db) is None
+
+    claimed.claimed_at = datetime.utcnow() - timedelta(seconds=notification_service.EMAIL_OUTBOX_LEASE_SECONDS + 1)
+    db.commit()
+    recovered = notification_service._claim_next_email_outbox(db)
+    assert recovered is not None
+    assert recovered.id == claimed.id
+    assert recovered.status == "PROCESSING"
+    assert recovered.attempts == 2
+
+
+def test_email_outbox_failure_retries_then_becomes_failed(onboarding_db, monkeypatch):
+    db = onboarding_db
+    item = EmailOutbox(
+        organization_id=None,
+        recipient_user_id=None,
+        to_email="failure@example.com",
+        subject="Failure test",
+        body_text="body",
+        status="PENDING",
+        idempotency_key="failure-test-1",
+        next_attempt_at=datetime.utcnow(),
+    )
+    db.add(item)
+    db.commit()
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("SMTP_FROM", "no-reply@example.com")
+    monkeypatch.setattr(notification_service, "_send_outbox_with_smtp", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("provider_timeout")))
+
+    for attempt in range(1, notification_service.EMAIL_OUTBOX_MAX_ATTEMPTS + 1):
+        assert notification_service.process_email_outbox(db) == 0
+        db.refresh(item)
+        expected_status = "FAILED" if attempt == notification_service.EMAIL_OUTBOX_MAX_ATTEMPTS else "RETRY"
+        assert item.status == expected_status
+        assert item.attempts == attempt
+        if item.status == "RETRY":
+            item.next_attempt_at = datetime.utcnow()
+            db.commit()
 
 
 def test_root_queue_matches_login_gate_for_non_independent_gerente_pro(onboarding_db):

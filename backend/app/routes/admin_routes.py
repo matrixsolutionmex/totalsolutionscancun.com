@@ -1,5 +1,6 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -14,6 +15,8 @@ from app.core.user_status import PENDING_ADMIN_STATUSES, PENDING_USER_STATUSES
 from app.models.lead import Lead
 from app.models.user import User
 from app.models.organization import Organization
+from app.models.organization_invitation import OrganizationInvitation
+from app.models.notification import EmailOutbox
 from app.core.organization import create_independent_organization, get_platform_primary_organization
 from app.models.user_lifecycle import UserLifecycleEvent, UserReactivationRequest
 from app.schemas.auth_schema import UserApprovalRequest
@@ -26,7 +29,7 @@ from app.schemas.user_schema import (
     UserReactivationRequestResponse,
     UserResponse,
 )
-from app.services.notification_service import dispatch_web_push_for_notification_ids, notify_user_activation
+from app.services.notification_service import dispatch_web_push_for_notification_ids, enqueue_invitation_email, notify_user_activation
 from app.services.commercial_upgrade_service import (
     activate_upgrade_intent,
     cancel_upgrade_intent,
@@ -37,7 +40,6 @@ from app.services.commercial_upgrade_service import (
 from app.services.user_lifecycle_service import record_user_lifecycle_event, revoke_user_access, transition_user_status
 from app.services.entitlement_service import current_plan, ensure_user_commercial_profile, resolve_plan, set_user_entitlement_plan
 from app.services.legacy_workspace_migration_service import legacy_workspace_candidates, legacy_workspace_diagnostics, migrate_legacy_user_to_primary
-from app.services.organization_onboarding_service import send_invitation_email
 from app.services.organization_provisioning_service import provision_organization, provision_response
 from app.services.platform_admin_service import (
     get_platform_organization,
@@ -430,7 +432,7 @@ def admin_provision_organization(
     if not payload.manager_full_name.strip():
         raise HTTPException(status_code=422, detail="Nome completo do gerente é obrigatório")
     try:
-        organization, invitation, raw_token = provision_organization(
+        organization, invitation = provision_organization(
             db,
             name=payload.name,
             slug=payload.slug,
@@ -451,23 +453,66 @@ def admin_provision_organization(
         db.rollback()
         raise HTTPException(status_code=409, detail="Não foi possível provisionar a organização") from exc
 
-    base_url = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
-    invite_url = f"{base_url}/invite/{raw_token}" if base_url else f"/invite/{raw_token}"
-    email_sent = send_invitation_email(
-        to_email=invitation.invited_email,
-        organization_name=organization.name,
-        role=invitation.role,
-        invite_url=invite_url,
-    )
     return provision_response(
         organization,
         invitation,
-        email_delivery_status="sent" if email_sent else "unavailable",
+        email_delivery_status="queued",
         warnings=[
             "region_and_city_not_persisted: Organization ainda não possui campos para localização regional",
             "manager_name_and_language_are_collected_for_future_invite_metadata",
         ],
     )
+
+
+def _mask_invitation_email(email: str | None) -> str:
+    value = (email or "").strip()
+    if "@" not in value:
+        return "***"
+    local, domain = value.split("@", 1)
+    return f"{(local[:3] if len(local) > 3 else local[:1])}***@{domain}"
+
+
+@router.post("/platform/organization-invitations/{invitation_id}/resend")
+def admin_resend_organization_invitation(
+    invitation_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    invitation = db.query(OrganizationInvitation).filter(OrganizationInvitation.id == invitation_id).first()
+    if not invitation:
+        raise HTTPException(status_code=404, detail="Convite não encontrado")
+    if invitation.status in {"ACCEPTED", "CANCELLED"}:
+        raise HTTPException(status_code=409, detail="Convite não pode ser reenviado neste estado")
+
+    outbox = db.query(EmailOutbox).filter(EmailOutbox.invitation_id == invitation.id).first()
+    now = datetime.utcnow()
+    if outbox and outbox.last_attempt_at and now - outbox.last_attempt_at < timedelta(seconds=60):
+        raise HTTPException(status_code=429, detail="Aguarde antes de solicitar outro envio")
+    if invitation.expires_at <= now:
+        invitation.status = "PENDING"
+        invitation.expires_at = now + timedelta(days=7)
+
+    if not outbox:
+        organization = db.query(Organization).filter(Organization.id == invitation.organization_id).first()
+        if not organization:
+            raise HTTPException(status_code=404, detail="Organização do convite não encontrada")
+        outbox = enqueue_invitation_email(db, invitation=invitation, organization_name=organization.name)
+    else:
+        outbox.idempotency_key = f"organization_invitation:{invitation.id}:resend:{uuid4().hex}"
+        outbox.status = "PENDING"
+        outbox.attempts = 0
+        outbox.last_error = None
+        outbox.sent_at = None
+        outbox.provider_message_id = None
+        outbox.body_text = ""
+        outbox.next_attempt_at = now
+    db.commit()
+    return {
+        "invitation_id": invitation.id,
+        "status": "PENDING",
+        "recipient": _mask_invitation_email(invitation.invited_email),
+        "last_attempt_at": outbox.last_attempt_at.isoformat() if outbox.last_attempt_at else None,
+    }
 
 
 @router.get("/platform/organizations/{organization_id}")

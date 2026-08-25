@@ -10336,7 +10336,9 @@
         </div>
         <div class="line">Responsable: ${escapeHtml(organization.owner || "No informado")}</div>
         <div class="line">Intento comercial activo: ${organization.active_intent ? `${escapeHtml(organization.active_intent.plan)} · ${escapeHtml(organization.active_intent.status)} · ${escapeHtml(organization.active_intent.confirmation_source || "sin confirmación")}` : "ninguno"}</div>
-        <div class="broker-list">${(organization.users || []).map((user) => `<div class="broker-row"><span><strong>${escapeHtml(user.full_name)}</strong><small>${escapeHtml(user.role)} · ${escapeHtml(user.status)} · ${escapeHtml(user.email || "")}</small></span><span>${escapeHtml(user.plan)}</span></div>`).join("") || `<div class="empty-state">Ningún usuario en esta organización.</div>`}</div>`;
+        <div class="broker-list">${(organization.users || []).map((user) => `<div class="broker-row"><span><strong>${escapeHtml(user.full_name)}</strong><small>${escapeHtml(user.role)} · ${escapeHtml(user.status)} · ${escapeHtml(user.email || "")}</small></span><span>${escapeHtml(user.plan)}</span></div>`).join("") || `<div class="empty-state">Ningún usuario en esta organización.</div>`}</div>
+        <div class="panel-title" style="margin-top: 16px;">Invitaciones</div>
+        <div class="broker-list">${(organization.invitations || []).map((invitation) => `<div class="broker-row"><span><strong>${escapeHtml(invitation.recipient)} · ${escapeHtml(invitation.role)}</strong><small>${escapeHtml(invitation.status)} · envío: ${escapeHtml(invitation.email_status)}</small></span>${["PENDING", "EXPIRED"].includes(invitation.status) ? `<button class="ghost" type="button" data-platform-resend-invitation="${invitation.id}">Reenviar</button>` : ""}</div>`).join("") || `<div class="empty-state">Ninguna invitación.</div>`}</div>`;
     }
 
     function renderPlatformUserDetail(user) {
@@ -11640,6 +11642,23 @@
     });
     document.getElementById("platformDirectoryDetail")?.addEventListener("click", async (event) => {
       const target = event.target;
+      if (!(target instanceof HTMLElement) || !target.matches("[data-platform-resend-invitation]")) return;
+      target.disabled = true;
+      const response = await apiFetch(`${API_BASE}/admin/platform/organization-invitations/${encodeURIComponent(target.dataset.platformResendInvitation)}/resend`, {method: "POST"});
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        target.disabled = false;
+        throw new Error(data.detail || "No fue posible reenviar la invitación.");
+      }
+      const organizationId = document.querySelector("[data-platform-organization-id]")?.dataset.platformOrganizationId;
+      if (organizationId) {
+        const organizationResponse = await apiFetch(`${API_BASE}/admin/platform/organizations/${organizationId}`);
+        if (organizationResponse.ok) renderPlatformOrganizationDetail(await organizationResponse.json());
+      }
+      await loadPlatformDirectory();
+    });
+    document.getElementById("platformDirectoryDetail")?.addEventListener("click", async (event) => {
+      const target = event.target;
       if (!(target instanceof HTMLElement) || !target.matches("[data-platform-migrate-legacy]")) return;
       const candidate = legacyMigrationCandidates.find((item) => String(item.user_id) === String(target.dataset.platformMigrateLegacy));
       if (!candidate) return;
@@ -11670,7 +11689,7 @@
         return;
       }
       if (input) input.value = "";
-      addPabloV2Message(`Convite gerado: ${data.invite_url}`, "ai");
+      addPabloV2Message("Convite registrado para envio seguro.", "ai");
     });
     document.getElementById("platformDirectoryDetail")?.addEventListener("click", async (event) => {
       const target = event.target;
@@ -11697,7 +11716,7 @@
         const response = await apiFetch(`${API_BASE}/organization/team/invitations`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({invited_email: email, supervisor_user_id: Number(target.dataset.platformTeamInvite)})});
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.detail || "No fue posible generar la invitación.");
-        addPabloV2Message(`Convite gerado: ${data.invite_url}`, "ai");
+        addPabloV2Message("Convite registrado para envio seguro.", "ai");
       }
     });
 

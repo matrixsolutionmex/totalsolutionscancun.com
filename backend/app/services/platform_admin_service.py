@@ -1,10 +1,12 @@
-from sqlalchemy import func, or_
+from sqlalchemy import func, inspect, or_
 from sqlalchemy.orm import Session
 
 from app.models.commercial_subscription import CommercialSubscription
 from app.models.commercial_upgrade_intent import CommercialUpgradeIntent
 from app.models.lead import Lead
+from app.models.notification import EmailOutbox
 from app.models.organization import Organization
+from app.models.organization_invitation import OrganizationInvitation
 from app.models.service_order import ServiceOrder
 from app.models.user import User
 from app.core.user_status import PENDING_USER_STATUSES
@@ -135,6 +137,31 @@ def get_platform_organization(db: Session, organization_id: int) -> dict | None:
         return None
     row = _organization_row(db, organization)
     row["users"] = list_platform_users(db, organization_id=organization.id)
+    # Older lightweight fixtures can omit the optional invitation tables. A
+    # directory detail must remain usable in that case; migrated databases
+    # still expose the full invitation delivery view.
+    database_inspector = inspect(db.bind)
+    invitations = []
+    if database_inspector.has_table("organization_invitations"):
+        invitations = db.query(OrganizationInvitation).filter(
+            OrganizationInvitation.organization_id == organization.id,
+        ).order_by(OrganizationInvitation.created_at.desc(), OrganizationInvitation.id.desc()).all()
+    outbox_by_invitation = {
+        item.invitation_id: item
+        for item in db.query(EmailOutbox).filter(EmailOutbox.invitation_id.in_([item.id for item in invitations])).all()
+    } if invitations and database_inspector.has_table("email_outbox") else {}
+    row["invitations"] = [
+        {
+            "id": invitation.id,
+            "recipient": f"{invitation.invited_email[:3]}***@{invitation.invited_email.split('@', 1)[1]}" if "@" in invitation.invited_email else "***",
+            "role": invitation.role,
+            "status": invitation.status,
+            "expires_at": invitation.expires_at.isoformat() if invitation.expires_at else None,
+            "email_status": outbox_by_invitation.get(invitation.id).status if outbox_by_invitation.get(invitation.id) else "NOT_QUEUED",
+            "last_attempt_at": outbox_by_invitation.get(invitation.id).last_attempt_at.isoformat() if outbox_by_invitation.get(invitation.id) and outbox_by_invitation.get(invitation.id).last_attempt_at else None,
+        }
+        for invitation in invitations
+    ]
     return row
 
 

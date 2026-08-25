@@ -14,6 +14,7 @@ from app.models.organization_invitation import OrganizationInvitation
 from app.models.user import User
 from app.services.entitlement_service import PLANS, normalize_plan
 from app.services.organization_onboarding_service import create_invitation
+from app.services.notification_service import enqueue_invitation_email
 from app.services.localization_service import normalize_language
 
 
@@ -108,7 +109,7 @@ def provision_organization(
         provider="MOCK",
         reference_price=PLANS[normalized_plan]["price"],
     ))
-    invitation, raw_token = create_invitation(
+    invitation, _raw_token = create_invitation(
         db,
         organization=organization,
         invited_by=invited_by,
@@ -116,7 +117,9 @@ def provision_organization(
         role="GERENTE",
     )
     db.flush()
-    return organization, invitation, raw_token
+    enqueue_invitation_email(db, invitation=invitation, organization_name=organization.name)
+    db.flush()
+    return organization, invitation
 
 
 def provision_response(organization: Organization, invitation: OrganizationInvitation, *, email_delivery_status: str, warnings: list[str]) -> dict:
