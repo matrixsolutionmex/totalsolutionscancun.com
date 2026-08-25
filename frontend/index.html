@@ -6223,14 +6223,14 @@
               <span>${escapeHtml(intent.organization)} · ${escapeHtml(intent.email || "")} · ${escapeHtml(intent.current_plan || "FREE")} -> ${escapeHtml(intent.requested_plan || intent.plan)} · MX$ ${Number(intent.reference_price_mxn).toLocaleString("es-MX", {minimumFractionDigits: 2})}</span>
               <small>${new Date(intent.created_at).toLocaleString()} · ${escapeHtml(intent.status)} · ${escapeHtml(intent.confirmation_source || "sem confirmação")}</small>
             </div>
-            <div class="inline-actions">
+            ${isRoot ? `<div class="inline-actions">
               ${intent.status === "CHECKOUT_OPENED" || intent.status === "PAYMENT_PENDING"
                 ? `<button type="button" data-commercial-intent-action="confirm-payment" data-commercial-intent-id="${intent.id}">Marcar pagamento confirmado</button>` : ""}
               ${["PAID", "PAYMENT_CONFIRMED"].includes(intent.status)
                 ? `<button type="button" data-commercial-intent-action="activate" data-commercial-intent-id="${intent.id}">Ativar plano</button>` : ""}
               ${!["ACTIVATED", "CANCELLED", "ABANDONED"].includes(intent.status)
                 ? `<button class="ghost" type="button" data-commercial-intent-action="cancel" data-commercial-intent-id="${intent.id}">Cancelar</button>` : ""}
-            </div>
+            </div>` : ""}
           </div>`).join("") : `<div class="empty-state">Nenhuma solicitação comercial.</div>`;
       } catch (error) {
         list.innerHTML = `<div class="empty-state">${escapeHtml(error.message || "Não foi possível carregar as solicitações.")}</div>`;

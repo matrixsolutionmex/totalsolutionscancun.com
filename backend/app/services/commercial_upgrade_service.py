@@ -33,8 +33,13 @@ def checkout_url_for(plan: str) -> str:
 
 
 def _require_admin(actor: User):
+    if actor.role != "ROOT":
+        raise HTTPException(status_code=403, detail="Somente ROOT pode alterar solicitacoes comerciais")
+
+
+def _require_commercial_viewer(actor: User):
     if actor.role not in {"ROOT", "GERENTE"}:
-        raise HTTPException(status_code=403, detail="Somente root ou gerente pode administrar solicitacoes comerciais")
+        raise HTTPException(status_code=403, detail="Acesso administrativo às solicitações comerciais negado")
 
 
 def _intent_or_404(db: Session, actor: User, intent_id: int, *, global_scope: bool = False) -> CommercialUpgradeIntent:
@@ -302,7 +307,7 @@ def normalize_existing_upgrade_intents(db: Session) -> int:
 
 
 def list_upgrade_intents(db: Session, actor: User):
-    _require_admin(actor)
+    _require_commercial_viewer(actor)
     rows = (
         db.query(CommercialUpgradeIntent, User, Organization)
         .join(User, User.id == CommercialUpgradeIntent.user_id)

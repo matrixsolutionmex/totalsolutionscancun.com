@@ -97,7 +97,8 @@ def test_legacy_supervisor_migration_preserves_identity_plan_and_moves_marketpla
     assert magno.organization_id == primary.id
     assert magno.role == "GERENTE"
     assert magno.status == "ACTIVE"
-    assert current_plan(db, magno) == "PRO"
+    # The destination organization's subscription is canonical for a GERENTE.
+    assert current_plan(db, magno) == "BUSINESS"
     assert primary_sub.plan == "BUSINESS"
     assert legacy_sub.plan == "PRO"
     assert legacy.status == "ORPHANED_ONBOARDING"
@@ -152,7 +153,7 @@ def test_migration_uses_same_canonical_plan_source_as_global_directory(migration
     directory_row = next(item for item in list_platform_users(db, search="magnoalvesbrasil@proton.me") if item["id"] == magno.id)
     diagnostic = next(item for item in legacy_workspace_diagnostics(db) if item["user_id"] == magno.id)
     assert directory_row["plan"] == "PRO"
-    assert directory_row["plan_source"] == "ORGANIZATION_SUBSCRIPTION_FALLBACK"
+    assert directory_row["plan_source"] == "ORGANIZATION_SUBSCRIPTION"
     assert diagnostic["displayed_plan"] == directory_row["plan"]
     assert diagnostic["resolved_plan"] == directory_row["plan"]
     assert diagnostic["plan_source"] == directory_row["plan_source"]

@@ -83,14 +83,20 @@ def subscription_for_organization(db: Session, organization_id: int | None, *, c
 
 
 def resolve_plan(db: Session, actor: User) -> dict:
+    profile_table_exists = inspect(db.get_bind()).has_table(UserCommercialProfile.__tablename__)
+    # Managers administer the tenant, so a paid organization cannot be
+    # downgraded by their individual profile. Technicians may still retain an
+    # explicit individual entitlement inside that organization.
+    subscription = subscription_for(db, actor)
+    if subscription and actor.role in {"ROOT", "GERENTE"} and normalize_plan(subscription.plan) in {"PRO", "BUSINESS"}:
+        return {"plan": normalize_plan(subscription.plan), "source": "ORGANIZATION_SUBSCRIPTION"}
     profile = None
-    if inspect(db.get_bind()).has_table(UserCommercialProfile.__tablename__):
+    if profile_table_exists:
         profile = db.query(UserCommercialProfile).filter(UserCommercialProfile.user_id == actor.id).first()
     if profile and profile.status == "ACTIVE":
         return {"plan": normalize_plan(profile.plan), "source": "USER_COMMERCIAL_PROFILE"}
-    subscription = subscription_for(db, actor)
     if subscription:
-        return {"plan": normalize_plan(subscription.plan), "source": "ORGANIZATION_SUBSCRIPTION_FALLBACK"}
+        return {"plan": normalize_plan(subscription.plan), "source": "ORGANIZATION_SUBSCRIPTION"}
     organization = db.query(Organization).filter(Organization.id == actor.organization_id).first()
     return {"plan": normalize_plan(getattr(organization, "plan", None)), "source": "ORGANIZATION_PLAN_FALLBACK"}
 

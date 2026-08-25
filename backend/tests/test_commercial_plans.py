@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import create_engine, text
@@ -17,6 +19,7 @@ from app.models.service_request import ServiceRequest
 from app.models.service_property import ServiceProperty
 from app.models.service_order_tracking import ServiceOrderTracking  # noqa: F401 - registers ServiceOrder relationship
 from app.models.user import User
+from app.models.user_commercial_profile import UserCommercialProfile
 from app.routes.organization_routes import available_organizations
 from app.routes.commercial_routes import MockPlanChangeRequest, UpgradeIntentRequest, commercial_mock_plan, commercial_upgrade_intent
 from app.auth.jwt_handler import require_root_user
@@ -31,7 +34,7 @@ from app.services.commercial_upgrade_service import (
     mark_payment_confirmed,
     normalize_existing_upgrade_intents,
 )
-from app.services.entitlement_service import account_snapshot, can_use_feature, current_plan, get_plan_limits, plan_catalog
+from app.services.entitlement_service import account_snapshot, can_use_feature, current_plan, get_plan_limits, plan_catalog, resolve_plan
 from app.services.platform_admin_service import (
     get_platform_organization,
     get_platform_user,
@@ -425,6 +428,48 @@ def test_commercial_subscription_diagnostic_reports_plan_sources_and_history(com
     assert diagnostic["subscription"]["plan"] == "PRO"
     assert diagnostic["subscription"]["status"] == "LAUNCH_ACCESS"
     assert diagnostic["resolved"]["current_plan"] == "PRO"
-    assert diagnostic["resolved"]["resolve_plan"]["source"] == "ORGANIZATION_SUBSCRIPTION_FALLBACK"
+    assert diagnostic["resolved"]["resolve_plan"]["source"] == "ORGANIZATION_SUBSCRIPTION"
     assert diagnostic["latest_intents"][0]["from_plan"] == "FREE"
     assert diagnostic["latest_intents"][0]["target_plan"] == "PRO"
+
+
+def test_active_organization_subscription_precedes_free_user_profile(commercial_db):
+    db, actor, _, _ = commercial_db
+    db.add(CommercialSubscription(
+        organization_id=actor.organization_id,
+        plan="PRO",
+        status="LAUNCH_ACCESS",
+        provider="MOCK",
+    ))
+    UserCommercialProfile.__table__.create(bind=db.get_bind(), checkfirst=True)
+    db.add(UserCommercialProfile(user_id=actor.id, plan="FREE", status="ACTIVE", source="ONBOARDING"))
+    db.commit()
+
+    resolved = resolve_plan(db, actor)
+
+    assert resolved == {"plan": "PRO", "source": "ORGANIZATION_SUBSCRIPTION"}
+    assert current_plan(db, actor) == "PRO"
+    assert get_plan_limits(db, actor)["users"] == 5
+
+
+def test_manager_cannot_confirm_or_activate_commercial_intent(commercial_db):
+    db, actor, _, _ = commercial_db
+    intent = create_upgrade_intent(db, actor, "PRO")
+    actor.role = "GERENTE"
+    db.commit()
+
+    with pytest.raises(Exception) as confirm_error:
+        mark_payment_confirmed(db, actor, intent.id)
+    with pytest.raises(Exception) as activate_error:
+        activate_upgrade_intent(db, actor, intent.id)
+
+    assert getattr(confirm_error.value, "status_code", None) == 403
+    assert getattr(activate_error.value, "status_code", None) == 403
+    assert intent.status == "CHECKOUT_OPENED"
+
+
+def test_commercial_admin_controls_are_root_only_in_frontend():
+    frontend = Path(__file__).parents[2].joinpath("frontend/index.html").read_text()
+    intent_render = frontend.split("async function loadCommercialUpgradeIntents", 1)[1].split("async function loadCommercialAdminMetrics", 1)[0]
+    assert "${isRoot ? `<div class=\"inline-actions\">" in intent_render
+    assert "data-commercial-intent-action=\"activate\"" in intent_render
