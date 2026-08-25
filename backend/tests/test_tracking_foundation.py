@@ -455,6 +455,37 @@ def test_operations_tracking_list_is_scoped_and_excludes_finished_routes(db):
     assert blocked.value.status_code == 403
 
 
+def test_supervisor_sees_only_subordinate_tracking_inside_own_organization(db):
+    org_a = make_org(db, "tracking-supervisor-a")
+    org_b = make_org(db, "tracking-supervisor-b")
+    supervisor_a = make_user(db, "supervisor-a", "GERENTE", org_a)
+    technician_a = make_user(db, "technician-a", "BROKER", org_a, manager_id=supervisor_a.id)
+    supervisor_b = make_user(db, "supervisor-b", "GERENTE", org_b)
+    technician_b = make_user(db, "technician-b", "BROKER", org_b, manager_id=supervisor_b.id)
+    order_a = make_order(db, org_a, technician_a, status="ABERTA")
+    order_b = make_order(db, org_b, technician_b, status="ABERTA")
+    for order in (order_a, order_b):
+        order.location_lat = 21.16
+        order.location_lng = -86.85
+    db.commit()
+
+    start_tracking(db, order_a.id, technician_a, True)
+    start_tracking(db, order_b.id, technician_b, True)
+    update_tracking_position(db, order_a.id, technician_a, 21.17, -86.86, 12)
+    update_tracking_position(db, order_b.id, technician_b, 21.18, -86.87, 15)
+
+    routes_a = list_active_tracking_for_actor(db, supervisor_a)
+    routes_b = list_active_tracking_for_actor(db, supervisor_b)
+    assert [route["technician"]["id"] for route in routes_a] == [technician_a.id]
+    assert [route["technician"]["id"] for route in routes_b] == [technician_b.id]
+
+    # The tracking record remains authoritative for the active technician even
+    # if a legacy OS has lost its responsible-user snapshot.
+    order_a.responsible_user_id = None
+    db.commit()
+    assert [route["technician"]["id"] for route in list_active_tracking_for_actor(db, supervisor_a)] == [technician_a.id]
+
+
 def test_admin_stop_preserves_order_status_history_and_is_idempotent(db):
     org = make_org(db, "admin-stop-org")
     root = make_user(db, "admin-stop-root", "ROOT", org)

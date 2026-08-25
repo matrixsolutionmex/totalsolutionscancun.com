@@ -1297,12 +1297,16 @@ def test_public_tracking_portal_uses_safe_statuses_and_live_leaflet_polling():
     assert "Seu técnico está se aproximando" in html
     assert 'portalLanguage === "en"' in html
     assert 'portalLanguage === "pt-BR"' in html
-    assert "ETA aproximado" in html
+    assert 'trackingText("approximateEta")' in html
+    assert 'trackingText("accuracy")' in html
     assert "Ubicación interrumpida" in html
     assert "Ruta temporalmente no disponible" in html
     assert "trackingOperationsHasFitted" in html
     assert "last_location_updated_at, data.technician_display_name" in html
-    assert "Esperando actualización de ubicación" in html
+    assert 'trackingText("waiting")' in html
+    assert "location_health" in html
+    assert "timestampHealth" in html
+    assert "localizedTrackingStatus" in html
     assert "fitBounds(bounds" in html
     assert "setLatLngs(routeGeometry)" in html
     assert "setTimeout(pollTracking, 12000)" in html
@@ -1396,6 +1400,7 @@ def test_public_tracking_uses_canonical_state_for_stale_and_orphaned_sessions(db
     stale = service_request_public_tracking(service_request)
     assert stale["tracking_active"] is True
     assert stale["tracking_health"] == "STALE"
+    assert stale["location_health"] == "STALE"
     assert stale["operational_status"] == "Técnico en camino"
 
     tracking = db.query(ServiceOrderTracking).filter_by(service_order_id=order.id).one()

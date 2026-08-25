@@ -53,13 +53,22 @@ def _technician_for_order(db: Session, order: ServiceOrder) -> User | None:
     return db.query(User).filter(User.id == order.responsible_user_id).first()
 
 
-def _is_visible_to_actor(db: Session, order: ServiceOrder, actor: User) -> bool:
+def _is_visible_to_actor(
+    db: Session,
+    order: ServiceOrder,
+    actor: User,
+    technician: User | None = None,
+) -> bool:
     if actor.role == "ROOT":
         return True
+    if actor.organization_id is None or order.organization_id != actor.organization_id:
+        return False
     if actor.role == "BROKER":
         return order.responsible_user_id == actor.id
     if actor.role == "GERENTE":
-        technician = _technician_for_order(db, order)
+        technician = technician or _technician_for_order(db, order)
+        if technician and technician.organization_id != actor.organization_id:
+            return False
         return bool(order.supervisor_user_id == actor.id or (technician and technician.manager_id == actor.id))
     return False
 
@@ -173,7 +182,7 @@ def list_active_tracking_for_actor(db: Session, actor: User) -> list[dict]:
 
     active_routes = []
     for order, tracking, technician in rows:
-        if not _is_visible_to_actor(db, order, actor):
+        if not _is_visible_to_actor(db, order, actor, technician=technician):
             continue
         lead = order.lead
         service_request = order.service_request

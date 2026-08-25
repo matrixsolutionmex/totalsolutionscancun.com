@@ -12009,9 +12009,35 @@
         }
       };
       const normalizePortalLanguage = (value) => String(value || "").toLowerCase().startsWith("pt") ? "pt-BR" : String(value || "").toLowerCase().startsWith("en") ? "en" : "es";
+      const trackingTranslations = {
+        es: { interrupted: "Ubicación interrumpida", stale: "Ubicación sin actualización reciente", onWay: "Tu técnico está en camino", waiting: "Esperando ubicación del técnico", updatedNow: "Actualizada ahora", lastUpdate: "Última actualización hace", seconds: "segundos", recalculating: "Recalculando ruta...", approximateEta: "Llegada estimada aproximada", estimatedArrival: "Llegada estimada", distance: "Distancia restante", time: "Hora", etaUnavailable: "ETA temporalmente no disponible", accuracy: "Precisión", map: "Mapa de seguimiento del servicio", technician: "Técnico", destination: "Destino del servicio" },
+        en: { interrupted: "Location interrupted", stale: "Location has not updated recently", onWay: "Your technician is on the way", waiting: "Waiting for technician location", updatedNow: "Updated now", lastUpdate: "Last update", seconds: "seconds ago", recalculating: "Recalculating route...", approximateEta: "Approximate ETA", estimatedArrival: "Estimated arrival", distance: "Distance remaining", time: "Time", etaUnavailable: "ETA temporarily unavailable", accuracy: "Accuracy", map: "Service tracking map", technician: "Technician", destination: "Service destination" },
+        "pt-BR": { interrupted: "Localização interrompida", stale: "Localização sem atualização recente", onWay: "Seu técnico está a caminho", waiting: "Aguardando localização do técnico", updatedNow: "Atualizada agora", lastUpdate: "Última atualização há", seconds: "segundos", recalculating: "Recalculando rota...", approximateEta: "Chegada estimada aproximada", estimatedArrival: "Chegada estimada", distance: "Distância restante", time: "Hora", etaUnavailable: "ETA temporariamente indisponível", accuracy: "Precisão", map: "Mapa de acompanhamento do serviço", technician: "Técnico", destination: "Destino do serviço" }
+      };
+      const trackingText = (key) => trackingTranslations[portalLanguage]?.[key] || trackingTranslations.es[key];
+      const localizedTrackingStatus = (value) => {
+        const normalized = String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        if (normalized.includes("camino") || normalized.includes("way") || normalized.includes("caminho")) return trackingText("onWay");
+        if (normalized.includes("finaliz") || normalized.includes("finished") || normalized.includes("completed") || normalized.includes("conclu")) {
+          return portalLanguage === "en" ? "Route finished" : portalLanguage === "pt-BR" ? "Rota finalizada" : "Ruta finalizada";
+        }
+        if (normalized.includes("ejecucion") || normalized.includes("progress") || normalized.includes("execucao")) {
+          return portalLanguage === "en" ? "Service in progress" : portalLanguage === "pt-BR" ? "Serviço em execução" : "Servicio en ejecución";
+        }
+        if (normalized.includes("no disponible") || normalized.includes("unavailable") || normalized.includes("indisponivel")) {
+          return portalLanguage === "en" ? "Route unavailable" : portalLanguage === "pt-BR" ? "Rota indisponível" : "Ruta no disponible";
+        }
+        if (normalized.includes("asignad") || normalized.includes("assigned") || normalized.includes("atribu")) {
+          return portalLanguage === "en" ? "Technician assigned" : portalLanguage === "pt-BR" ? "Técnico atribuído" : "Técnico asignado";
+        }
+        if (normalized.includes("recibid") || normalized.includes("received") || normalized.includes("prepar")) {
+          return portalLanguage === "en" ? "Request received" : portalLanguage === "pt-BR" ? "Solicitação recebida" : "Solicitud recibida";
+        }
+        return value || pt("preparing");
+      };
       let portalLanguage = normalizePortalLanguage(new URLSearchParams(window.location.search).get("lang") || localStorage.getItem("totalsolutions_public_language") || navigator.language || "es");
       const pt = (key) => portalTranslations[portalLanguage]?.[key] || portalTranslations.es[key] || key;
-      const waitingTechnicianLabel = portalLanguage === "en" ? "Waiting for technician location" : portalLanguage === "pt-BR" ? "Aguardando localização do técnico" : "Esperando ubicación del técnico";
+      const waitingTechnicianLabel = () => trackingText("waiting");
       const portalOptionLabels = {
         Casa: { es: "Casa", en: "House", "pt-BR": "Casa" }, Apartamento: { es: "Apartamento", en: "Apartment", "pt-BR": "Apartamento" }, Hotel: { es: "Hotel", en: "Hotel", "pt-BR": "Hotel" }, Airbnb: { es: "Airbnb", en: "Airbnb", "pt-BR": "Airbnb" }, Loja: { es: "Tienda", en: "Store", "pt-BR": "Loja" }, Industria: { es: "Industria", en: "Industry", "pt-BR": "Indústria" }, Escola: { es: "Escuela", en: "School", "pt-BR": "Escola" }, Clinica: { es: "Clínica", en: "Clinic", "pt-BR": "Clínica" }, Escritorio: { es: "Oficina", en: "Office", "pt-BR": "Escritório" }, Condominio: { es: "Condominio", en: "Condominium", "pt-BR": "Condomínio" }, Obra: { es: "Obra", en: "Construction", "pt-BR": "Obra" }, Outro: { es: "Otro", en: "Other", "pt-BR": "Outro" }, Hidraulica: { es: "Hidráulica", en: "Plumbing", "pt-BR": "Hidráulica" }, Eletrica: { es: "Eléctrica", en: "Electrical", "pt-BR": "Elétrica" }, "Ar condicionado": { es: "Aire acondicionado", en: "Air conditioning", "pt-BR": "Ar-condicionado" }, Pintura: { es: "Pintura", en: "Painting", "pt-BR": "Pintura" }, Impermeabilizacao: { es: "Impermeabilización", en: "Waterproofing", "pt-BR": "Impermeabilização" }, Cisterna: { es: "Cisterna", en: "Cistern", "pt-BR": "Cisterna" }, Marcenaria: { es: "Carpintería", en: "Carpentry", "pt-BR": "Marcenaria" }, Alvenaria: { es: "Albañilería", en: "Masonry", "pt-BR": "Alvenaria" }, "Limpeza tecnica": { es: "Limpieza técnica", en: "Technical cleaning", "pt-BR": "Limpeza técnica" },
       };
@@ -12687,10 +12713,10 @@
         };
         const trackingAgeLabel = (value, technicianName) => {
           if (!value) return technicianName
-            ? (portalLanguage === "en" ? "Waiting for location update" : portalLanguage === "pt-BR" ? "Aguardando atualização de localização" : "Esperando actualización de ubicación")
+            ? trackingText("waiting")
             : `${pt("technician")}: ${pt("loading")}`;
           const ageSeconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000));
-          return ageSeconds < 5 ? (portalLanguage === "en" ? "Updated now" : portalLanguage === "pt-BR" ? "Atualizada agora" : "Actualizada ahora") : `${portalLanguage === "en" ? "Last update" : portalLanguage === "pt-BR" ? "Última atualização há" : "Última actualización hace"} ${ageSeconds} ${portalLanguage === "en" ? "seconds ago" : portalLanguage === "pt-BR" ? "segundos" : "segundos"}`;
+          return ageSeconds < 5 ? trackingText("updatedNow") : `${trackingText("lastUpdate")} ${ageSeconds} ${trackingText("seconds")}`;
         };
         const removeTrackingTimer = () => {
           if (trackingTimer) {
@@ -12728,36 +12754,39 @@
             : active && lastValidRouteSessionKey === sessionKey ? lastValidRouteData : null;
           const displayRouteAvailable = Boolean(displayRoute);
           const ageMs = data.last_location_updated_at ? Date.now() - new Date(data.last_location_updated_at).getTime() : Infinity;
-          const locationHealth = data.tracking_health || (ageMs > 120000 ? "OFFLINE" : ageMs > 30000 ? "STALE" : "LIVE");
+          const timestampHealth = Number.isFinite(ageMs) && ageMs >= 0
+            ? (ageMs > 120000 ? "OFFLINE" : ageMs > 30000 ? "STALE" : "LIVE")
+            : null;
+          const locationHealth = timestampHealth || data.location_health || data.tracking_health || "OFFLINE";
           const locationStatusText = locationHealth === "OFFLINE"
-            ? (portalLanguage === "en" ? "Location interrupted" : portalLanguage === "pt-BR" ? "Localização interrompida" : "Ubicación interrumpida")
+            ? trackingText("interrupted")
             : locationHealth === "STALE"
-              ? (portalLanguage === "en" ? "Location has not updated recently" : portalLanguage === "pt-BR" ? "Localização sem atualização recente" : "Ubicación sin actualización reciente")
-              : (portalLanguage === "en" ? "Your technician is on the way" : portalLanguage === "pt-BR" ? "Seu técnico está a caminho" : "Tu técnico está en camino");
+              ? trackingText("stale")
+              : trackingText("onWay");
           const locationMessage = !active
-            ? (data.operational_status || "Tu solicitud está siendo preparada")
-            : (hasTechnician ? locationStatusText : waitingTechnicianLabel);
+            ? localizedTrackingStatus(data.operational_status)
+            : (hasTechnician ? locationStatusText : trackingText("waiting"));
           const retainedRouteMessage = displayRouteAvailable && locationHealth !== "LIVE"
             ? (portalLanguage === "en" ? "Showing the last available route · " : portalLanguage === "pt-BR" ? "Exibindo a última rota disponível · " : "Mostrando la última ruta disponible · ")
             : "";
           const routeMessage = displayRouteAvailable
-            ? `${retainedRouteMessage}${data.route_available ? "" : (portalLanguage === "en" ? "Recalculating route... · " : portalLanguage === "pt-BR" ? "Recalculando rota... · " : "Recalculando ruta... · ")}${locationHealth === "STALE" ? (portalLanguage === "en" ? "Approximate ETA" : portalLanguage === "pt-BR" ? "ETA aproximado" : "ETA aproximado") : (portalLanguage === "en" ? "Estimated arrival" : portalLanguage === "pt-BR" ? "Chegada estimada" : "Llegada estimada")}: ${formatRouteDuration(displayRoute.route_duration_s)} · ${portalLanguage === "en" ? "Distance remaining" : portalLanguage === "pt-BR" ? "Distância restante" : "Distancia restante"}: ${formatRouteDistance(displayRoute.route_distance_m)} · ${portalLanguage === "en" ? "Time" : portalLanguage === "pt-BR" ? "Hora" : "Hora"}: ${formatRouteEta(displayRoute.route_eta_at)}`
-            : (active && locationHealth === "OFFLINE" ? (portalLanguage === "en" ? "ETA temporarily unavailable" : portalLanguage === "pt-BR" ? "ETA temporariamente indisponível" : "ETA temporalmente no disponible") : pt("route"));
+            ? `${retainedRouteMessage}${data.route_available ? "" : `${trackingText("recalculating")} · `}${locationHealth === "STALE" ? trackingText("approximateEta") : trackingText("estimatedArrival")}: ${formatRouteDuration(displayRoute.route_duration_s)} · ${trackingText("distance")}: ${formatRouteDistance(displayRoute.route_distance_m)} · ${trackingText("time")}: ${formatRouteEta(displayRoute.route_eta_at)}`
+            : (active && locationHealth === "OFFLINE" ? trackingText("etaUnavailable") : pt("route"));
           const needsShell = !document.getElementById("publicTrackingMap");
           if (needsShell) {
             content.innerHTML = `
               <div class="portal-result">
                 <p>${pt("order")}</p>
-                <code>${escapeHtml(data.order_number || "En preparacion")}</code>
+                <code>${escapeHtml(data.order_number || pt("preparing"))}</code>
                 <p>${pt("status")}</p>
-                <strong>${escapeHtml(data.operational_status || "Solicitud recibida")}</strong>
-                <p id="publicTrackingTechnician">${pt("technician")}: <strong>${escapeHtml(data.technician_display_name || pt("loading"))}</strong></p>
+                <strong>${escapeHtml(localizedTrackingStatus(data.operational_status))}</strong>
+                <p id="publicTrackingTechnician">${pt("technician")}: <strong>${escapeHtml(data.technician_display_name || trackingText("waiting"))}</strong></p>
                 ${data.route_started_at ? `<p>${pt("departure")}: <strong>${escapeHtml(formatTrackingDate(data.route_started_at))}</strong></p>` : ""}
               </div>
-              <div class="public-tracking-status" id="publicTrackingLiveStatus"><strong>${escapeHtml(locationMessage)}</strong><span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at, data.technician_display_name))}</span>${data.accuracy_m == null ? "" : `<span>Precisión: ${escapeHtml(data.accuracy_m)} m</span>`}</div>
+              <div class="public-tracking-status" id="publicTrackingLiveStatus"><strong>${escapeHtml(locationMessage)}</strong><span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at, data.technician_display_name))}</span>${data.accuracy_m == null ? "" : `<span>${trackingText("accuracy")}: ${escapeHtml(data.accuracy_m)} m</span>`}</div>
               ${displayRouteAvailable ? `<div class="public-tracking-eta-card"><div><small>${portalLanguage === "en" ? "Estimated arrival" : portalLanguage === "pt-BR" ? "Chegada estimada" : "Llegada estimada"}</small><strong>${escapeHtml(formatRouteDuration(displayRoute.route_duration_s))}</strong></div><div><small>${portalLanguage === "en" ? "Distance remaining" : portalLanguage === "pt-BR" ? "Distância restante" : "Distancia restante"}</small><strong>${escapeHtml(formatRouteDistance(displayRoute.route_distance_m))}</strong></div><div><small>${portalLanguage === "en" ? "Estimated time" : portalLanguage === "pt-BR" ? "Hora estimada" : "Hora estimada"}</small><strong>${escapeHtml(formatRouteEta(displayRoute.route_eta_at))}</strong></div></div>` : ""}
               <p id="publicTrackingProximity" class="portal-message">${escapeHtml(displayRouteAvailable ? trackingProximityMessage(displayRoute.route_distance_m) : locationMessage)}</p>
-              ${(active || hasDestination) ? '<div id="publicTrackingMap" class="public-tracking-map" aria-label="Mapa de seguimiento del servicio"></div>' : ""}
+              ${(active || hasDestination) ? `<div id="publicTrackingMap" class="public-tracking-map" aria-label="${trackingText("map")}"></div>` : ""}
               <p id="publicTrackingMapHint" class="portal-message">${active ? pt("mapHint") : pt("preparingShort")}</p>
             `;
           }
@@ -12767,7 +12796,7 @@
             technicianElement.innerHTML = `${pt("technician")}: <strong>${escapeHtml(data.technician_display_name || pt("loading"))}</strong>`;
           }
           if (liveStatus) {
-            liveStatus.innerHTML = `<strong>${escapeHtml(locationMessage)}</strong><span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at, data.technician_display_name))}</span>${data.accuracy_m == null ? "" : `<span>Precisión: ${escapeHtml(data.accuracy_m)} m</span>`}`;
+            liveStatus.innerHTML = `<strong>${escapeHtml(locationMessage)}</strong><span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at, data.technician_display_name))}</span>${data.accuracy_m == null ? "" : `<span>${trackingText("accuracy")}: ${escapeHtml(data.accuracy_m)} m</span>`}`;
             const existingEtaCard = document.querySelector(".public-tracking-eta-card");
             if (displayRouteAvailable) {
               const etaMarkup = `<div class="public-tracking-eta-card"><div><small>${portalLanguage === "en" ? "Estimated arrival" : portalLanguage === "pt-BR" ? "Chegada estimada" : "Llegada estimada"}</small><strong>${escapeHtml(formatRouteDuration(displayRoute.route_duration_s))}</strong></div><div><small>${portalLanguage === "en" ? "Distance remaining" : portalLanguage === "pt-BR" ? "Distância restante" : "Distancia restante"}</small><strong>${escapeHtml(formatRouteDistance(displayRoute.route_distance_m))}</strong></div><div><small>${portalLanguage === "en" ? "Estimated time" : portalLanguage === "pt-BR" ? "Hora estimada" : "Hora estimada"}</small><strong>${escapeHtml(formatRouteEta(displayRoute.route_eta_at))}</strong></div></div>`;
@@ -12797,12 +12826,12 @@
           }
           const bounds = [];
           if (hasDestination) {
-            if (!destinationMarker) destinationMarker = L.circleMarker([destinationLat, destinationLng], { radius: 8, color: "#16a34a", fillColor: "#16a34a", fillOpacity: 0.9 }).addTo(trackingMap).bindTooltip("Destino del servicio");
+            if (!destinationMarker) destinationMarker = L.circleMarker([destinationLat, destinationLng], { radius: 8, color: "#16a34a", fillColor: "#16a34a", fillOpacity: 0.9 }).addTo(trackingMap).bindTooltip(trackingText("destination"));
             destinationMarker.setLatLng([destinationLat, destinationLng]);
             bounds.push([destinationLat, destinationLng]);
           }
           if (hasTechnician) {
-            if (!technicianMarker) technicianMarker = L.circleMarker([technicianLat, technicianLng], { radius: 9, color: "#2563eb", fillColor: "#2563eb", fillOpacity: 0.95 }).addTo(trackingMap).bindTooltip("Técnico");
+            if (!technicianMarker) technicianMarker = L.circleMarker([technicianLat, technicianLng], { radius: 9, color: "#2563eb", fillColor: "#2563eb", fillOpacity: 0.95 }).addTo(trackingMap).bindTooltip(trackingText("technician"));
             technicianMarker.setLatLng([technicianLat, technicianLng]);
             bounds.push([technicianLat, technicianLng]);
           } else if (technicianMarker) {
