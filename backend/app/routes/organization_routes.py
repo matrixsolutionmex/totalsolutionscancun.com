@@ -8,7 +8,7 @@ from app.models.organization_invitation import OrganizationInvitation
 from app.models.user import User
 from app.services.organization_onboarding_service import accept_invitation, create_invitation, invitation_for_token
 from app.services.notification_service import enqueue_invitation_email
-from app.services.entitlement_service import current_plan
+from app.services.entitlement_service import current_plan, normalize_plan, subscription_for_organization
 
 router = APIRouter(prefix="/organization", tags=["organization"])
 
@@ -136,10 +136,16 @@ def available_organizations(
     db: Session = Depends(get_db),
     actor: User = Depends(require_root_user),
 ):
-    return [
-        {"id": organization.id, "name": organization.name, "plan": organization.plan, "status": organization.status}
-        for organization in db.query(Organization).order_by(Organization.name).all()
-    ]
+    rows = []
+    for organization in db.query(Organization).order_by(Organization.name).all():
+        subscription = subscription_for_organization(db, organization.id)
+        rows.append({
+            "id": organization.id,
+            "name": organization.name,
+            "plan": normalize_plan(subscription.plan if subscription else organization.plan),
+            "status": organization.status,
+        })
+    return rows
 
 
 @router.get("/invitations/{token}")

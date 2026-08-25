@@ -15,7 +15,9 @@ from app.models.service_opportunity import ServiceOpportunity
 from app.models.service_order import ServiceOrder
 from app.models.service_request import ServiceRequest
 from app.models.service_property import ServiceProperty
+from app.models.service_order_tracking import ServiceOrderTracking  # noqa: F401 - registers ServiceOrder relationship
 from app.models.user import User
+from app.routes.organization_routes import available_organizations
 from app.routes.commercial_routes import MockPlanChangeRequest, UpgradeIntentRequest, commercial_mock_plan, commercial_upgrade_intent
 from app.auth.jwt_handler import require_root_user
 from app.services.commercial_upgrade_service import (
@@ -354,3 +356,22 @@ def test_platform_directory_guard_rejects_non_root_roles(commercial_db):
     with pytest.raises(Exception) as error:
         require_root_user(broker)
     assert getattr(error.value, "status_code", None) == 403
+
+
+@pytest.mark.parametrize("subscription_plan", ["PRO", "BUSINESS"])
+def test_available_organizations_uses_subscription_plan_over_legacy_organization_plan(commercial_db, subscription_plan):
+    db, actor, _, _ = commercial_db
+    organization = db.query(Organization).filter_by(id=actor.organization_id).one()
+    organization.plan = "FREE"
+    db.add(CommercialSubscription(
+        organization_id=organization.id,
+        plan=subscription_plan,
+        status="ACTIVE",
+        provider="CLIP",
+    ))
+    db.commit()
+
+    rows = available_organizations(db, actor)
+
+    row = next(item for item in rows if item["id"] == organization.id)
+    assert row["plan"] == subscription_plan
