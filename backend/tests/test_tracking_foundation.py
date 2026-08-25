@@ -170,6 +170,7 @@ def test_root_tracking_diagnostic_matches_public_projection_and_detects_inconsis
     root = make_user(db, "root-diagnostic", "ROOT", org)
     manager = make_user(db, "manager-diagnostic", "GERENTE", org)
     technician = make_user(db, "technician-diagnostic", "BROKER", org)
+    technician.manager_id = manager.id
     order = make_order(db, org, technician, supervisor=manager)
     order.service_request = ServiceRequest(
         organization_id=org.id,
@@ -190,6 +191,15 @@ def test_root_tracking_diagnostic_matches_public_projection_and_detects_inconsis
     assert diagnostic["tracking"]["tracking_active"] is True
     assert diagnostic["tracking_record_count"] == 1
     assert diagnostic["tracking_service_order_unique_constraint"] is True
+    assert diagnostic["service_order"]["organization_id"] == org.id
+    assert diagnostic["service_order"]["responsible_user_id"] == technician.id
+    assert diagnostic["service_order"]["supervisor_user_id"] == manager.id
+    assert diagnostic["tracking"]["technician_id"] == technician.id
+    assert diagnostic["technician"]["organization_id"] == org.id
+    assert diagnostic["technician"]["manager_id"] == manager.id
+    assert diagnostic["scope"]["organization_matches_order"] is True
+    assert diagnostic["scope"]["organization_matches_tracking_technician"] is True
+    assert diagnostic["scope"]["tracking_technician_is_under_actor"] is True
     assert diagnostic["public_projection"]["tracking_active"] is True
     assert diagnostic["public_projection"]["technician_display_name"] == technician.full_name
     assert "tracking_token" not in diagnostic["public_projection"]
@@ -462,6 +472,7 @@ def test_supervisor_sees_only_subordinate_tracking_inside_own_organization(db):
     technician_a = make_user(db, "technician-a", "BROKER", org_a, manager_id=supervisor_a.id)
     supervisor_b = make_user(db, "supervisor-b", "GERENTE", org_b)
     technician_b = make_user(db, "technician-b", "BROKER", org_b, manager_id=supervisor_b.id)
+    legacy_technician = make_user(db, "legacy-technician-a", "BROKER", org_a)
     order_a = make_order(db, org_a, technician_a, status="ABERTA")
     order_b = make_order(db, org_b, technician_b, status="ABERTA")
     for order in (order_a, order_b):
@@ -480,8 +491,9 @@ def test_supervisor_sees_only_subordinate_tracking_inside_own_organization(db):
     assert [route["technician"]["id"] for route in routes_b] == [technician_b.id]
 
     # The tracking record remains authoritative for the active technician even
-    # if a legacy OS has lost its responsible-user snapshot.
-    order_a.responsible_user_id = None
+    # if legacy responsible/supervisor snapshots point elsewhere.
+    order_a.responsible_user_id = legacy_technician.id
+    order_a.supervisor_user_id = supervisor_b.id
     db.commit()
     assert [route["technician"]["id"] for route in list_active_tracking_for_actor(db, supervisor_a)] == [technician_a.id]
 

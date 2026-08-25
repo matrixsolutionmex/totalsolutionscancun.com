@@ -429,7 +429,11 @@ def diagnose_tracking_for_root(db: Session, order_id: int, actor: User) -> dict:
     tracking = order.tracking
     session_state = tracking_session_state(order, tracking)
     health = tracking_health(tracking)
-    technician = getattr(tracking, "technician", None) if tracking else None
+    technician = (
+        db.query(User).filter(User.id == tracking.technician_id).first()
+        if tracking
+        else None
+    )
     technician_name = _actor_name(technician) if technician else None
     route = route_for_order(order, tracking)
 
@@ -472,6 +476,9 @@ def diagnose_tracking_for_root(db: Session, order_id: int, actor: User) -> dict:
             "id": order.id,
             "number": order.order_number,
             "status": order.status,
+            "organization_id": order.organization_id,
+            "responsible_user_id": order.responsible_user_id,
+            "supervisor_user_id": order.supervisor_user_id,
         },
         "tracking": {
             "id": tracking.id if tracking else None,
@@ -491,6 +498,24 @@ def diagnose_tracking_for_root(db: Session, order_id: int, actor: User) -> dict:
         "technician": {
             "id": technician.id if technician else None,
             "display_name": technician_name,
+            "organization_id": technician.organization_id if technician else None,
+            "manager_id": technician.manager_id if technician else None,
+        },
+        "scope": {
+            "actor_organization_id": actor.organization_id,
+            "organization_matches_order": bool(actor.organization_id and actor.organization_id == order.organization_id),
+            "organization_matches_tracking_technician": bool(
+                technician and actor.organization_id and technician.organization_id == actor.organization_id
+            ),
+            "tracking_technician_matches_order_responsible": bool(
+                tracking and order.responsible_user_id == tracking.technician_id
+            ),
+            "tracking_technician_is_under_actor": bool(
+                actor.role == "ROOT"
+                or (technician and technician.manager_id == actor.id)
+                or order.supervisor_user_id == actor.id
+            ),
+            "order_supervisor_matches_actor": order.supervisor_user_id == actor.id,
         },
         "destination": {
             "latitude": order.location_lat,
