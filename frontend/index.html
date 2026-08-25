@@ -3508,6 +3508,7 @@
       <button class="nav-main" data-view-target="contratos">Documentos</button>
       <button class="nav-main root-only" data-view-target="usuarios">Equipo</button>
       <button class="nav-main" data-view-target="planos">Planos</button>
+      <button class="nav-main manager-only" data-view-target="marketplace-links">Link Marketplace</button>
     </nav>
     <div class="spacer"></div>
     <button
@@ -3560,6 +3561,7 @@
       <button type="button" data-mobile-view="contratos">Documentos</button>
       <button type="button" class="root-only" data-mobile-view="usuarios">Equipo</button>
       <button type="button" data-mobile-view="planos">Planos</button>
+      <button type="button" class="manager-only" data-mobile-view="marketplace-links">Link Marketplace</button>
     </nav>
 
     <div class="mobile-drawer-section">
@@ -3811,6 +3813,23 @@
       <div class="panel-box" style="grid-column: 1 / -1;">
         <div class="panel-title">Tickets de soporte</div>
         <div class="broker-list" id="supportTicketList"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="view manager-only" id="view-marketplace-links">
+    <div class="view-grid">
+      <div class="panel-box" style="grid-column: 1 / -1;">
+        <div class="panel-title">Link Marketplace</div>
+        <div class="line">Canal público de solicitudes de esta organización.</div>
+        <div id="organizationMarketplaceLinks" class="broker-list"></div>
+        <div class="inline-actions" style="margin-top: 16px;">
+          <input id="marketplaceCampaignName" placeholder="Nombre de campaña" aria-label="Nombre de campaña">
+          <input id="marketplaceCampaignSlug" placeholder="slug-campaña" aria-label="Slug de campaña">
+          <input id="marketplaceCampaignCategory" placeholder="Categoría opcional" aria-label="Categoría de servicio">
+          <button type="button" id="createMarketplaceCampaignButton">Crear campaña</button>
+        </div>
+        <div id="organizationMarketplaceStatus" class="line" role="status"></div>
       </div>
     </div>
   </section>
@@ -4903,7 +4922,7 @@
         appearanceTitle: "Apariencia",
         themeClassic: "Clássico claro",
         themePremium: "Premium dark",
-        nav: ["Serviços", "Clientes", "Agenda", "Relatórios", "Suporte", "Documentos", "Equipe", "Planos"],
+        nav: ["Serviços", "Clientes", "Agenda", "Relatórios", "Suporte", "Documentos", "Equipe", "Planos", "Link Marketplace"],
         uiNoInfo: "Não informado",
         uiAwaitingDiagnosis: "Aguardando diagnóstico",
         uiCustomerBudget: "Orçamento do cliente",
@@ -5088,7 +5107,7 @@
         appearanceTitle: "Appearance",
         themeClassic: "Classic light",
         themePremium: "Premium dark",
-        nav: ["Services", "Clients", "Schedule", "Reports", "Support", "Documents", "Team", "Plans"],
+        nav: ["Services", "Clients", "Schedule", "Reports", "Support", "Documents", "Team", "Plans", "Marketplace Link"],
         uiNoInfo: "Not provided",
         uiAwaitingDiagnosis: "Awaiting diagnosis",
         uiCustomerBudget: "Customer budget",
@@ -5281,7 +5300,7 @@
         appearanceTitle: "Apariencia",
         themeClassic: "Clásico claro",
         themePremium: "Premium dark",
-        nav: ["Servicios", "Clientes", "Agenda", "Reportes", "Soporte", "Documentos", "Equipo", "Planos"],
+        nav: ["Servicios", "Clientes", "Agenda", "Reportes", "Soporte", "Documentos", "Equipo", "Planos", "Link Marketplace"],
         uiNoInfo: "No informado",
         uiAwaitingDiagnosis: "Aguardando diagnóstico",
         uiCustomerBudget: "Presupuesto del cliente",
@@ -6078,7 +6097,7 @@
       document.querySelectorAll(".nav .nav-main[data-view-target]").forEach((button) => {
         button.classList.toggle("active", button.dataset.viewTarget === viewName);
       });
-      document.body.classList.remove("view-vendas", "view-leads", "view-atendimento", "view-relatorios", "view-planos", "view-suporte", "view-usuarios", "view-contratos");
+      document.body.classList.remove("view-vendas", "view-leads", "view-atendimento", "view-relatorios", "view-planos", "view-suporte", "view-usuarios", "view-contratos", "view-marketplace-links");
       document.body.classList.add(`view-${viewName}`);
       if (viewName === "suporte") {
         loadSupportTickets().catch(() => {});
@@ -6095,6 +6114,12 @@
       }
       if (viewName === "planos") {
         loadCommercialPlans().catch(() => {});
+      }
+      if (viewName === "marketplace-links") {
+        loadOrganizationMarketplaceLinks().catch((error) => {
+          const status = document.getElementById("organizationMarketplaceStatus");
+          if (status) status.textContent = error.message || "No fue posible cargar los enlaces.";
+        });
       }
       if (viewName === "vendas" && currentUser?.role === "GERENTE") {
         loadSupervisorTeam().catch(() => {});
@@ -6650,6 +6675,47 @@
         const data = await response.json().catch(() => ({}));
         if (response.ok) marketplaceAssignableUsers = (data.users || []).filter((user) => ["BROKER", "GERENTE"].includes(user.role));
       }
+    }
+
+    async function loadOrganizationMarketplaceLinks() {
+      if (!currentUser || !["ROOT", "GERENTE"].includes(currentUser.role)) return;
+      const response = await apiFetch(`${API_BASE}/admin/organization/marketplace-links`);
+      const data = await response.json().catch(() => []);
+      if (!response.ok) throw new Error(data.detail || "No fue posible cargar los enlaces.");
+      const list = document.getElementById("organizationMarketplaceLinks");
+      if (!list) return;
+      list.innerHTML = data.length ? data.map((link) => {
+        const publicPath = `/m/${encodeURIComponent(link.organization_slug)}${link.slug === "default" ? "" : `/${encodeURIComponent(link.slug)}`}`;
+        const url = `${window.location.origin}${publicPath}`;
+        return `<article class="panel-box"><div class="panel-title">${marketplaceValue(link.name)}</div>
+          <div class="line">${marketplaceValue(url)}</div>
+          <div class="line">${marketplaceValue(link.organization_name)} · ${link.active ? "Activo" : "Inactivo"} · ${marketplaceValue(link.visibility_scope)}</div>
+          <div class="inline-actions"><button type="button" data-marketplace-link-copy="${escapeHtml(url)}">Copiar link</button><a class="small-btn" href="${escapeHtml(publicPath)}" target="_blank" rel="noopener noreferrer">Abrir</a></div></article>`;
+      }).join("") : '<div class="line">No hay enlaces Marketplace disponibles.</div>';
+    }
+
+    async function createOrganizationMarketplaceCampaign() {
+      const status = document.getElementById("organizationMarketplaceStatus");
+      const name = document.getElementById("marketplaceCampaignName")?.value.trim();
+      const slug = document.getElementById("marketplaceCampaignSlug")?.value.trim();
+      const serviceCategory = document.getElementById("marketplaceCampaignCategory")?.value.trim();
+      if (!name || !slug) {
+        if (status) status.textContent = "Informe nome e slug da campanha.";
+        return;
+      }
+      const response = await apiFetch(`${API_BASE}/admin/organization/marketplace-links`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ organization_id: currentUser?.role === "ROOT" ? currentUser.organization_id : null, name, slug, service_category: serviceCategory || null }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "No fue posible crear la campaña.");
+      if (status) status.textContent = "Campaña creada.";
+      ["marketplaceCampaignName", "marketplaceCampaignSlug", "marketplaceCampaignCategory"].forEach((id) => {
+        const input = document.getElementById(id);
+        if (input) input.value = "";
+      });
+      await loadOrganizationMarketplaceLinks();
     }
 
     function renderMarketplacePanel(tab, payload = {}) {
@@ -11413,6 +11479,23 @@
         showView(button.dataset.viewTarget);
       });
     });
+    document.getElementById("createMarketplaceCampaignButton")?.addEventListener("click", () => {
+      createOrganizationMarketplaceCampaign().catch((error) => {
+        const status = document.getElementById("organizationMarketplaceStatus");
+        if (status) status.textContent = error.message || "No fue posible crear la campaña.";
+      });
+    });
+    document.getElementById("organizationMarketplaceLinks")?.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-marketplace-link-copy]");
+      if (!button) return;
+      const value = button.dataset.marketplaceLinkCopy;
+      try {
+        await navigator.clipboard.writeText(value);
+        button.textContent = "Copiado";
+      } catch (_error) {
+        button.textContent = "No fue posible copiar";
+      }
+    });
 
     const mobileMenuButton = document.getElementById("mobileMenuButton");
     const mobileDrawer = document.getElementById("mobileDrawer");
@@ -11884,12 +11967,17 @@
     (() => {
       const path = window.location.pathname;
       const isPortal = path === "/solicitar-servico";
+      const marketplacePath = path.match(/^\/m\/([^/]+)(?:\/([^/]+))?\/?$/);
+      const isMarketplace = Boolean(marketplacePath);
       const isTracking = path.startsWith("/acompanhar/") || path.startsWith("/seguimiento/");
-      if (!isPortal && !isTracking) {
+      if (!isPortal && !isMarketplace && !isTracking) {
         return;
       }
 
       const apiBase = window.location.origin;
+      let marketplaceContext = null;
+      const marketplaceOrganizationSlug = marketplacePath ? decodeURIComponent(marketplacePath[1]) : null;
+      const marketplaceLinkSlug = marketplacePath?.[2] ? decodeURIComponent(marketplacePath[2]) : "default";
       const logoUrl = "/assets/assets/total-solutions-logo.svg";
       const propertyTypes = [
         "Casa", "Apartamento", "Hotel", "Airbnb", "Loja", "Industria",
@@ -12353,12 +12441,13 @@
       }
 
       function renderForm() {
+        const marketplaceName = marketplaceContext?.organization_name ? `${escapeHtml(marketplaceContext.organization_name)} · ` : "";
         renderShell(`
           <section class="portal-panel">
             <header class="portal-panel-header">
               <img class="portal-panel-logo" src="${logoUrl}" alt="Total Solutions" />
-              <h2>${pt("newRequest")}</h2>
-              <p>${pt("newRequestText")}</p>
+              <h2>${marketplaceName}${pt("newRequest")}</h2>
+              <p>${marketplaceContext?.link?.campaign_name ? `${escapeHtml(marketplaceContext.link.campaign_name)} · ` : ""}${pt("newRequestText")}</p>
             </header>
             <form id="customerPortalForm" class="portal-form">
               <section class="portal-section">
@@ -12370,7 +12459,7 @@
                   </div>
                   <div class="portal-field">
                     <label for="service_category">${pt("service")} *</label>
-                    <select id="service_category" name="service_category" required>${optionList(serviceTypes)}</select>
+                    <select id="service_category" name="service_category" required>${optionList(marketplaceContext?.services?.length ? marketplaceContext.services : serviceTypes)}</select>
                   </div>
                   <div class="portal-field">
                     <label for="urgency">${pt("urgency")}</label>
@@ -12498,6 +12587,12 @@
           </section>
         `);
         bindForm();
+        const campaignCategory = marketplaceContext?.link?.service_category;
+        const serviceSelect = document.getElementById("service_category");
+        if (campaignCategory && serviceSelect) {
+          const matchingOption = Array.from(serviceSelect.options).find((option) => option.value.toLowerCase() === campaignCategory.toLowerCase());
+          if (matchingOption) serviceSelect.value = matchingOption.value;
+        }
       }
 
       function renderResult(data) {
@@ -12920,7 +13015,10 @@
           }
           formData.set("idempotency_key", crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
           try {
-            const response = await fetch(`${apiBase}/public/service-requests`, {
+            const endpoint = marketplaceContext
+              ? `${apiBase}/public/service-requests?organization_slug=${encodeURIComponent(marketplaceOrganizationSlug)}&marketplace_link_slug=${encodeURIComponent(marketplaceLinkSlug)}`
+              : `${apiBase}/public/service-requests`;
+            const response = await fetch(endpoint, {
               method: "POST",
               body: formData,
               headers: { Accept: "application/json" },
@@ -12941,11 +13039,18 @@
 
       localStorage.removeItem("totalsolutions_user");
       localStorage.removeItem("totalsolutions_access_token");
-      if (isTracking) {
-        renderTracking();
-      } else {
-        renderForm();
-      }
+      const initializePublicExperience = async () => {
+        if (isMarketplace) {
+          const response = await fetch(`${apiBase}/public/marketplaces/${encodeURIComponent(marketplaceOrganizationSlug)}${marketplaceLinkSlug === "default" ? "" : `/${encodeURIComponent(marketplaceLinkSlug)}`}`, { headers: { Accept: "application/json" } });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.detail || pt("noRequest"));
+          marketplaceContext = data;
+        }
+        if (isTracking) renderTracking(); else renderForm();
+      };
+      initializePublicExperience().catch((error) => {
+        document.body.innerHTML = `<main class="portal-main"><section class="portal-panel"><div class="portal-status"><div class="portal-message error">${escapeHtml(error.message || pt("noRequest"))}</div></div></section></main>`;
+      });
     })();
   </script>
 </body>

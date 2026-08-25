@@ -198,6 +198,7 @@ def create_opportunity_from_service_request(db: Session, service_request: Servic
     description = re.sub(r"(?:\+?\d[\d ()-]{7,})", "[telefone removido]", description)[:500]
     opportunity = ServiceOpportunity(
         public_id=f"MKT-{uuid4().hex[:12].upper()}", organization_id=service_request.organization_id,
+        marketplace_link_id=service_request.marketplace_link_id,
         source=MARKETPLACE, service_type=service_request.service_category, segment=service_request.service_category,
         country=property_record.country_code if property_record else None,
         state=property_record.administrative_area if property_record else None,

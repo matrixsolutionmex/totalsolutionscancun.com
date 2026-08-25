@@ -16,9 +16,9 @@ def test_user_language_is_normalized_to_supported_backend_values():
 
 def test_authenticated_dashboard_has_one_translated_menu_for_all_supported_languages():
     html = FRONTEND.read_text(encoding="utf-8")
-    assert 'nav: ["Serviços", "Clientes", "Agenda", "Relatórios", "Suporte", "Documentos", "Equipe", "Planos"]' in html
-    assert 'nav: ["Services", "Clients", "Schedule", "Reports", "Support", "Documents", "Team", "Plans"]' in html
-    assert 'nav: ["Servicios", "Clientes", "Agenda", "Reportes", "Soporte", "Documentos", "Equipo", "Planos"]' in html
+    assert 'nav: ["Serviços", "Clientes", "Agenda", "Relatórios", "Suporte", "Documentos", "Equipe", "Planos", "Link Marketplace"]' in html
+    assert 'nav: ["Services", "Clients", "Schedule", "Reports", "Support", "Documents", "Team", "Plans", "Marketplace Link"]' in html
+    assert 'nav: ["Servicios", "Clientes", "Agenda", "Reportes", "Soporte", "Documentos", "Equipo", "Planos", "Link Marketplace"]' in html
     assert 'document.querySelectorAll(".mobile-nav [data-mobile-view]")' in html
 
 

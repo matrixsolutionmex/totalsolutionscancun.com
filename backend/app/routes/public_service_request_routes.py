@@ -1,18 +1,34 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.auth.jwt_handler import get_db
 from app.models.service_request import ServiceRequest
+from app.models.pricing_rate import PricingRate
 from app.services.customer_portal_service import create_customer_request_and_order, service_request_public_status, service_request_public_tracking
 from app.services.marketplace_service import create_opportunity_from_service_request
 from app.services.notification_service import dispatch_web_push_for_notification_ids
 from app.services.reverse_geocode_service import reverse_geocode
 from app.services.localization_service import resolve_language
+from app.services.organization_marketplace_service import public_marketplace_payload, resolve_marketplace_link
 
 
 router = APIRouter(prefix="/public", tags=["public-service-requests"])
+
+
+@router.get("/marketplaces/{organization_slug}")
+def public_marketplace(organization_slug: str, db: Session = Depends(get_db)):
+    organization, link = resolve_marketplace_link(db, organization_slug)
+    services = [row[0] for row in db.query(PricingRate.service_type).filter(PricingRate.active.is_(True)).distinct().order_by(PricingRate.service_type).all()]
+    return public_marketplace_payload(organization, link, services)
+
+
+@router.get("/marketplaces/{organization_slug}/{link_slug}")
+def public_marketplace_campaign(organization_slug: str, link_slug: str, db: Session = Depends(get_db)):
+    organization, link = resolve_marketplace_link(db, organization_slug, link_slug)
+    services = [row[0] for row in db.query(PricingRate.service_type).filter(PricingRate.active.is_(True)).distinct().order_by(PricingRate.service_type).all()]
+    return public_marketplace_payload(organization, link, services)
 
 
 def _parse_datetime(value: str | None):
@@ -60,6 +76,8 @@ def create_public_service_request(
     consent_images: bool = Form(default=False),
     idempotency_key: str | None = Form(default=None),
     public_language: str | None = Form(default=None),
+    organization_slug: str | None = Query(default=None),
+    marketplace_link_slug: str = Query(default="default"),
     customer_budget_min: str | None = Form(default=None),
     customer_budget_max: str | None = Form(default=None),
     pricing_zone: str | None = Form(default=None),
@@ -67,12 +85,18 @@ def create_public_service_request(
     db: Session = Depends(get_db),
     accept_language: str | None = Header(default=None),
 ):
+    marketplace_link = None
+    marketplace_organization_id = None
+    if organization_slug:
+        organization, marketplace_link = resolve_marketplace_link(db, organization_slug, marketplace_link_slug)
+        marketplace_organization_id = organization.id
+    effective_service_category = marketplace_link.service_category if marketplace_link and marketplace_link.service_category else service_category
     payload = {
         "requester_name": requester_name,
         "requester_phone": requester_phone,
         "requester_email": requester_email,
         "property_type": property_type,
-        "service_category": service_category,
+        "service_category": effective_service_category,
         "problem_description": problem_description,
         "urgency": urgency,
         "address_line1": address_line1,
@@ -101,7 +125,10 @@ def create_public_service_request(
         "pricing_zone": pricing_zone,
     }
     try:
-        service_request = create_customer_request_and_order(db, payload, files=files)
+        service_request = create_customer_request_and_order(
+            db, payload, files=files, organization_id=marketplace_organization_id,
+            marketplace_link=marketplace_link,
+        )
         opportunity = create_opportunity_from_service_request(db, service_request)
         db.commit()
         try:

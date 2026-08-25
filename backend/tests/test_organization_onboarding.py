@@ -15,6 +15,7 @@ from app.models.commercial_subscription import CommercialSubscription
 from app.models.organization import Organization
 from app.models.organization_invitation import OrganizationInvitation
 from app.models.referral_attribution import ReferralAttribution
+from app.models.organization_marketplace_link import OrganizationMarketplaceLink
 from app.models.auth_security import AuthRateLimit, UserSession
 from app.models.auth_security import AuthAuditEvent
 from app.models.notification import EmailOutbox, WebPushSubscription
@@ -51,6 +52,7 @@ def onboarding_db():
             WebPushSubscription.__table__,
             EmailOutbox.__table__,
             UserLifecycleEvent.__table__,
+            OrganizationMarketplaceLink.__table__,
         ],
     )
     session = sessionmaker(bind=engine)()
@@ -133,6 +135,9 @@ def test_root_provisions_empty_tenant_with_gerente_invitation(onboarding_db):
     assert outbox.to_email == "ana@hotel.example"
     assert db.query(User).filter(User.organization_id == organization.id).count() == 0
     assert db.query(CommercialSubscription).filter_by(organization_id=organization.id).one().plan == "FREE"
+    link = db.query(OrganizationMarketplaceLink).filter_by(organization_id=organization.id, slug="default").one()
+    assert link.active is True
+    assert link.visibility_scope == "ORGANIZATION"
 
 
 def test_public_invitation_preview_exposes_only_onboarding_fields(onboarding_db):

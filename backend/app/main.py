@@ -16,7 +16,7 @@ from app.core.organization import get_or_create_default_organization
 from app.core.storage import UPLOADS_DIR
 from app.auth.routes import router as auth_router
 from app.database.connection import Base, SessionLocal, engine
-from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, service_order_tracking, deletion_request, notification, user_lifecycle, auth_security, organization, organization_invitation, referral_attribution, service_property, service_request, service_opportunity, commercial_subscription, commercial_upgrade_intent, user_commercial_profile, pricing_rate
+from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, service_order_tracking, deletion_request, notification, user_lifecycle, auth_security, organization, organization_invitation, referral_attribution, service_property, service_request, service_opportunity, organization_marketplace_link, commercial_subscription, commercial_upgrade_intent, user_commercial_profile, pricing_rate
 from app.models.lead import Lead
 from app.models.service_order import ServiceOrder
 from app.models.user import User
@@ -106,7 +106,7 @@ app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
     no_store_paths = {"/", "/sw.js", "/solicitar-servico"}
-    if request.url.path in no_store_paths or request.url.path.startswith(("/acompanhar/", "/seguimiento/")):
+    if request.url.path in no_store_paths or request.url.path.startswith(("/m/", "/acompanhar/", "/seguimiento/")):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
@@ -311,7 +311,8 @@ def create_database_tables():
             "properties",
             "service_requests",
             "service_request_media",
-            "service_opportunities",
+    "service_opportunities",
+            "organization_marketplace_links",
             "commercial_subscriptions",
             "plan_change_events",
             "commercial_upgrade_intents",
@@ -370,6 +371,7 @@ def create_database_tables():
         add_column_if_missing(db, "service_requests", "location_accuracy_m", "DOUBLE PRECISION")
         add_column_if_missing(db, "service_requests", "location_source", "VARCHAR(20)")
         add_column_if_missing(db, "service_requests", "location_confirmed_at", "TIMESTAMP")
+        add_column_if_missing(db, "service_requests", "marketplace_link_id", "INTEGER")
         add_column_if_missing(db, "service_orders", "location_lat", "DOUBLE PRECISION")
         add_column_if_missing(db, "service_orders", "location_lng", "DOUBLE PRECISION")
         add_column_if_missing(db, "service_orders", "location_accuracy_m", "DOUBLE PRECISION")
@@ -400,6 +402,7 @@ def create_database_tables():
         }
         for column_name, column_definition in opportunity_pricing_columns.items():
             add_column_if_missing(db, "service_opportunities", column_name, column_definition)
+        add_column_if_missing(db, "service_opportunities", "marketplace_link_id", "INTEGER")
         add_column_if_missing(db, "pricing_rates", "market_reference_min", "NUMERIC(12, 2)")
         add_column_if_missing(db, "pricing_rates", "market_reference_max", "NUMERIC(12, 2)")
         seed_default_pricing_rates(db)
@@ -491,6 +494,13 @@ def create_database_tables():
         db.execute(text("UPDATE users SET plan_max_brokers = 1 WHERE plan_max_brokers IS NULL"))
         db.execute(text("UPDATE users SET plan_max_leads = 100 WHERE plan_max_leads IS NULL"))
         db.execute(text("UPDATE users SET registered_at = CURRENT_TIMESTAMP WHERE registered_at IS NULL"))
+        db.commit()
+
+        # Backfill only the public entry point for existing active tenants.
+        # This does not create users, leads or any operational records.
+        from app.services.organization_marketplace_service import ensure_default_marketplace_link
+        for existing_organization in db.query(organization.Organization).filter(organization.Organization.status == "ACTIVE").all():
+            ensure_default_marketplace_link(db, existing_organization)
         db.commit()
 
         startup_log("Sincronizando propriedades e ordens de servico.")
@@ -675,6 +685,23 @@ def organization_invitation_page(token: str):
             },
         )
     return {"status": "invitation-page-not-found"}
+
+
+@app.get("/m/{organization_slug}", include_in_schema=False)
+@app.get("/m/{organization_slug}/{link_slug}", include_in_schema=False)
+def organization_marketplace_page(organization_slug: str, link_slug: str = "default"):
+    frontend_index = frontend_dir / "index.html"
+    if frontend_index.exists():
+        return FileResponse(
+            frontend_index,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+                "CDN-Cache-Control": "no-store",
+            },
+        )
+    return {"status": "marketplace-not-found"}
 
 
 @app.get("/acompanhar/{tracking_token}", include_in_schema=False)

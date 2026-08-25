@@ -14,6 +14,7 @@ from app.models.lead_document import LeadDocument
 from app.models.lead_event import LeadEvent
 from app.models.organization import Organization
 from app.models.service_property import ServiceProperty
+from app.models.organization_marketplace_link import OrganizationMarketplaceLink
 from app.models.service_request import ServiceRequest, ServiceRequestMedia
 from app.models.user import User
 from app.services.import_service import clean_text, normalize_email, normalize_phone
@@ -162,8 +163,11 @@ def create_customer_request_and_order(
     *,
     files: list[Any] | None = None,
     actor: User | None = None,
+    organization_id: int | None = None,
+    marketplace_link: OrganizationMarketplaceLink | None = None,
 ) -> ServiceRequest:
-    organization_id = actor.organization_id if actor and actor.organization_id else _default_organization_id(db)
+    organization_id = organization_id or (actor.organization_id if actor and actor.organization_id else _default_organization_id(db))
+    request_source = "MARKETPLACE_LINK" if marketplace_link else "CLIENT_PORTAL"
     location = normalize_service_location(
         payload.get("location_lat") or payload.get("latitude"),
         payload.get("location_lng") or payload.get("longitude"),
@@ -179,7 +183,7 @@ def create_customer_request_and_order(
             db.query(ServiceRequest)
             .filter(
                 ServiceRequest.organization_id == organization_id,
-                ServiceRequest.source == "CLIENT_PORTAL",
+                ServiceRequest.source == request_source,
                 ServiceRequest.idempotency_key == idempotency_key,
             )
             .first()
@@ -277,11 +281,12 @@ def create_customer_request_and_order(
 
     service_request = ServiceRequest(
         organization_id=organization_id,
+        marketplace_link_id=marketplace_link.id if marketplace_link else None,
         lead_id=lead.id,
         property_id=property_record.id,
         tracking_token=secrets.token_urlsafe(24),
         idempotency_key=idempotency_key,
-        source="CLIENT_PORTAL",
+        source=request_source,
         status="SALES_QUEUE",
         service_category=clean_text(payload.get("service_category")),
         problem_description=clean_text(payload.get("problem_description")),

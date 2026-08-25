@@ -13,6 +13,7 @@ class ServiceOpportunity(Base):
     id = Column(Integer, primary_key=True, index=True)
     public_id = Column(String, unique=True, nullable=False, index=True)
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    marketplace_link_id = Column(Integer, ForeignKey("organization_marketplace_links.id"), nullable=True, index=True)
     source = Column(String, nullable=False, default="MARKETPLACE", index=True)
     service_type = Column(String, nullable=False)
     segment = Column(String, nullable=True, index=True)

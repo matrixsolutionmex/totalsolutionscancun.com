@@ -42,6 +42,11 @@ from app.services.user_lifecycle_service import record_user_lifecycle_event, rev
 from app.services.entitlement_service import current_plan, ensure_user_commercial_profile, resolve_plan, set_user_entitlement_plan
 from app.services.legacy_workspace_migration_service import legacy_workspace_candidates, legacy_workspace_diagnostics, migrate_legacy_user_to_primary
 from app.services.organization_provisioning_service import provision_organization, provision_response
+from app.services.organization_marketplace_service import (
+    create_marketplace_link,
+    ensure_default_marketplace_link,
+    list_organization_marketplace_links,
+)
 from app.services.platform_admin_service import (
     get_platform_organization,
     get_platform_user,
@@ -93,6 +98,20 @@ class OrganizationProvisionPayload(BaseModel):
     manager_full_name: str
     manager_email: str
     manager_language: str = "es"
+
+
+class MarketplaceLinkCreateRequest(BaseModel):
+    organization_id: int | None = None
+    name: str
+    slug: str
+    service_category: str | None = None
+    active: bool = True
+
+
+class MarketplaceLinkUpdateRequest(BaseModel):
+    name: str | None = None
+    service_category: str | None = None
+    active: bool | None = None
 
 
 def require_reason(reason: str) -> str:
@@ -539,6 +558,97 @@ def admin_platform_organization(
     if not organization:
         raise HTTPException(status_code=404, detail="Organização não encontrada")
     return organization
+
+
+@router.get("/organization/marketplace-links")
+def admin_marketplace_links(
+    organization_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_user),
+):
+    if actor.role == "ROOT" and organization_id is None:
+        organizations = db.query(Organization).order_by(Organization.name).all()
+        for organization in organizations:
+            ensure_default_marketplace_link(db, organization)
+        db.commit()
+        return [link for organization in organizations for link in list_organization_marketplace_links(db, organization.id)]
+    target_id = organization_id if actor.role == "ROOT" else actor.organization_id
+    if not target_id or (actor.role != "ROOT" and target_id != actor.organization_id):
+        raise HTTPException(status_code=403, detail="Organização fora do escopo")
+    organization = db.query(Organization).filter(Organization.id == target_id).first()
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organização não encontrada")
+    ensure_default_marketplace_link(db, organization)
+    db.commit()
+    return list_organization_marketplace_links(db, target_id)
+
+
+@router.post("/organization/marketplace-links", status_code=201)
+def admin_create_marketplace_link(
+    payload: MarketplaceLinkCreateRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_user),
+):
+    if actor.role != "ROOT" and payload.organization_id not in (None, actor.organization_id):
+        raise HTTPException(status_code=403, detail="Organização fora do escopo")
+    organization_id = payload.organization_id if actor.role == "ROOT" else actor.organization_id
+    if not organization_id or (actor.role != "ROOT" and organization_id != actor.organization_id):
+        raise HTTPException(status_code=403, detail="Organização fora do escopo")
+    organization = db.query(Organization).filter(Organization.id == organization_id, Organization.status == "ACTIVE").first()
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organização não encontrada")
+    link = create_marketplace_link(
+        db, organization_id=organization.id, name=payload.name, slug=payload.slug,
+        service_category=payload.service_category, active=payload.active,
+    )
+    db.commit()
+    return {
+        "id": link.id,
+        "organization_id": link.organization_id,
+        "organization_name": organization.name,
+        "organization_slug": organization.slug,
+        "name": link.name,
+        "slug": link.slug,
+        "service_category": link.service_category,
+        "campaign_name": link.campaign_name,
+        "source_code": link.source_code,
+        "visibility_scope": link.visibility_scope,
+        "active": bool(link.active),
+    }
+
+
+@router.patch("/organization/marketplace-links/{link_id}")
+def admin_update_marketplace_link(
+    link_id: int,
+    payload: MarketplaceLinkUpdateRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_user),
+):
+    from app.models.organization_marketplace_link import OrganizationMarketplaceLink
+    query = db.query(OrganizationMarketplaceLink).filter(OrganizationMarketplaceLink.id == link_id)
+    if actor.role != "ROOT":
+        query = query.filter(OrganizationMarketplaceLink.organization_id == actor.organization_id)
+    link = query.first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Link Marketplace não encontrado")
+    if payload.name is not None:
+        link.name = payload.name.strip()[:160] or link.name
+        link.campaign_name = link.name
+    if payload.service_category is not None:
+        link.service_category = payload.service_category.strip()[:120] or None
+    if payload.active is not None:
+        link.active = payload.active
+    db.commit()
+    return {
+        "id": link.id,
+        "organization_id": link.organization_id,
+        "name": link.name,
+        "slug": link.slug,
+        "service_category": link.service_category,
+        "campaign_name": link.campaign_name,
+        "active": bool(link.active),
+        "visibility_scope": link.visibility_scope,
+    }
 
 
 @router.get("/platform/users")

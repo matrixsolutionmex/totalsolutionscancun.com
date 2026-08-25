@@ -16,6 +16,7 @@ from app.services.entitlement_service import PLANS, normalize_plan
 from app.services.organization_onboarding_service import create_invitation
 from app.services.notification_service import enqueue_invitation_email
 from app.services.localization_service import normalize_language
+from app.services.organization_marketplace_service import ensure_default_marketplace_link
 
 
 SUPPORTED_CURRENCIES = {"MXN", "USD", "BRL", "GBP", "CAD"}
@@ -109,6 +110,8 @@ def provision_organization(
         provider="MOCK",
         reference_price=PLANS[normalized_plan]["price"],
     ))
+    # Every tenant gets one stable, organization-scoped public entry point.
+    ensure_default_marketplace_link(db, organization)
     invitation, _raw_token = create_invitation(
         db,
         organization=organization,

@@ -11,6 +11,7 @@ class ServiceRequest(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
+    marketplace_link_id = Column(Integer, ForeignKey("organization_marketplace_links.id"), nullable=True, index=True)
     lead_id = Column(Integer, ForeignKey("leads.id"), nullable=False, index=True)
     property_id = Column(Integer, ForeignKey("properties.id"), nullable=True, index=True)
 
