@@ -535,6 +535,51 @@ def test_active_organization_subscription_precedes_free_user_profile(commercial_
     assert get_plan_limits(db, actor)["users"] == 5
 
 
+@pytest.mark.parametrize("organization_plan", ["PRO", "BUSINESS"])
+def test_broker_account_uses_organization_subscription_not_individual_profile(commercial_db, organization_plan):
+    db, _, broker, _ = commercial_db
+    db.add(CommercialSubscription(
+        organization_id=broker.organization_id,
+        plan=organization_plan,
+        status="ACTIVE",
+        provider="STRIPE",
+    ))
+    UserCommercialProfile.__table__.create(bind=db.get_bind(), checkfirst=True)
+    db.add(UserCommercialProfile(user_id=broker.id, plan="FREE", status="ACTIVE", source="ONBOARDING"))
+    db.commit()
+
+    assert account_snapshot(db, broker)["plan"] == organization_plan
+    assert account_snapshot(db, broker)["organization_plan"] == organization_plan
+    # Individual entitlement resolution remains intentionally unchanged.
+    assert resolve_plan(db, broker) == {"plan": "FREE", "source": "USER_COMMERCIAL_PROFILE"}
+
+
+def test_broker_account_without_subscription_keeps_safe_free_fallback(commercial_db):
+    db, _, broker, _ = commercial_db
+    UserCommercialProfile.__table__.create(bind=db.get_bind(), checkfirst=True)
+    db.add(UserCommercialProfile(user_id=broker.id, plan="FREE", status="ACTIVE", source="ONBOARDING"))
+    db.commit()
+
+    snapshot = account_snapshot(db, broker)
+
+    assert snapshot["plan"] == "FREE"
+    assert snapshot["organization_plan"] == "FREE"
+
+
+def test_manager_account_uses_organization_subscription(commercial_db):
+    db, _, broker, _ = commercial_db
+    broker.role = "GERENTE"
+    db.add(CommercialSubscription(
+        organization_id=broker.organization_id,
+        plan="BUSINESS",
+        status="ACTIVE",
+        provider="STRIPE",
+    ))
+    db.commit()
+
+    assert account_snapshot(db, broker)["plan"] == "BUSINESS"
+
+
 def test_manager_cannot_confirm_or_activate_commercial_intent(commercial_db):
     db, actor, _, _ = commercial_db
     intent = create_upgrade_intent(db, actor, "PRO")

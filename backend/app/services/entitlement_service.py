@@ -132,7 +132,9 @@ def account_snapshot(db: Session, actor: User) -> dict:
     subscription = subscription_for(db, actor, create=True)
     db.commit()
     db.refresh(subscription)
-    effective_plan = current_plan(db, actor)
+    # The commercial account is organization-scoped. Individual profiles are
+    # still resolved by resolve_plan() for functional entitlements.
+    effective_plan = normalize_plan(subscription.plan)
     plan = PLANS[effective_plan]
     history = db.query(PlanChangeEvent).filter(PlanChangeEvent.organization_id == actor.organization_id).order_by(PlanChangeEvent.created_at.desc()).limit(20).all()
     return {
