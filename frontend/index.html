@@ -5838,11 +5838,8 @@
       }
 
       const technician = cachedBrokers.find((user) => String(user.id) === String(selectedUserId));
-      const supervisor = technician?.manager_id
-        ? cachedBrokers.find((user) => String(user.id) === String(technician.manager_id))
-        : null;
       const name = technician?.full_name || technician?.username || `ID ${selectedUserId}`;
-      const supervisorName = supervisor?.full_name || supervisor?.username || "Sin supervisor";
+      const supervisorName = technician?.manager_display_name || "Sin supervisor";
       summary.innerHTML = `
         <div>👷 ${escapeHtml(name)}</div>
         <div>Supervisor: ${escapeHtml(supervisorName)}</div>

@@ -29,6 +29,7 @@ from app.auth.routes import (
     verify_email,
     verify_mfa,
 )
+from app.routes.user_routes import broker_summary
 from app.core import auth_security
 from app.core.auth_security import hash_value, hotp, totp_counter, verify_mfa_challenge_token
 from app.core.security import hash_password
@@ -56,6 +57,35 @@ from app.schemas.auth_schema import (
 )
 from app.main import migrate_legacy_email_verification
 from app.schemas.user_schema import UserAnonymizeRequest, UserArchiveRequest, UserLifecycleRequest, UserReactivateRequest
+
+
+def test_broker_summary_resolves_manager_name_with_tenant_isolation():
+    db = create_test_session()
+    org_a = Organization(name="Org A", slug="org-a", status="ACTIVE")
+    org_b = Organization(name="Org B", slug="org-b", status="ACTIVE")
+    db.add_all([org_a, org_b])
+    db.flush()
+
+    manager_a = User(username="manager-a", full_name="Gerente A", password_hash="hash", role="GERENTE", organization_id=org_a.id, status="ACTIVE", is_active=True)
+    manager_b = User(username="manager-b", full_name="Gerente B", password_hash="hash", role="GERENTE", organization_id=org_b.id, status="ACTIVE", is_active=True)
+    db.add_all([manager_a, manager_b])
+    db.flush()
+    technician_a = User(username="technician-a", full_name="Tecnico A", password_hash="hash", role="BROKER", organization_id=org_a.id, manager_id=manager_a.id, status="ACTIVE", is_active=True)
+    technician_b = User(username="technician-b", full_name="Tecnico B", password_hash="hash", role="BROKER", organization_id=org_b.id, manager_id=manager_b.id, status="ACTIVE", is_active=True)
+    unassigned = User(username="unassigned", full_name="Sin Gerente", password_hash="hash", role="BROKER", organization_id=org_a.id, status="ACTIVE", is_active=True)
+    db.add_all([technician_a, technician_b, unassigned])
+    db.commit()
+
+    summary = broker_summary(db, manager_a)
+    by_id = {row["id"]: row for row in summary}
+
+    assert set(by_id) == {technician_a.id}
+    assert by_id[technician_a.id]["manager_id"] == manager_a.id
+    assert by_id[technician_a.id]["manager_display_name"] == "Gerente A"
+    assert technician_b.id not in by_id
+    assert unassigned.id not in by_id
+
+    db.close()
 
 
 @pytest.fixture(autouse=True)

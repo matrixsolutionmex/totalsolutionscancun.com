@@ -145,6 +145,11 @@ def broker_summary(
         query = query.filter(User.role.in_(["GERENTE", "BROKER"]))
 
     brokers = query.order_by(User.role.desc(), User.id).all()
+    manager_ids = {broker.manager_id for broker in brokers if broker.manager_id is not None}
+    managers_by_id = {
+        manager.id: manager
+        for manager in db.query(User).filter(User.id.in_(manager_ids)).all()
+    } if manager_ids else {}
 
     summary = []
     for broker in brokers:
@@ -156,11 +161,16 @@ def broker_summary(
         )
         counts = {pipeline: count for pipeline, count in pipeline_counts}
         total = sum(counts.values())
+        manager = managers_by_id.get(broker.manager_id)
+        manager_display_name = None
+        if manager and manager.organization_id == broker.organization_id:
+            manager_display_name = manager.full_name or manager.username
 
         summary.append(
             {
                 "id": broker.id,
                 "manager_id": broker.manager_id,
+                "manager_display_name": manager_display_name,
                 "username": broker.username,
                 "email": broker.email,
                 "company": broker.company,
