@@ -3606,6 +3606,10 @@
             <span>Email</span>
             <input id="notificationEmailEnabled" type="checkbox">
           </label>
+          <label>
+            <span>Vendas de planos</span>
+            <input id="notificationFinancialPlanSales" type="checkbox">
+          </label>
           <button class="ghost" id="testNotificationSoundButton" type="button">Probar sonido</button>
         </div>
       </div>
@@ -5506,7 +5510,8 @@
       sound_enabled: true,
       sound_volume: 55,
       email_enabled: true,
-      browser_enabled: false
+      browser_enabled: false,
+      financial_plan_sales: true
     };
     let notificationTimer = null;
     let notificationInitialized = false;
@@ -7662,9 +7667,11 @@
       const soundEnabled = document.getElementById("notificationSoundEnabled");
       const volume = document.getElementById("notificationVolume");
       const emailEnabled = document.getElementById("notificationEmailEnabled");
+      const financialPlanSales = document.getElementById("notificationFinancialPlanSales");
       if (soundEnabled) soundEnabled.checked = Boolean(notificationPreferences.sound_enabled);
       if (volume) volume.value = String(notificationPreferences.sound_volume ?? 55);
       if (emailEnabled) emailEnabled.checked = Boolean(notificationPreferences.email_enabled);
+      if (financialPlanSales) financialPlanSales.checked = Boolean(notificationPreferences.financial_plan_sales);
     }
 
     async function loadNotificationPreferences() {
@@ -11383,6 +11390,9 @@
     });
     document.getElementById("notificationEmailEnabled").addEventListener("change", (event) => {
       saveNotificationPreferences({ email_enabled: event.target.checked }).catch(() => {});
+    });
+    document.getElementById("notificationFinancialPlanSales").addEventListener("change", (event) => {
+      saveNotificationPreferences({ financial_plan_sales: event.target.checked }).catch(() => {});
     });
     document.getElementById("enableBrowserNotificationsButton").addEventListener("click", () => {
       enableWebPushForDevice().catch((error) => alert(error.message || "No fue posible activar notificaciones."));

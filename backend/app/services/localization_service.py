@@ -45,6 +45,17 @@ NOTIFICATION_TRANSLATIONS = {
     },
 }
 
+PLAN_PAYMENT_TRANSLATIONS = {
+    "es": ("💰 Nuevo plan vendido", "{organization}\nPlan {plan}\n{amount}\nPago y confirmado por Stripe."),
+    "en": ("💰 New plan sold", "{organization}\nPlan {plan}\n{amount}\nPaid and confirmed by Stripe."),
+    "pt-BR": ("💰 Novo plano vendido", "{organization}\nPlano {plan}\n{amount}\nPagamento confirmado pela Stripe."),
+}
+
+
+def localized_plan_payment(language: str | None, *, organization: str, plan: str, amount: str) -> tuple[str, str]:
+    title, message = PLAN_PAYMENT_TRANSLATIONS.get(normalize_language(language), PLAN_PAYMENT_TRANSLATIONS["es"])
+    return title, message.format(organization=organization, plan=plan, amount=amount)
+
 
 def localized_notification(
     event_type: str,

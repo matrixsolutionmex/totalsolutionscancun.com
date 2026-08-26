@@ -35,6 +35,7 @@ class NotificationPreference(Base):
     email_enabled = Column(Boolean, default=True, nullable=False)
     browser_enabled = Column(Boolean, default=False, nullable=False)
     urgent_enabled = Column(Boolean, default=True, nullable=False)
+    financial_plan_sales = Column(Boolean, default=True, nullable=False)
     quiet_hours_start = Column(String, nullable=True)
     quiet_hours_end = Column(String, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)

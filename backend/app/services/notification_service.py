@@ -4,6 +4,8 @@ import logging
 import os
 import secrets
 import smtplib
+from collections import Counter
+from decimal import Decimal
 from urllib import error as urlerror
 from urllib import request as urlrequest
 from datetime import datetime, timedelta
@@ -18,6 +20,9 @@ from app.models.organization_invitation import OrganizationInvitation
 from app.models.organization import Organization
 from app.core.auth_security import hash_value
 from app.models.service_order import ServiceOrder
+from app.models.payment import Payment
+from app.models.commercial_upgrade_intent import CommercialUpgradeIntent
+from app.services.localization_service import localized_plan_payment, normalize_language
 from app.models.user import User
 
 try:
@@ -48,7 +53,11 @@ def get_or_create_preferences(db: Session, user_id: int) -> NotificationPreferen
         return preferences
 
     user = db.query(User).filter(User.id == user_id).first()
-    preferences = NotificationPreference(user_id=user_id, organization_id=user.organization_id if user else None)
+    preferences = NotificationPreference(
+        user_id=user_id,
+        organization_id=user.organization_id if user else None,
+        financial_plan_sales=True,
+    )
     db.add(preferences)
     db.flush()
     return preferences
@@ -260,6 +269,8 @@ def dispatch_web_push_for_notification_ids(db: Session, notification_ids: list[i
 
     for notification in notifications:
         preferences = get_or_create_preferences(db, notification.recipient_user_id)
+        if notification.type == "plan_payment_confirmed" and not preferences.financial_plan_sales:
+            continue
         if not preferences.browser_enabled:
             logger.info(
                 "Web Push ignorado por preferencia desativada: notification_id=%s user_id=%s",
@@ -269,6 +280,8 @@ def dispatch_web_push_for_notification_ids(db: Session, notification_ids: list[i
             continue
 
         payload = notification_push_payload(db, notification)
+        if notification.type == "plan_payment_confirmed":
+            payload = _aggregate_plan_sales_push_if_needed(db, notification, payload)
         subscriptions = (
             db.query(WebPushSubscription)
             .filter(
@@ -339,6 +352,112 @@ def dispatch_web_push_for_notification_ids(db: Session, notification_ids: list[i
             failed,
         )
     return delivered
+
+
+def _aggregate_plan_sales_push_if_needed(db: Session, notification: Notification, payload: dict) -> dict:
+    threshold = max(1, int(os.getenv("FINANCIAL_PLAN_SALES_AGGREGATION_THRESHOLD", "10")))
+    window_seconds = max(60, int(os.getenv("FINANCIAL_PLAN_SALES_AGGREGATION_WINDOW_SECONDS", "300")))
+    cutoff = datetime.utcnow() - timedelta(seconds=window_seconds)
+    recent = (
+        db.query(Notification)
+        .filter(
+            Notification.organization_id == notification.organization_id,
+            Notification.recipient_user_id == notification.recipient_user_id,
+            Notification.type == "plan_payment_confirmed",
+            Notification.created_at >= cutoff,
+        )
+        .order_by(Notification.id.asc())
+        .all()
+    )
+    if len(recent) < threshold:
+        return payload
+
+    amounts = []
+    plans = Counter()
+    currency = "MXN"
+    for item in recent:
+        try:
+            metadata = json.loads(item.metadata_json or "{}")
+            amounts.append(Decimal(str(metadata.get("amount") or "0")))
+            plans[str(metadata.get("plan") or "UNKNOWN")] += 1
+            currency = str(metadata.get("currency") or currency).upper()
+        except (ValueError, TypeError, json.JSONDecodeError):
+            continue
+    total = sum(amounts, Decimal("0.00"))
+    currency_label = "MX$" if currency.lower() == "mxn" else currency
+    plan_summary = ", ".join(f"{count} {plan}" for plan, count in sorted(plans.items()))
+    recipient = db.query(User).filter(User.id == notification.recipient_user_id).first()
+    language = normalize_language(recipient.idioma if recipient else None)
+    if language == "en":
+        title = f"💰 {len(recent)} plans sold in the last 5 minutes"
+        body = f"Total: {currency_label} {total:,.2f}\n{plan_summary}"
+    elif language == "pt-BR":
+        title = f"💰 {len(recent)} planos vendidos nos últimos 5 minutos"
+        body = f"Total: {currency_label} {total:,.2f}\n{plan_summary}"
+    else:
+        title = f"💰 {len(recent)} planes vendidos en los últimos 5 minutos"
+        body = f"Total: {currency_label} {total:,.2f}\n{plan_summary}"
+    return {**payload, "title": title, "body": body, "tag": f"ts-plan-sales-{notification.organization_id}-{notification.recipient_user_id}"}
+
+
+def notify_plan_payment_confirmed(db: Session, *, payment: Payment, intent: CommercialUpgradeIntent) -> list[int]:
+    """Create one idempotent financial notification per active ROOT recipient."""
+    organization = db.query(Organization).filter(Organization.id == payment.organization_id).first()
+    payer = db.query(User).filter(User.id == intent.user_id).first()
+    if not organization or not payer or payment.status != "PAID":
+        return []
+
+    recipients = (
+        db.query(User)
+        .filter(
+            User.organization_id == payment.organization_id,
+            User.role == "ROOT",
+            User.status == "ACTIVE",
+            User.is_active.is_(True),
+        )
+        .order_by(User.id.asc())
+        .all()
+    )
+    currency_label = "MX$" if payment.currency.lower() == "mxn" else payment.currency.upper()
+    amount = f"{currency_label} {payment.gross_amount:,.2f}"
+    notification_ids = []
+    for recipient in recipients:
+        title, message = localized_plan_payment(
+            recipient.idioma,
+            organization=organization.name,
+            plan=intent.requested_plan,
+            amount=amount,
+        )
+        notification = create_notification(
+            db,
+            recipient=recipient,
+            actor=payer,
+            type_="plan_payment_confirmed",
+            title=title,
+            message=message,
+            priority="HIGH",
+            action_url="/?section=plans&financial=payments",
+            idempotency_key=f"PLAN_PAYMENT_CONFIRMED:payment:{payment.id}:recipient:{recipient.id}",
+            metadata={
+                "event_type": "PLAN_PAYMENT_CONFIRMED",
+                "entity_type": "plan_payment",
+                "organization_id": payment.organization_id,
+                "organization_name": organization.name,
+                "user_id": payer.id,
+                "user_name": payer.full_name or payer.username,
+                "plan": intent.requested_plan,
+                "amount": str(payment.gross_amount),
+                "currency": payment.currency,
+                "payment_id": payment.id,
+                "commercial_upgrade_intent_id": intent.id,
+                "paid_at": payment.paid_at.isoformat() if payment.paid_at else None,
+                "deduplication_key": f"PLAN_PAYMENT_CONFIRMED:payment:{payment.id}",
+            },
+            allow_actor_recipient=True,
+        )
+        if notification:
+            notification_ids.append(notification.id)
+    return notification_ids
 
 
 def enqueue_notification_email(

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from decimal import Decimal
 
@@ -13,6 +14,7 @@ from app.models.auth_security import AuthAuditEvent
 from app.models.commercial_subscription import CommercialSubscription, PlanChangeEvent
 from app.models.commercial_upgrade_intent import CommercialUpgradeIntent
 from app.models.payment import Payment, PlatformLedgerEntry
+from app.models.notification import Notification, NotificationPreference, WebPushSubscription
 from app.models.lead import Lead
 from app.models.organization import Organization
 from app.models.organization_marketplace_link import OrganizationMarketplaceLink
@@ -40,6 +42,7 @@ from app.services.commercial_upgrade_service import (
     activate_upgrade_from_paid_payment,
 )
 from app.services.payment_service import handle_stripe_event, mark_payment_paid, record_cash_payment
+from app.services.notification_service import notification_push_payload
 from app.services.entitlement_service import account_snapshot, can_use_feature, current_plan, get_plan_limits, plan_catalog, resolve_plan
 from app.services.platform_admin_service import (
     get_platform_organization,
@@ -53,7 +56,7 @@ from app.services.platform_admin_service import (
 @pytest.fixture()
 def commercial_db():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(bind=engine, tables=[Organization.__table__, User.__table__, Lead.__table__, OrganizationMarketplaceLink.__table__, ServiceProperty.__table__, ServiceRequest.__table__, ServiceOrder.__table__, ServiceOpportunity.__table__, CommercialSubscription.__table__, PlanChangeEvent.__table__, CommercialUpgradeIntent.__table__, Payment.__table__, PlatformLedgerEntry.__table__, AuthAuditEvent.__table__])
+    Base.metadata.create_all(bind=engine, tables=[Organization.__table__, User.__table__, Lead.__table__, OrganizationMarketplaceLink.__table__, ServiceProperty.__table__, ServiceRequest.__table__, ServiceOrder.__table__, ServiceOpportunity.__table__, CommercialSubscription.__table__, PlanChangeEvent.__table__, CommercialUpgradeIntent.__table__, Payment.__table__, PlatformLedgerEntry.__table__, AuthAuditEvent.__table__, Notification.__table__, NotificationPreference.__table__, WebPushSubscription.__table__])
     db = sessionmaker(bind=engine)()
     db.execute(text("CREATE UNIQUE INDEX uq_commercial_active_intent_org ON commercial_upgrade_intents (organization_id) WHERE status IN ('CHECKOUT_OPENED', 'PAYMENT_PENDING', 'PAYMENT_CONFIRMED', 'PAID')"))
     org = Organization(name="Commercial Org", slug="commercial-org")
@@ -188,6 +191,110 @@ def test_duplicate_paid_stripe_event_activates_plan_once(commercial_db):
     assert db.query(PlanChangeEvent).filter_by(organization_id=actor.organization_id).count() == 1
 
 
+def test_paid_plan_creates_one_root_financial_notification(commercial_db):
+    db, actor, broker, _ = commercial_db
+    result = commercial_upgrade_intent(UpgradeIntentRequest(plan="BUSINESS"), None, db, actor)
+    payment = db.query(Payment).filter(Payment.id == result["payment_id"]).one()
+    event = {"type": "payment_intent.succeeded", "data": {"object": {"id": "pi_plan_1", "client_reference_id": str(payment.id)}}}
+
+    handle_stripe_event(db, event)
+    activate_upgrade_from_paid_payment(db, payment)
+
+    notifications = db.query(Notification).filter(Notification.type == "plan_payment_confirmed").all()
+    assert len(notifications) == 1
+    notification = notifications[0]
+    assert notification.recipient_user_id == actor.id
+    assert notification.organization_id == actor.organization_id
+    assert notification.priority == "HIGH"
+    assert "BUSINESS" in notification.message
+    metadata = json.loads(notification.metadata_json)
+    assert metadata["payment_id"] == payment.id
+    assert metadata["commercial_upgrade_intent_id"] == result["intent_id"]
+    assert broker.id not in {item.recipient_user_id for item in notifications}
+
+    # A repeated activation/webhook is idempotent at the notification layer.
+    activate_upgrade_from_paid_payment(db, payment)
+    assert db.query(Notification).filter(Notification.type == "plan_payment_confirmed").count() == 1
+
+
+def test_plan_payment_notification_is_tenant_scoped_and_push_payload_is_sanitized(commercial_db):
+    db, actor, _, other = commercial_db
+    other_root = User(username="other-root", full_name="Other Root", password_hash="hash", role="ROOT", organization_id=other.organization_id, status="ACTIVE", is_active=True)
+    db.add(other_root)
+    db.commit()
+    result = commercial_upgrade_intent(UpgradeIntentRequest(plan="PRO"), None, db, actor)
+    payment = db.query(Payment).filter(Payment.id == result["payment_id"]).one()
+    handle_stripe_event(db, {"type": "payment_intent.succeeded", "data": {"object": {"id": "pi_plan_2", "client_reference_id": str(payment.id)}}})
+    activate_upgrade_from_paid_payment(db, payment)
+
+    notification = db.query(Notification).filter(Notification.type == "plan_payment_confirmed").one()
+    payload = notification_push_payload(db, notification)
+    assert notification.recipient_user_id == actor.id
+    assert other_root.id != notification.recipient_user_id
+    assert payload["url"].endswith("/?section=plans&financial=payments")
+    assert "sk_test" not in json.dumps(payload)
+    assert "whsec" not in json.dumps(payload)
+
+
+def test_financial_push_preference_off_keeps_in_app_event_without_push(commercial_db, monkeypatch):
+    from app.services import notification_service
+
+    db, actor, _, _ = commercial_db
+    calls = []
+    monkeypatch.setenv("WEB_PUSH_VAPID_PUBLIC_KEY", "public-key")
+    monkeypatch.setenv("WEB_PUSH_VAPID_PRIVATE_KEY", "private-key")
+    monkeypatch.setenv("WEB_PUSH_CONTACT_EMAIL", "root@totalsolutions.test")
+    monkeypatch.setattr(notification_service, "webpush", lambda **kwargs: calls.append(kwargs))
+    preferences = NotificationPreference(user_id=actor.id, organization_id=actor.organization_id, browser_enabled=True, financial_plan_sales=False)
+    db.add(preferences)
+    db.add(WebPushSubscription(
+        organization_id=actor.organization_id,
+        user_id=actor.id,
+        endpoint="https://push.example.test/financial-off",
+        p256dh="client-public-key",
+        auth="client-auth-secret",
+        active=True,
+    ))
+    db.commit()
+    result = commercial_upgrade_intent(UpgradeIntentRequest(plan="PRO"), None, db, actor)
+    payment = db.query(Payment).filter(Payment.id == result["payment_id"]).one()
+    handle_stripe_event(db, {"type": "payment_intent.succeeded", "data": {"object": {"id": "pi_plan_3", "client_reference_id": str(payment.id)}}})
+    activate_upgrade_from_paid_payment(db, payment)
+
+    assert db.query(Notification).filter(Notification.type == "plan_payment_confirmed").count() == 1
+    assert calls == []
+
+
+def test_financial_push_can_aggregate_without_removing_individual_event(commercial_db, monkeypatch):
+    from app.services import notification_service
+
+    db, actor, _, _ = commercial_db
+    calls = []
+    monkeypatch.setenv("WEB_PUSH_VAPID_PUBLIC_KEY", "public-key")
+    monkeypatch.setenv("WEB_PUSH_VAPID_PRIVATE_KEY", "private-key")
+    monkeypatch.setenv("WEB_PUSH_CONTACT_EMAIL", "root@totalsolutions.test")
+    monkeypatch.setenv("FINANCIAL_PLAN_SALES_AGGREGATION_THRESHOLD", "1")
+    monkeypatch.setattr(notification_service, "webpush", lambda **kwargs: calls.append(kwargs))
+    db.add(NotificationPreference(user_id=actor.id, organization_id=actor.organization_id, browser_enabled=True))
+    db.add(WebPushSubscription(
+        organization_id=actor.organization_id,
+        user_id=actor.id,
+        endpoint="https://push.example.test/financial-aggregate",
+        p256dh="client-public-key",
+        auth="client-auth-secret",
+        active=True,
+    ))
+    db.commit()
+    result = commercial_upgrade_intent(UpgradeIntentRequest(plan="PRO"), None, db, actor)
+    payment = db.query(Payment).filter(Payment.id == result["payment_id"]).one()
+    handle_stripe_event(db, {"type": "payment_intent.succeeded", "data": {"object": {"id": "pi_plan_4", "client_reference_id": str(payment.id)}}})
+    activate_upgrade_from_paid_payment(db, payment)
+
+    assert db.query(Notification).filter(Notification.type == "plan_payment_confirmed").count() == 1
+    assert len(calls) == 1
+    assert "planos vendidos" in json.loads(calls[0]["data"])["title"]
+
+
 def test_unpaid_checkout_event_does_not_activate_plan(commercial_db):
     db, actor, _, _ = commercial_db
     result = commercial_upgrade_intent(UpgradeIntentRequest(plan="PRO"), None, db, actor)
@@ -197,6 +304,7 @@ def test_unpaid_checkout_event_does_not_activate_plan(commercial_db):
     db.commit()
     assert payment.status == "CHECKOUT_CREATED"
     assert db.query(CommercialSubscription).filter_by(organization_id=actor.organization_id).count() == 0
+    assert db.query(Notification).filter(Notification.type == "plan_payment_confirmed").count() == 0
 
 
 def test_public_visit_checkout_uses_order_amount_and_is_idempotent(commercial_db, monkeypatch):

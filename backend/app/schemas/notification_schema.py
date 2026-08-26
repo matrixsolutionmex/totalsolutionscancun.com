@@ -27,6 +27,7 @@ class NotificationPreferenceResponse(BaseModel):
     email_enabled: bool = True
     browser_enabled: bool = False
     urgent_enabled: bool = True
+    financial_plan_sales: bool = True
     quiet_hours_start: str | None = None
     quiet_hours_end: str | None = None
 
@@ -38,6 +39,7 @@ class NotificationPreferenceUpdate(BaseModel):
     email_enabled: bool | None = None
     browser_enabled: bool | None = None
     urgent_enabled: bool | None = None
+    financial_plan_sales: bool | None = None
     quiet_hours_start: str | None = None
     quiet_hours_end: str | None = None
 

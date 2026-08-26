@@ -264,7 +264,10 @@ def activate_upgrade_from_paid_payment(db: Session, payment: Payment, *, request
     intent.updated_at = datetime.utcnow()
     _audit(db, request=request, event_type="UPGRADE_PAYMENT_CONFIRMED", actor=user, intent=intent, detail={"plan": intent.requested_plan, "provider": "STRIPE"})
     _audit(db, request=request, event_type="UPGRADE_PLAN_ACTIVATED", actor=user, intent=intent, detail={"plan": intent.requested_plan, "provider": "STRIPE"})
+    from app.services.notification_service import dispatch_web_push_for_notification_ids, notify_plan_payment_confirmed
+    notification_ids = notify_plan_payment_confirmed(db, payment=payment, intent=intent)
     db.commit()
+    dispatch_web_push_for_notification_ids(db, notification_ids)
     db.refresh(intent)
     return intent, subscription
 

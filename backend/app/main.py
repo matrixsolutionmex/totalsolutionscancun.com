@@ -454,6 +454,7 @@ def create_database_tables():
         add_column_if_missing(db, "email_outbox", "provider", "VARCHAR")
         add_column_if_missing(db, "email_outbox", "provider_message_id", "VARCHAR")
         add_column_if_missing(db, "email_outbox", "body_html", "TEXT")
+        add_column_if_missing(db, "notification_preferences", "financial_plan_sales", "BOOLEAN DEFAULT TRUE")
         if db.bind.dialect.name == "postgresql":
             try:
                 db.execute(text("ALTER TABLE email_outbox ALTER COLUMN recipient_user_id DROP NOT NULL"))
