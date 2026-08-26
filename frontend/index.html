@@ -6216,7 +6216,7 @@
           return;
         }
         window.open(data.checkout_url, "_blank", "noopener,noreferrer");
-        addPabloV2Message(`Solicitei o ${data.plan}. O pagamento ainda precisa ser confirmado por um administrador.`, "ai");
+        addPabloV2Message(`Checkout do ${data.plan} aberto. A ativação ocorrerá somente após a confirmação segura do provedor.`, "ai");
       } catch (error) {
         addPabloV2Message(error.message || "Não foi possível preparar o checkout.", "ai");
       } finally {
@@ -6281,7 +6281,7 @@
       const action = button.dataset.commercialIntentAction;
       button.disabled = true;
       try {
-        if (action === "confirm-payment" && !confirm("Confirme que o pagamento foi verificado no Clip antes de continuar.")) return;
+        if (action === "confirm-payment" && !confirm("Confirme que o pagamento foi verificado no provedor antes de continuar.")) return;
         const isRoot = currentUser?.role === "ROOT";
         const endpoint = isRoot
           ? `${API_BASE}/admin/commercial/intents/${intentId}/${action}`

@@ -1,4 +1,5 @@
 from pathlib import Path
+from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
@@ -11,8 +12,10 @@ from app.database.connection import Base
 from app.models.auth_security import AuthAuditEvent
 from app.models.commercial_subscription import CommercialSubscription, PlanChangeEvent
 from app.models.commercial_upgrade_intent import CommercialUpgradeIntent
+from app.models.payment import Payment, PlatformLedgerEntry
 from app.models.lead import Lead
 from app.models.organization import Organization
+from app.models.organization_marketplace_link import OrganizationMarketplaceLink
 from app.models.service_opportunity import ServiceOpportunity
 from app.models.service_order import ServiceOrder
 from app.models.service_request import ServiceRequest
@@ -22,6 +25,7 @@ from app.models.user import User
 from app.models.user_commercial_profile import UserCommercialProfile
 from app.routes.organization_routes import available_organizations
 from app.routes.commercial_routes import MockPlanChangeRequest, UpgradeIntentRequest, commercial_mock_plan, commercial_upgrade_intent
+from app.routes.payment_routes import PublicStripeCheckoutRequest, create_public_visit_checkout
 from app.auth.jwt_handler import require_root_user
 from app.services.commercial_upgrade_service import (
     activate_upgrade_intent,
@@ -33,7 +37,9 @@ from app.services.commercial_upgrade_service import (
     list_global_upgrade_intents,
     mark_payment_confirmed,
     normalize_existing_upgrade_intents,
+    activate_upgrade_from_paid_payment,
 )
+from app.services.payment_service import handle_stripe_event, mark_payment_paid, record_cash_payment
 from app.services.entitlement_service import account_snapshot, can_use_feature, current_plan, get_plan_limits, plan_catalog, resolve_plan
 from app.services.platform_admin_service import (
     get_platform_organization,
@@ -47,7 +53,7 @@ from app.services.platform_admin_service import (
 @pytest.fixture()
 def commercial_db():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(bind=engine, tables=[Organization.__table__, User.__table__, Lead.__table__, ServiceProperty.__table__, ServiceRequest.__table__, ServiceOrder.__table__, ServiceOpportunity.__table__, CommercialSubscription.__table__, PlanChangeEvent.__table__, CommercialUpgradeIntent.__table__, AuthAuditEvent.__table__])
+    Base.metadata.create_all(bind=engine, tables=[Organization.__table__, User.__table__, Lead.__table__, OrganizationMarketplaceLink.__table__, ServiceProperty.__table__, ServiceRequest.__table__, ServiceOrder.__table__, ServiceOpportunity.__table__, CommercialSubscription.__table__, PlanChangeEvent.__table__, CommercialUpgradeIntent.__table__, Payment.__table__, PlatformLedgerEntry.__table__, AuthAuditEvent.__table__])
     db = sessionmaker(bind=engine)()
     db.execute(text("CREATE UNIQUE INDEX uq_commercial_active_intent_org ON commercial_upgrade_intents (organization_id) WHERE status IN ('CHECKOUT_OPENED', 'PAYMENT_PENDING', 'PAYMENT_CONFIRMED', 'PAID')"))
     org = Organization(name="Commercial Org", slug="commercial-org")
@@ -135,6 +141,8 @@ def test_pro_upgrade_intent_uses_catalog_price_and_does_not_activate(commercial_
         "plan": "PRO",
         "provider": "CLIP",
         "checkout_url": "https://pago.clip.mx/v3/5210f95c-eb87-4c85-bdd6-d4d84c7255d0",
+        "payment_id": db.query(Payment).filter(Payment.upgrade_intent_id == intent.id).one().id,
+        "payment_status": "CHECKOUT_CREATED",
         "status": "CHECKOUT_OPENED",
         "reused": False,
     }
@@ -153,6 +161,81 @@ def test_business_upgrade_intent_ignores_untrusted_price_and_scope(commercial_db
     assert float(intent.reference_price_mxn) == 1999.0
     assert intent.organization_id == other.organization_id
     assert intent.user_id == other.id
+
+
+def test_plan_payment_is_linked_to_intent_and_does_not_activate(commercial_db):
+    db, actor, _, _ = commercial_db
+    result = commercial_upgrade_intent(UpgradeIntentRequest(plan="PRO"), None, db, actor)
+    payment = db.query(Payment).filter(Payment.id == result["payment_id"]).one()
+    assert payment.payment_type == "SUBSCRIPTION_PLAN"
+    assert payment.upgrade_intent_id == result["intent_id"]
+    assert payment.status == "CHECKOUT_CREATED"
+    assert db.query(CommercialSubscription).filter_by(organization_id=actor.organization_id).count() == 0
+
+
+def test_duplicate_paid_stripe_event_activates_plan_once(commercial_db):
+    db, actor, _, _ = commercial_db
+    result = commercial_upgrade_intent(UpgradeIntentRequest(plan="BUSINESS"), None, db, actor)
+    payment = db.query(Payment).filter(Payment.id == result["payment_id"]).one()
+    event = {"type": "checkout.session.completed", "data": {"object": {"id": "cs_test_1", "client_reference_id": str(payment.id), "payment_status": "paid", "payment_intent": "pi_test_1"}}}
+    handle_stripe_event(db, event)
+    db.commit()
+    activate_upgrade_from_paid_payment(db, payment)
+    handle_stripe_event(db, event)
+    db.commit()
+    assert payment.status == "PAID"
+    assert db.query(CommercialSubscription).filter_by(organization_id=actor.organization_id, plan="BUSINESS").count() == 1
+    assert db.query(PlanChangeEvent).filter_by(organization_id=actor.organization_id).count() == 1
+
+
+def test_unpaid_checkout_event_does_not_activate_plan(commercial_db):
+    db, actor, _, _ = commercial_db
+    result = commercial_upgrade_intent(UpgradeIntentRequest(plan="PRO"), None, db, actor)
+    payment = db.query(Payment).filter(Payment.id == result["payment_id"]).one()
+    event = {"type": "checkout.session.completed", "data": {"object": {"id": "cs_unpaid", "client_reference_id": str(payment.id), "payment_status": "unpaid"}}}
+    handle_stripe_event(db, event)
+    db.commit()
+    assert payment.status == "CHECKOUT_CREATED"
+    assert db.query(CommercialSubscription).filter_by(organization_id=actor.organization_id).count() == 0
+
+
+def test_public_visit_checkout_uses_order_amount_and_is_idempotent(commercial_db, monkeypatch):
+    db, actor, _, _ = commercial_db
+    lead = Lead(organization_id=actor.organization_id, nome="Cliente", tipo_servico="HIDRAULICA")
+    db.add(lead)
+    db.flush()
+    request = ServiceRequest(
+        organization_id=actor.organization_id, lead_id=lead.id, tracking_token="public-payment-token",
+        service_category="HIDRAULICA", requester_name="Cliente",
+    )
+    db.add(request)
+    db.flush()
+    order = ServiceOrder(
+        organization_id=actor.organization_id, lead_id=lead.id, service_request_id=request.id,
+        visit_calculated_price=Decimal("450.00"), status="ABERTA",
+    )
+    db.add(order)
+    db.commit()
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sandbox-test-secret")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.test")
+    monkeypatch.setattr(
+        "app.services.payment_service._stripe_request",
+        lambda *args, **kwargs: {"id": "cs_visit_1", "url": "https://checkout.stripe.test/cs_visit_1"},
+    )
+
+    result = create_public_visit_checkout(
+        "public-payment-token", PublicStripeCheckoutRequest(), "visit-key-1", db,
+    )
+    repeated = create_public_visit_checkout(
+        "public-payment-token", PublicStripeCheckoutRequest(), "visit-key-1", db,
+    )
+    payment = db.query(Payment).filter(Payment.id == result["payment_id"]).one()
+    assert result == repeated
+    assert payment.payment_type == "TECHNICAL_VISIT"
+    assert payment.gross_amount == Decimal("450.00")
+    assert payment.status == "CHECKOUT_CREATED"
+    assert payment.paid_at is None
+    assert db.query(Payment).filter(Payment.service_order_id == order.id).count() == 1
 
 
 def test_broker_cannot_confirm_or_activate_own_upgrade_intent(commercial_db):

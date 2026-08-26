@@ -152,18 +152,19 @@ def record_plan_change(
     reason: str | None = None,
     *,
     organization_id: int | None = None,
+    provider: str = "MOCK",
 ) -> CommercialSubscription:
     new_plan = normalize_plan(new_plan)
     target_organization_id = organization_id or actor.organization_id
     subscription = subscription_for_organization(db, target_organization_id, create=True)
     previous = normalize_plan(subscription.plan)
     subscription.plan = new_plan
-    subscription.status = "LAUNCH_ACCESS"
-    subscription.provider = "MOCK"
+    subscription.status = "ACTIVE" if provider.upper() == "STRIPE" else "LAUNCH_ACCESS"
+    subscription.provider = provider.upper()
     subscription.reference_price = PLANS[new_plan]["price"]
     subscription.updated_at = datetime.utcnow()
     db.add(PlanChangeEvent(organization_id=target_organization_id, actor_user_id=actor.id, previous_plan=previous,
-                           new_plan=new_plan, provider="MOCK", reason=reason or "mock_billing"))
+                           new_plan=new_plan, provider=provider.upper(), reason=reason or "mock_billing"))
     organization = db.query(Organization).filter(Organization.id == target_organization_id).first()
     if organization:
         organization.plan = new_plan

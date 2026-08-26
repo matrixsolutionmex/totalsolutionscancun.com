@@ -2,6 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, Numeric, String
+from sqlalchemy.orm import relationship
 
 from app.database.connection import Base
 
@@ -24,3 +25,5 @@ class CommercialUpgradeIntent(Base):
     payment_confirmed_at = Column(DateTime, nullable=True)
     payment_confirmed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     confirmation_source = Column(String(40), nullable=True)
+
+    payment = relationship("Payment", back_populates="upgrade_intent", uselist=False)

@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+import os
 
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
@@ -8,11 +9,13 @@ from sqlalchemy.orm import Session
 from app.core.auth_security import audit_auth_event
 from app.models.commercial_upgrade_intent import CommercialUpgradeIntent
 from app.models.commercial_subscription import CommercialSubscription, PlanChangeEvent
+from app.models.payment import Payment
 from app.models.auth_security import AuthAuditEvent
 from app.models.organization import Organization
 from app.models.user import User
 from app.services.billing_provider import MockBillingProvider
-from app.services.entitlement_service import PLANS, current_plan, normalize_plan, resolve_plan, subscription_for_organization
+from app.services.entitlement_service import PLANS, current_plan, normalize_plan, record_plan_change, resolve_plan, subscription_for_organization
+from app.services.payment_service import create_payment, create_stripe_checkout, stripe_is_configured
 
 
 CHECKOUT_URLS = {
@@ -70,9 +73,50 @@ def serialize_upgrade_intent(intent: CommercialUpgradeIntent | None) -> dict | N
         "status": "PAYMENT_CONFIRMED" if intent.status == "PAID" else intent.status,
         "provider": intent.provider,
         "reference_price_mxn": float(intent.reference_price_mxn),
-        "checkout_url": checkout_url_for(intent.requested_plan) if intent.status in {"CHECKOUT_OPENED", "PAYMENT_PENDING"} else None,
+        "checkout_url": _checkout_url_for_intent(intent),
         "created_at": intent.created_at.isoformat(),
     }
+
+
+def _checkout_url_for_intent(intent: CommercialUpgradeIntent) -> str | None:
+    if intent.status not in {"CHECKOUT_OPENED", "PAYMENT_PENDING"}:
+        return None
+    return checkout_url_for(intent.requested_plan)
+
+
+def _ensure_plan_payment(db: Session, actor: User, intent: CommercialUpgradeIntent, *, request=None) -> Payment:
+    payment = db.query(Payment).filter(Payment.upgrade_intent_id == intent.id).first()
+    if payment:
+        return payment
+    payment = create_payment(
+        db,
+        organization_id=actor.organization_id,
+        payment_type="SUBSCRIPTION_PLAN",
+        payment_method="STRIPE_CARD" if stripe_is_configured() else "CLIP_REDIRECT",
+        amount=Decimal(str(PLANS[intent.requested_plan]["monthly_reference"])),
+        upgrade_intent_id=intent.id,
+        idempotency_key=f"upgrade-intent:{intent.id}",
+    )
+    if stripe_is_configured():
+        price_id = os.getenv(f"STRIPE_PRICE_{intent.requested_plan}", "").strip() or None
+        public_base = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+        payment = create_stripe_checkout(
+            db,
+            payment,
+            success_url=f"{public_base}/?payment=success&payment_id={payment.id}",
+            cancel_url=f"{public_base}/?payment=cancelled&payment_id={payment.id}",
+            description=f"Total Solutions {intent.requested_plan}",
+            stripe_price_id=price_id,
+            recurring=bool(price_id),
+        )
+        intent.provider = "STRIPE"
+    else:
+        payment.provider = "CLIP"
+        payment.checkout_url = checkout_url_for(intent.requested_plan)
+        payment.status = "CHECKOUT_CREATED"
+        intent.provider = "CLIP"
+    db.flush()
+    return payment
 
 
 def _audit(db: Session, *, request, event_type: str, actor: User, intent: CommercialUpgradeIntent, detail: dict):
@@ -122,11 +166,14 @@ def create_or_reuse_upgrade_intent(db: Session, actor: User, plan: str, *, sourc
             if active.requested_plan == requested_plan or active.status in CONFIRMED_INTENT_STATUSES:
                 event = "UPGRADE_PAYMENT_ALREADY_CONFIRMED" if active.status in CONFIRMED_INTENT_STATUSES else "UPGRADE_INTENT_REUSED"
                 _audit(db, request=request, event_type=event, actor=actor, intent=active, detail={"requested_plan": requested_plan})
+                if active.status in {"CHECKOUT_OPENED", "PAYMENT_PENDING"}:
+                    _ensure_plan_payment(db, actor, active, request=request)
                 db.commit()
                 db.refresh(active)
                 return active, True
             _replace_active_intent(db, actor, active, requested_plan, request=request)
         intent = _new_intent(db, actor, requested_plan, source=source, request=request)
+        _ensure_plan_payment(db, actor, intent, request=request)
         db.commit()
         db.refresh(intent)
         return intent, False
@@ -186,6 +233,37 @@ def activate_upgrade_intent(db: Session, actor: User, intent_id: int, *, request
     intent.activated_by_user_id = actor.id
     intent.updated_at = datetime.utcnow()
     _audit(db, request=request, event_type="UPGRADE_PLAN_ACTIVATED", actor=actor, intent=intent, detail={"plan": intent.requested_plan})
+    db.commit()
+    db.refresh(intent)
+    return intent, subscription
+
+
+def activate_upgrade_from_paid_payment(db: Session, payment: Payment, *, request=None):
+    """Apply a paid Stripe plan payment exactly once."""
+    intent = db.query(CommercialUpgradeIntent).filter(CommercialUpgradeIntent.id == payment.upgrade_intent_id).with_for_update().first()
+    if not intent:
+        raise HTTPException(status_code=422, detail="Pagamento de plano sem intent associado")
+    if intent.status == "ACTIVATED":
+        return intent, subscription_for_organization(db, intent.organization_id)
+    user = db.query(User).filter(User.id == intent.user_id).first()
+    if not user:
+        raise HTTPException(status_code=422, detail="Pagamento de plano sem usuario associado")
+    subscription = record_plan_change(
+        db,
+        user,
+        intent.requested_plan,
+        reason=f"upgrade_intent:{intent.id}",
+        organization_id=intent.organization_id,
+        provider="STRIPE",
+    )
+    intent.status = "ACTIVATED"
+    intent.payment_confirmed_at = intent.payment_confirmed_at or datetime.utcnow()
+    intent.confirmation_source = "STRIPE_WEBHOOK"
+    intent.activated_at = datetime.utcnow()
+    intent.activated_by_user_id = None
+    intent.updated_at = datetime.utcnow()
+    _audit(db, request=request, event_type="UPGRADE_PAYMENT_CONFIRMED", actor=user, intent=intent, detail={"plan": intent.requested_plan, "provider": "STRIPE"})
+    _audit(db, request=request, event_type="UPGRADE_PLAN_ACTIVATED", actor=user, intent=intent, detail={"plan": intent.requested_plan, "provider": "STRIPE"})
     db.commit()
     db.refresh(intent)
     return intent, subscription
