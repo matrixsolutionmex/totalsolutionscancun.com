@@ -30,6 +30,8 @@ from app.auth.routes import (
     verify_mfa,
 )
 from app.routes.user_routes import broker_summary
+from app.core.organization import create_independent_organization
+from app.services.organization_onboarding_service import create_invitation
 from app.core import auth_security
 from app.core.auth_security import hash_value, hotp, totp_counter, verify_mfa_challenge_token
 from app.core.security import hash_password
@@ -309,8 +311,10 @@ def test_public_registration_requires_verification_and_root_approval(monkeypatch
     assert 'href="https://totalsolutionscancun.com/auth/verify-email?token=' in html_body
     token = token_from_last_verification_email()
     pending = session.query(User).filter(User.email == "broker@example.com").one()
-    primary = session.query(Organization).filter(Organization.slug == "total-solutions-cancun").one()
-    assert pending.organization_id == primary.id
+    organization = session.query(Organization).filter(Organization.id == pending.organization_id).one()
+    assert organization.slug != "total-solutions-cancun"
+    assert organization.is_platform_owner is not True
+    assert organization.plan == "FREE"
     assert pending.plan == "FREE"
     assert session.query(Organization).count() == 1
     assert pending.status == "PENDING_EMAIL"
@@ -363,6 +367,79 @@ def test_public_registration_requires_verification_and_root_approval(monkeypatch
 
     session.close()
 
+
+def test_public_signup_is_independent_and_invitation_keeps_tenant_and_manager(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    configure_smtp_capture(monkeypatch)
+    db = create_test_session()
+    root = User(
+        username="onboarding-root",
+        email="root@onboarding.test",
+        full_name="Root",
+        password_hash="hash",
+        role="ROOT",
+        status="ACTIVE",
+        is_active=True,
+        email_verified=True,
+    )
+    db.add(root)
+    db.flush()
+    invited_org = create_independent_organization(db, name="Invited Company", pending_onboarding=False)
+    manager = User(
+        username="invited-manager",
+        email="manager@tenant.example",
+        full_name="Manager",
+        password_hash="hash",
+        role="GERENTE",
+        organization_id=invited_org.id,
+        status="ACTIVE",
+        is_active=True,
+        email_verified=True,
+    )
+    db.add(manager)
+    db.flush()
+    _, raw_token = create_invitation(
+        db,
+        organization=invited_org,
+        invited_by=root,
+        invited_email="invited@tenant.example",
+        role="BROKER",
+        supervisor_user_id=manager.id,
+    )
+    db.commit()
+
+    register(
+        RegisterRequest(
+            full_name="Independent Signup",
+            email="independent@tenant.example",
+            password="strong-password",
+            company="Independent Company",
+        ),
+        make_request("/auth/register"),
+        db,
+    )
+    independent_user = db.query(User).filter(User.email == "independent@tenant.example").one()
+    independent_org = db.query(Organization).filter(Organization.id == independent_user.organization_id).one()
+    assert independent_org.id != invited_org.id
+    assert independent_org.plan == "FREE"
+    assert independent_org.is_platform_owner is not True
+    assert independent_user.role == "BROKER"
+
+    register(
+        RegisterRequest(
+            full_name="Invited Broker",
+            email="invited@tenant.example",
+            password="strong-password",
+            invite_token=raw_token,
+        ),
+        make_request("/auth/register"),
+        db,
+    )
+    invited_user = db.query(User).filter(User.email == "invited@tenant.example").one()
+    assert invited_user.organization_id == invited_org.id
+    assert invited_user.role == "BROKER"
+    assert invited_user.manager_id == manager.id
+    db.close()
 
 def test_email_verification_resend_invalidates_old_token_and_expiration(monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
@@ -1476,6 +1553,9 @@ def test_google_login_never_auto_links_existing_email(monkeypatch):
     pending = session.query(User).filter(User.email == "new-google@example.com").one()
     assert pending.status == "PENDING_ADMIN"
     assert pending.is_active is False
+    organization = session.query(Organization).filter(Organization.id == pending.organization_id).one()
+    assert organization.plan == "FREE"
+    assert organization.is_platform_owner is not True
     assert session.query(UserIdentity).filter_by(user_id=pending.id, provider="google").count() == 1
     assert existing.status == "ACTIVE"
     session.close()

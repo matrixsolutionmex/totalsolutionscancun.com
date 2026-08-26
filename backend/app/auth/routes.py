@@ -556,11 +556,12 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
         if not organization:
             raise HTTPException(status_code=404, detail="Organização do convite não encontrada")
     else:
-        try:
-            organization = get_platform_primary_organization(db)
-        except RuntimeError as exc:
-            logger.error("Cadastro recusado: organização principal não configurada: %s", exc)
-            raise HTTPException(status_code=503, detail="Cadastro temporariamente indisponível") from exc
+        organization = create_independent_organization(
+            db,
+            name=payload.company or payload.full_name,
+            country="MX",
+            pending_onboarding=True,
+        )
 
     user = User(
         organization_id=organization.id,
@@ -1069,11 +1070,12 @@ def google_login(payload: GoogleLoginRequest, request: Request, response: Respon
             audit_auth_event(db, request=request, event_type="GOOGLE_LOGIN", outcome="LINK_REQUIRED", user=existing_email_user)
             db.commit()
             raise HTTPException(status_code=409, detail="Conta Google precisa ser vinculada após login seguro na conta atual.")
-        try:
-            organization = get_platform_primary_organization(db)
-        except RuntimeError as exc:
-            logger.error("Cadastro Google recusado: organização principal não configurada: %s", exc)
-            raise HTTPException(status_code=503, detail="Cadastro temporariamente indisponível") from exc
+        organization = create_independent_organization(
+            db,
+            name=claims.get("name") or provider_email,
+            country="MX",
+            pending_onboarding=True,
+        )
         user = User(
             organization_id=organization.id,
             username=provider_email,

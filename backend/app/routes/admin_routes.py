@@ -206,9 +206,8 @@ def approve_pending_user(db: Session, user: User, actor: User, payload: UserAppr
     standard_signup = user.onboarding_source == "STANDARD"
     if standard_signup:
         target_organization = db.query(Organization).filter(Organization.id == user.organization_id).first()
-        primary = get_platform_primary_organization(db)
-        if not target_organization or target_organization.id != primary.id:
-            raise HTTPException(status_code=409, detail="Cadastro padrão está fora da organização principal")
+        if not target_organization:
+            raise HTTPException(status_code=409, detail="Cadastro padrão está sem organização válida")
         organization_mode = "STANDARD"
     elif organization_mode == "EXISTING":
         if payload.organization_id is None:

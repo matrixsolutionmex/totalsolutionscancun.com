@@ -574,7 +574,7 @@ def test_global_assignment_marks_empty_provisional_workspace_without_deleting_it
     assert db.query(Organization).filter_by(id=provisional.id).count() == 1
 
 
-def test_standard_signup_approval_stays_in_primary_and_without_supervisor(onboarding_db):
+def test_standard_signup_approval_keeps_existing_primary_flow_unchanged(onboarding_db):
     db = onboarding_db
     primary = Organization(name="Total Solutions", slug="total-solutions-cancun", is_platform_owner=True)
     db.add(primary)
