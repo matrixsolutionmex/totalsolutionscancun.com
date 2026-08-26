@@ -22,6 +22,7 @@ from app.services.service_order_tracking_service import (
     admin_stop_all_tracking,
     admin_stop_tracking,
     diagnose_tracking_for_root,
+    diagnose_tracking_for_root_by_number,
     get_tracking_for_actor,
     heartbeat_tracking,
     record_tracking_diagnostic,
@@ -187,6 +188,8 @@ def test_root_tracking_diagnostic_matches_public_projection_and_detects_inconsis
     db.expire_all()
 
     diagnostic = diagnose_tracking_for_root(db, order.id, root)
+    diagnostic_by_number = diagnose_tracking_for_root_by_number(db, order.order_number, root)
+    assert diagnostic_by_number["service_order"]["id"] == order.id
     assert diagnostic["canonical"]["session_state"] == "ACTIVE"
     assert diagnostic["tracking"]["tracking_active"] is True
     assert diagnostic["tracking_record_count"] == 1

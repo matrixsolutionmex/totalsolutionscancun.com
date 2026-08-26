@@ -545,3 +545,18 @@ def diagnose_tracking_for_root(db: Session, order_id: int, actor: User) -> dict:
         "tracking_service_order_unique_constraint": bool(ServiceOrderTracking.__table__.c.service_order_id.unique),
         "inconsistencies": sorted(set(inconsistencies)),
     }
+
+
+def diagnose_tracking_for_root_by_number(db: Session, order_number: str, actor: User) -> dict:
+    """Resolve the public order number, then reuse the scoped ROOT diagnostic."""
+    if actor.role != "ROOT":
+        raise HTTPException(status_code=403, detail="Somente root pode consultar este diagnostico")
+    normalized_number = (order_number or "").strip()
+    order = (
+        db.query(ServiceOrder)
+        .filter(ServiceOrder.order_number == normalized_number)
+        .first()
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden de servicio no encontrada")
+    return diagnose_tracking_for_root(db, order.id, actor)

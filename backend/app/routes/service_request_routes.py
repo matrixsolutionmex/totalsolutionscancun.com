@@ -22,6 +22,7 @@ from app.services.service_order_tracking_service import (
     heartbeat_tracking,
     record_tracking_diagnostic,
     diagnose_tracking_for_root,
+    diagnose_tracking_for_root_by_number,
 )
 
 
@@ -220,6 +221,15 @@ def admin_tracking_diagnostic(
     actor: User = Depends(require_root_user),
 ):
     return diagnose_tracking_for_root(db, service_order_id, actor)
+
+
+@router.get("/admin/tracking/diagnostic/by-number/{order_number}")
+def admin_tracking_diagnostic_by_number(
+    order_number: str,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    return diagnose_tracking_for_root_by_number(db, order_number, actor)
 
 
 @router.post("/service-orders/{order_id}/tracking/admin-stop")
