@@ -4746,7 +4746,7 @@
       document.getElementById("mfaForm").classList.add("hidden");
       document.getElementById("emailVerificationForm").classList.remove("hidden");
       document.getElementById("emailReviewMasked").value = maskedEmail || maskEmailForDisplay(currentEmail);
-      setAuthStatus("emailVerificationStatus", t("emailReviewSent"), "success");
+      setAuthStatus("emailVerificationStatus", t("emailReviewQueued"), "success");
       resetTurnstile("email_verification_resend");
       resetTurnstile("email_verification_change");
       startResendVerificationCountdown(resendAfterSeconds);
@@ -4908,6 +4908,7 @@
         signupDisabled: "Cadastro público temporariamente indisponível.",
         emailReviewTitle: "Revise seu e-mail",
         emailReviewText: "Enviamos um link de confirmação para seu e-mail. Você precisa confirmar antes que um administrador possa ativar seu acesso.",
+        emailReviewQueued: "Solicitação recebida. O e-mail de confirmação está sendo processado.",
         emailReviewSent: "Link de confirmação enviado, se o e-mail estiver válido.",
         resendEmail: "Reenviar e-mail",
         changeEmail: "Alterar e-mail",
@@ -5093,6 +5094,7 @@
         signupDisabled: "Public signup is temporarily unavailable.",
         emailReviewTitle: "Check your email",
         emailReviewText: "We sent a confirmation link to your email address. You must confirm it before an administrator can activate your access.",
+        emailReviewQueued: "Request received. Your confirmation email is being processed.",
         emailReviewSent: "Confirmation link sent if the email is valid.",
         resendEmail: "Resend email",
         changeEmail: "Change email",
@@ -5286,6 +5288,7 @@
         signupDisabled: "Registro público temporalmente no disponible.",
         emailReviewTitle: "Revisa tu correo",
         emailReviewText: "Enviamos un enlace de confirmación a tu correo electrónico. Debes confirmarlo antes de que un administrador pueda activar tu acceso.",
+        emailReviewQueued: "Solicitud recibida. El correo de confirmación está siendo procesado.",
         emailReviewSent: "Enlace de confirmación enviado si el correo es válido.",
         resendEmail: "Reenviar correo",
         changeEmail: "Cambiar correo",

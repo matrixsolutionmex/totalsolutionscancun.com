@@ -73,7 +73,7 @@ from app.schemas.auth_schema import (
     RegisterResponse,
 )
 from app.schemas.user_schema import UserResponse
-from app.services.notification_service import create_notification
+from app.services.notification_service import create_notification, enqueue_verification_email
 
 
 logger = logging.getLogger(__name__)
@@ -82,6 +82,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 PUBLIC_AUTH_MESSAGE = "Si la información es válida, recibirás las próximas instrucciones."
 PUBLIC_REGISTER_MESSAGE = "Enviamos un enlace de confirmación a tu correo electrónico."
+PUBLIC_EMAIL_VERIFICATION_QUEUED_MESSAGE = "Solicitud recibida. El correo de confirmación está siendo procesado."
 PUBLIC_EMAIL_DELIVERY_UNAVAILABLE_MESSAGE = "No fue posible enviar el correo ahora. Inténtalo nuevamente en unos minutos."
 EMAIL_VERIFICATION_TTL_MINUTES = 60
 EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS = 60
@@ -404,14 +405,8 @@ def create_email_verification_link(user: User) -> str | None:
 
 
 def issue_email_verification(db: Session, user: User) -> bool:
-    verification_url = create_email_verification_link(user)
-    if not verification_url:
-        return False
-    return send_verification_email(
-        to_email=user.email,
-        full_name=user.full_name,
-        verification_url=verification_url,
-    )
+    enqueue_verification_email(db, user=user)
+    return True
 
 
 def generic_register_response(
@@ -538,8 +533,8 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
                 logger.warning("Cadastro existente pendente sem reenvio para user_id=%s; configuracao SMTP/PUBLIC_BASE_URL incompleta ou indisponivel.", existing.id)
             return generic_register_response(
                 email,
-                message=PUBLIC_REGISTER_MESSAGE if email_sent else PUBLIC_EMAIL_DELIVERY_UNAVAILABLE_MESSAGE,
-                email_delivery_status="accepted" if email_sent else "unavailable",
+                message=PUBLIC_EMAIL_VERIFICATION_QUEUED_MESSAGE if email_sent else PUBLIC_EMAIL_DELIVERY_UNAVAILABLE_MESSAGE,
+                email_delivery_status="queued" if email_sent else "unavailable",
             )
         logger.info(
             "Cadastro existente aceito sem reenvio: user_id=%s,status=%s,email_verified=%s",
@@ -611,8 +606,8 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
         logger.warning("Email de verificacao nao enviado para user_id=%s; configuracao SMTP/PUBLIC_BASE_URL incompleta ou indisponivel.", user.id)
     return generic_register_response(
         email,
-        message=PUBLIC_REGISTER_MESSAGE if email_sent else PUBLIC_EMAIL_DELIVERY_UNAVAILABLE_MESSAGE,
-        email_delivery_status="accepted" if email_sent else "unavailable",
+        message=PUBLIC_EMAIL_VERIFICATION_QUEUED_MESSAGE if email_sent else PUBLIC_EMAIL_DELIVERY_UNAVAILABLE_MESSAGE,
+        email_delivery_status="queued" if email_sent else "unavailable",
     )
 
 
@@ -666,8 +661,8 @@ def resend_verification(payload: EmailVerificationResendRequest, request: Reques
         logger.warning("Reenvio de verificacao nao enviado para user_id=%s; configuracao SMTP/PUBLIC_BASE_URL incompleta ou indisponivel.", user.id)
     return generic_register_response(
         email,
-        message=PUBLIC_REGISTER_MESSAGE if email_sent else PUBLIC_EMAIL_DELIVERY_UNAVAILABLE_MESSAGE,
-        email_delivery_status="accepted" if email_sent else "unavailable",
+        message=PUBLIC_EMAIL_VERIFICATION_QUEUED_MESSAGE if email_sent else PUBLIC_EMAIL_DELIVERY_UNAVAILABLE_MESSAGE,
+        email_delivery_status="queued" if email_sent else "unavailable",
     )
 
 
@@ -723,8 +718,8 @@ def change_verification_email(payload: EmailVerificationChangeRequest, request: 
         logger.warning("Alteracao de email pendente para user_id=%s; configuracao SMTP/PUBLIC_BASE_URL incompleta ou indisponivel.", user.id)
     return generic_register_response(
         new_email,
-        message=PUBLIC_REGISTER_MESSAGE if email_sent else PUBLIC_EMAIL_DELIVERY_UNAVAILABLE_MESSAGE,
-        email_delivery_status="accepted" if email_sent else "unavailable",
+        message=PUBLIC_EMAIL_VERIFICATION_QUEUED_MESSAGE if email_sent else PUBLIC_EMAIL_DELIVERY_UNAVAILABLE_MESSAGE,
+        email_delivery_status="queued" if email_sent else "unavailable",
     )
 
 

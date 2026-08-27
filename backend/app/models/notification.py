@@ -49,6 +49,7 @@ class EmailOutbox(Base):
     notification_id = Column(Integer, ForeignKey("notifications.id"), nullable=True, index=True)
     recipient_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     invitation_id = Column(Integer, ForeignKey("organization_invitations.id"), nullable=True, index=True)
+    template_type = Column(String, nullable=True, index=True)
     to_email = Column(String, nullable=False)
     subject = Column(String, nullable=False)
     body_text = Column(Text, nullable=False)

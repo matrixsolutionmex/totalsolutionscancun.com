@@ -525,6 +525,38 @@ def enqueue_invitation_email(db: Session, *, invitation: OrganizationInvitation,
     return outbox
 
 
+def enqueue_verification_email(db: Session, *, user: User) -> EmailOutbox:
+    """Queue verification without persisting the raw token.
+
+    The hash is installed immediately to invalidate any previous link. The
+    worker rotates it again while composing the message, so plaintext exists
+    only in the worker process while the email is being sent.
+    """
+    raw_token = secrets.token_urlsafe(48)
+    now = datetime.utcnow()
+    user.email_verification_token = None
+    user.email_verification_token_hash = hash_value(raw_token)
+    user.email_verification_expires_at = now + timedelta(minutes=60)
+    user.email_verification_sent_at = now
+    user.email_verification_used_at = None
+    outbox = EmailOutbox(
+        organization_id=user.organization_id,
+        recipient_user_id=user.id,
+        to_email=user.email,
+        subject="Confirma tu correo - Total Solutions",
+        body_text="",
+        body_html="",
+        template_type="EMAIL_VERIFICATION",
+        status="PENDING",
+        provider="RESEND" if _resend_api_key() else "SMTP",
+        idempotency_key=f"email_verification:{user.id}:{user.email_verification_token_hash}",
+        next_attempt_at=now,
+    )
+    db.add(outbox)
+    db.flush()
+    return outbox
+
+
 def notify_assignment_change(
     db: Session,
     *,
@@ -695,6 +727,28 @@ def _prepare_invitation_email(db: Session, item: EmailOutbox) -> None:
     )
 
 
+def _prepare_verification_email(db: Session, item: EmailOutbox) -> None:
+    user = db.query(User).filter(User.id == item.recipient_user_id).with_for_update().first()
+    if not user or user.email_verified or user.status != "PENDING_EMAIL":
+        raise RuntimeError("verification_not_pending")
+
+    raw_token = secrets.token_urlsafe(48)
+    now = datetime.utcnow()
+    user.email_verification_token = None
+    user.email_verification_token_hash = hash_value(raw_token)
+    user.email_verification_expires_at = now + timedelta(minutes=60)
+    user.email_verification_sent_at = now
+    user.email_verification_used_at = None
+    base_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    verification_url = f"{base_url}/auth/verify-email?token={raw_token}" if base_url else f"/auth/verify-email?token={raw_token}"
+    # Imported lazily to keep auth routes and the shared outbox free of an import cycle.
+    from app.auth.routes import verification_email_text, verification_email_html
+
+    item.to_email = user.email
+    item.body_text = verification_email_text(full_name=user.full_name, verification_url=verification_url)
+    item.body_html = verification_email_html(full_name=user.full_name, verification_url=verification_url)
+
+
 def _send_outbox_with_resend(item: EmailOutbox, *, api_key: str, sender: str) -> str | None:
     payload = {"from": sender, "to": [item.to_email], "subject": item.subject, "text": item.body_text}
     if item.body_html:
@@ -797,6 +851,8 @@ def process_email_outbox(db: Session, *, limit: int = 10) -> int:
         try:
             if item.invitation_id:
                 _prepare_invitation_email(db, item)
+            elif item.template_type == "EMAIL_VERIFICATION":
+                _prepare_verification_email(db, item)
             if resend_key:
                 item.provider = "RESEND"
                 item.provider_message_id = _send_outbox_with_resend(item, api_key=resend_key, sender=smtp_from)
@@ -810,11 +866,17 @@ def process_email_outbox(db: Session, *, limit: int = 10) -> int:
             if item.invitation_id:
                 item.body_text = ""
                 item.body_html = ""
+            if item.template_type == "EMAIL_VERIFICATION":
+                item.body_text = ""
+                item.body_html = ""
             sent += 1
         except Exception as exc:  # noqa: BLE001 - delivery must not break application work.
             item.status = "FAILED" if item.attempts >= EMAIL_OUTBOX_MAX_ATTEMPTS else "RETRY"
             item.last_error = (str(exc)[:160] if isinstance(exc, RuntimeError) else exc.__class__.__name__)
             if item.invitation_id:
+                item.body_text = ""
+                item.body_html = ""
+            if item.template_type == "EMAIL_VERIFICATION":
                 item.body_text = ""
                 item.body_html = ""
             item.claimed_at = None

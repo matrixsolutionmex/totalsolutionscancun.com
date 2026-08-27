@@ -72,6 +72,20 @@ def commercial_db():
     db.close()
 
 
+@pytest.fixture(autouse=True)
+def disable_external_stripe_configuration(monkeypatch):
+    """Keep commercial tests deterministic and never use developer credentials."""
+    for name in (
+        "STRIPE_PUBLISHABLE_KEY",
+        "STRIPE_SECRET_KEY",
+        "STRIPE_WEBHOOK_SECRET",
+        "STRIPE_PRICE_PRO",
+        "STRIPE_PRICE_BUSINESS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    yield
+
+
 def test_catalog_has_free_pro_business_and_central_limits(commercial_db):
     plans = {plan["name"]: plan for plan in plan_catalog()}
     assert set(plans) == {"FREE", "PRO", "BUSINESS"}

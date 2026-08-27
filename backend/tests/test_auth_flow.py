@@ -32,6 +32,7 @@ from app.auth.routes import (
 from app.routes.user_routes import broker_summary
 from app.core.organization import create_independent_organization
 from app.services.organization_onboarding_service import create_invitation
+from app.services import notification_service
 from app.core import auth_security
 from app.core.auth_security import hash_value, hotp, totp_counter, verify_mfa_challenge_token
 from app.core.security import hash_password
@@ -191,6 +192,10 @@ def token_from_last_verification_email():
     return parse_qs(parsed.query)["token"][0]
 
 
+def process_verification_outbox(session):
+    assert notification_service.process_email_outbox(session) == 1
+
+
 def verification_email_plain_body(message):
     if not message.is_multipart():
         return message.get_content()
@@ -301,6 +306,8 @@ def test_public_registration_requires_verification_and_root_approval(monkeypatch
     assert "token" not in registration.model_dump_json()
     assert "verify-email" not in registration.model_dump_json()
     assert registration.masked_email == "br****@example.com"
+    assert registration.email_delivery_status == "queued"
+    process_verification_outbox(session)
     assert CapturingSMTP.sent_messages
     message = CapturingSMTP.sent_messages[-1]
     assert message.is_multipart()
@@ -323,6 +330,11 @@ def test_public_registration_requires_verification_and_root_approval(monkeypatch
     assert pending.email_verification_token_hash == hash_value(token)
     assert pending.email_verification_token_hash != token
     assert pending.email_verification_expires_at is not None
+    outbox = session.query(EmailOutbox).filter(EmailOutbox.recipient_user_id == pending.id).one()
+    assert outbox.template_type == "EMAIL_VERIFICATION"
+    assert outbox.status == "SENT"
+    assert outbox.body_text == ""
+    assert outbox.body_html == ""
 
     with pytest.raises(HTTPException) as blocked_login:
         login(AuthLoginRequest(email="broker@example.com", password="broker-password"), make_request(), Response(), session)
@@ -439,6 +451,10 @@ def test_public_signup_is_independent_and_invitation_keeps_tenant_and_manager(mo
     assert invited_user.organization_id == invited_org.id
     assert invited_user.role == "BROKER"
     assert invited_user.manager_id == manager.id
+    verification_outbox = db.query(EmailOutbox).filter(EmailOutbox.recipient_user_id == invited_user.id).one()
+    assert verification_outbox.template_type == "EMAIL_VERIFICATION"
+    assert verification_outbox.status == "PENDING"
+    assert verification_outbox.body_text == ""
     db.close()
 
 def test_email_verification_resend_invalidates_old_token_and_expiration(monkeypatch):
@@ -455,6 +471,7 @@ def test_email_verification_resend_invalidates_old_token_and_expiration(monkeypa
         session,
     )
     assert "token" not in registration.model_dump_json()
+    process_verification_outbox(session)
     first_token = token_from_last_verification_email()
     pending = session.query(User).filter(User.email == "expira@example.com").one()
     pending.email_verification_expires_at = auth_routes.now_utc() - timedelta(seconds=1)
@@ -469,6 +486,7 @@ def test_email_verification_resend_invalidates_old_token_and_expiration(monkeypa
         make_request("/auth/resend-verification"),
         session,
     )
+    process_verification_outbox(session)
     assert resend.masked_email == "ex****@example.com"
     second_token = token_from_last_verification_email()
     assert second_token != first_token
@@ -494,6 +512,7 @@ def test_register_existing_pending_email_resends_without_exposing_token(monkeypa
         make_request("/auth/register"),
         session,
     )
+    process_verification_outbox(session)
     first_token = token_from_last_verification_email()
     user = session.query(User).filter(User.email == "pendente-existente@example.com").one()
     user.email_verification_sent_at = auth_routes.now_utc() - timedelta(seconds=90)
@@ -509,7 +528,8 @@ def test_register_existing_pending_email_resends_without_exposing_token(monkeypa
         session,
     )
 
-    assert repeated.email_delivery_status == "accepted"
+    assert repeated.email_delivery_status == "queued"
+    process_verification_outbox(session)
     assert "token" not in repeated.model_dump_json()
     assert "verify-email" not in repeated.model_dump_json()
     assert registration.masked_email == repeated.masked_email
@@ -578,8 +598,11 @@ def test_email_verification_resend_reports_unavailable_when_provider_fails(monke
             session,
         )
 
-    assert resend.email_delivery_status == "unavailable"
-    assert resend.message == auth_routes.PUBLIC_EMAIL_DELIVERY_UNAVAILABLE_MESSAGE
+    assert resend.email_delivery_status == "queued"
+    assert resend.message == auth_routes.PUBLIC_EMAIL_VERIFICATION_QUEUED_MESSAGE
+    assert notification_service.process_email_outbox(session) == 0
+    outbox = session.query(EmailOutbox).filter(EmailOutbox.recipient_user_id == user.id).order_by(EmailOutbox.id.desc()).first()
+    assert outbox.status == "RETRY"
     assert "Solicitacao de reenvio de verificacao recebida" in caplog.text
     assert "reenvio-falha@example.com" not in caplog.text
     assert "/auth/verify-email?token=" not in caplog.text
@@ -618,6 +641,7 @@ def test_change_verification_email_invalidates_old_token_and_prevents_takeover(m
         make_request("/auth/register"),
         session,
     )
+    process_verification_outbox(session)
     first_token = token_from_last_verification_email()
     make_user(session, "existing-email-owner", email="existing@example.com")
 
@@ -640,12 +664,14 @@ def test_change_verification_email_invalidates_old_token_and_prevents_takeover(m
         make_request("/auth/register"),
         session,
     )
+    process_verification_outbox(session)
     old_token = token_from_last_verification_email()
     change_response = change_verification_email(
         EmailVerificationChangeRequest(old_email="typo@example.com", new_email="correct@example.com"),
         make_request("/auth/change-verification-email"),
         session,
     )
+    process_verification_outbox(session)
     assert change_response.masked_email == "co*****@example.com"
     changed = session.query(User).filter(User.email == "correct@example.com").one()
     assert changed.username == "correct@example.com"
@@ -682,11 +708,11 @@ def test_smtp_configuration_requires_authenticated_secure_transport(monkeypatch,
         )
 
     pending = session.query(User).filter(User.email == "missing-smtp@example.com").one()
+    outbox = session.query(EmailOutbox).filter(EmailOutbox.recipient_user_id == pending.id).one()
     assert pending.email_verified is False
     assert pending.status == "PENDING_EMAIL"
+    assert outbox.status == "PENDING"
     assert CapturingSMTP.sent_messages == []
-    assert "SMTP_USERNAME" in caplog.text
-    assert "SMTP_PASSWORD" in caplog.text
     assert "/auth/verify-email?token=" not in caplog.text
     session.close()
 
@@ -885,14 +911,17 @@ def test_smtp_failure_never_confirms_account_or_logs_token(monkeypatch, caplog):
         )
     assert "token" not in registration.model_dump_json()
     assert "verify-email" not in registration.model_dump_json()
-    assert registration.email_delivery_status == "unavailable"
-    assert registration.message == auth_routes.PUBLIC_EMAIL_DELIVERY_UNAVAILABLE_MESSAGE
+    assert registration.email_delivery_status == "queued"
+    assert registration.message == auth_routes.PUBLIC_EMAIL_VERIFICATION_QUEUED_MESSAGE
+    assert notification_service.process_email_outbox(session) == 0
     assert CapturingSMTP.sent_messages == []
     pending = session.query(User).filter(User.email == "smtp-falha@example.com").one()
     assert pending.email_verified is False
     assert pending.status == "PENDING_EMAIL"
     assert pending.email_verification_token is None
     assert pending.email_verification_token_hash is not None
+    outbox = session.query(EmailOutbox).filter(EmailOutbox.recipient_user_id == pending.id).one()
+    assert outbox.status == "RETRY"
     assert "/auth/verify-email?token=" not in caplog.text
     assert pending.email_verification_token_hash not in caplog.text
     session.close()
@@ -1201,7 +1230,8 @@ def test_anonymized_email_can_register_again_as_pending(monkeypatch):
         session,
     )
 
-    assert "enlace de confirmación" in registration.message
+    assert registration.message == auth_routes.PUBLIC_EMAIL_VERIFICATION_QUEUED_MESSAGE
+    assert registration.email_delivery_status == "queued"
     assert "token" not in registration.model_dump_json()
     new_user = session.query(User).filter(User.email == "removed@example.com").one()
     assert new_user.id != technician.id

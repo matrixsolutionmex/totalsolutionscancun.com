@@ -29,7 +29,7 @@ from app.schemas.user_schema import (
     UserReactivationRequestResponse,
     UserResponse,
 )
-from app.services.notification_service import dispatch_web_push_for_notification_ids, enqueue_invitation_email, notify_user_activation
+from app.services.notification_service import dispatch_web_push_for_notification_ids, enqueue_invitation_email, enqueue_verification_email, notify_user_activation
 from app.services.commercial_upgrade_service import (
     activate_upgrade_intent,
     cancel_upgrade_intent,
@@ -58,6 +58,14 @@ from app.services.platform_admin_service import (
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 PENDING_EMAIL_SUPPORT_STATUSES = PENDING_USER_STATUSES
+
+
+def mask_email_for_admin(value: str | None) -> str:
+    email = (value or "").strip()
+    local, separator, domain = email.partition("@")
+    if not separator or not domain:
+        return "***"
+    return f"{local[:2]}{'*' * max(3, len(local) - 2)}@{domain}"
 
 
 class ManualEmailVerificationRequest(BaseModel):
@@ -441,6 +449,36 @@ def admin_platform_metrics(
     actor: User = Depends(require_root_user),
 ):
     return platform_directory_metrics(db)
+
+
+@router.get("/platform/email-outbox")
+def admin_platform_email_outbox(
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    """Read-only delivery diagnostics for ROOT; never return message bodies."""
+    rows = (
+        db.query(EmailOutbox)
+        .order_by(EmailOutbox.created_at.desc(), EmailOutbox.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": row.id,
+            "template_type": row.template_type,
+            "recipient": mask_email_for_admin(row.to_email),
+            "status": row.status,
+            "attempts": row.attempts,
+            "provider": row.provider,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "last_attempt_at": row.last_attempt_at.isoformat() if row.last_attempt_at else None,
+            "sent_at": row.sent_at.isoformat() if row.sent_at else None,
+            "last_error": row.last_error,
+        }
+        for row in rows
+    ]
 
 
 @router.get("/platform/organizations")
@@ -1068,13 +1106,13 @@ def admin_resend_email_verification(
             detail="Estado del usuario no permite soporte de verificacion",
         )
 
-    delivered = issue_email_verification(db, user)
+    queued = bool(enqueue_verification_email(db, user=user))
 
     audit_auth_event(
         db,
         request=None,
         event_type="ADMIN_EMAIL_VERIFICATION_RESEND",
-        outcome="DELIVERED" if delivered else "DELIVERY_FAILED",
+        outcome="QUEUED" if queued else "QUEUE_FAILED",
         user=user,
         actor=actor,
         detail={"channel": "email"},
@@ -1083,12 +1121,12 @@ def admin_resend_email_verification(
     db.commit()
 
     return {
-        "ok": delivered,
+        "ok": queued,
         "email_verified": False,
         "message": (
-            "Correo de verificacion reenviado"
-            if delivered
-            else "No fue posible entregar el correo. Puede generar un enlace para compartir."
+            "Solicitud de verificacion recibida; el correo sera procesado"
+            if queued
+            else "No fue posible poner el correo en cola. Intente nuevamente."
         ),
     }
 
