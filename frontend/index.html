@@ -9182,7 +9182,7 @@
       const statusType = verificationDeliveryFailed(data) ? "error" : "success";
       const statusMessage = verificationDeliveryFailed(data)
         ? data.message || t("emailDeliveryUnavailable")
-        : data.message || t("emailReviewSent");
+        : data.message || t("emailReviewQueued");
       setAuthStatus("emailVerificationStatus", statusMessage, statusType);
       document.getElementById("emailReviewMasked").value = data.masked_email || maskEmailForDisplay(email);
       startResendVerificationCountdown(data.resend_after_seconds || 60);

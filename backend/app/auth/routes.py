@@ -42,7 +42,7 @@ from app.core.auth_security import (
     encrypt_secret,
     now_utc,
 )
-from app.core.user_status import PENDING_USER_STATUSES
+from app.core.user_status import EMAIL_VERIFICATION_RESEND_STATUSES, PENDING_USER_STATUSES
 from app.core.organization import create_independent_organization, get_or_create_default_organization, get_platform_primary_organization
 from app.core.security import hash_password, password_needs_upgrade, verify_password
 from app.models.auth_security import PasswordResetToken, UserIdentity
@@ -622,7 +622,14 @@ def resend_verification(payload: EmailVerificationResendRequest, request: Reques
         .filter(or_(func.lower(User.email) == email, func.lower(User.username) == email))
         .first()
     )
-    if not user or user.email_verified or user.status != "PENDING_EMAIL":
+    normalized_status = (user.status or "ACTIVE").strip().upper()
+    can_resend = bool(
+        user
+        and not user.email_verified
+        and normalized_status in EMAIL_VERIFICATION_RESEND_STATUSES
+        and (normalized_status != "ACTIVE" or user.is_active)
+    )
+    if not can_resend:
         logger.info(
             "Reenvio de verificacao aceito sem envio: user_found=%s,status=%s,email_verified=%s,user_email_hash=%s",
             bool(user),
@@ -679,7 +686,14 @@ def change_verification_email(payload: EmailVerificationChangeRequest, request: 
         .filter(or_(func.lower(User.email) == old_email, func.lower(User.username) == old_email))
         .first()
     )
-    if not user or user.email_verified or user.status != "PENDING_EMAIL":
+    normalized_status = (user.status or "ACTIVE").strip().upper()
+    can_change = bool(
+        user
+        and not user.email_verified
+        and normalized_status in EMAIL_VERIFICATION_RESEND_STATUSES
+        and (normalized_status != "ACTIVE" or user.is_active)
+    )
+    if not can_change:
         audit_auth_event(db, request=request, event_type="EMAIL_VERIFICATION_EMAIL_CHANGED", outcome="ACCEPTED")
         db.commit()
         return generic_register_response(new_email)

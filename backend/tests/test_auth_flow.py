@@ -43,7 +43,14 @@ from app.models.notification import EmailOutbox, Notification, NotificationPrefe
 from app.models.organization import Organization
 from app.models.user import User
 from app.models.user_lifecycle import UserLifecycleEvent, UserReactivationRequest
-from app.routes.admin_routes import anonymize_user, approve_user, archive_user, reactivate_user, suspend_user
+from app.routes.admin_routes import (
+    admin_email_verification_inconsistent,
+    anonymize_user,
+    approve_user,
+    archive_user,
+    reactivate_user,
+    suspend_user,
+)
 from app.schemas.auth_schema import (
     AuthLoginRequest,
     EmailVerificationChangeRequest,
@@ -606,6 +613,140 @@ def test_email_verification_resend_reports_unavailable_when_provider_fails(monke
     assert "Solicitacao de reenvio de verificacao recebida" in caplog.text
     assert "reenvio-falha@example.com" not in caplog.text
     assert "/auth/verify-email?token=" not in caplog.text
+    session.close()
+
+
+def test_active_unverified_user_resend_queues_new_verification(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    configure_smtp_capture(monkeypatch)
+    session = create_test_session()
+    user = make_user(
+        session,
+        "active-unverified-resend",
+        email="active-unverified-resend@example.com",
+        status="ACTIVE",
+        is_active=True,
+    )
+    user.email_verified = False
+    user.email_verification_token_hash = hash_value("old-verification-token")
+    user.email_verification_sent_at = auth_routes.now_utc() - timedelta(seconds=90)
+    session.commit()
+    CapturingSMTP.sent_messages = []
+    CapturingSMTP.fail_send = False
+
+    response = resend_verification(
+        EmailVerificationResendRequest(email=user.email),
+        make_request("/auth/resend-verification"),
+        session,
+    )
+
+    assert response.email_delivery_status == "queued"
+    assert session.query(EmailOutbox).filter_by(recipient_user_id=user.id).count() == 1
+    session.refresh(user)
+    assert user.email_verification_token is None
+    assert user.email_verification_token_hash != hash_value("old-verification-token")
+    outbox = session.query(EmailOutbox).filter_by(recipient_user_id=user.id).one()
+    assert outbox.status == "PENDING"
+    assert outbox.body_text == ""
+    session.close()
+
+
+def test_active_unverified_user_cannot_login_or_be_reactivated(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    session = create_test_session()
+    root = make_user(session, "root-active-unverified", "ROOT")
+    user = make_user(
+        session,
+        "active-unverified-login",
+        email="active-unverified-login@example.com",
+        status="ACTIVE",
+        is_active=True,
+    )
+    user.email_verified = False
+    session.commit()
+
+    with pytest.raises(HTTPException) as blocked:
+        login(AuthLoginRequest(email=user.email, password="user-password"), make_request(), Response(), session)
+    assert blocked.value.status_code == 403
+    assert "Correo pendiente" in blocked.value.detail
+
+    user.status = "SUSPENDED"
+    user.is_active = False
+    session.commit()
+    with pytest.raises(HTTPException) as reactivation_blocked:
+        reactivate_user(
+            user.id,
+            UserReactivateRequest(reason="Reativacao de teste", role="BROKER"),
+            session,
+            root,
+        )
+    assert reactivation_blocked.value.status_code == 400
+    session.refresh(user)
+    assert user.status == "SUSPENDED"
+    assert user.is_active is False
+    session.close()
+
+
+def test_verification_resend_does_not_queue_verified_or_blocked_users(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    configure_smtp_capture(monkeypatch)
+    session = create_test_session()
+    verified = make_user(session, "verified-no-resend", email="verified-no-resend@example.com")
+    blocked = make_user(
+        session,
+        "blocked-no-resend",
+        email="blocked-no-resend@example.com",
+        status="SUSPENDED",
+        is_active=False,
+    )
+    blocked.email_verified = False
+    session.commit()
+
+    verified_response = resend_verification(
+        EmailVerificationResendRequest(email=verified.email),
+        make_request("/auth/resend-verification"),
+        session,
+    )
+    blocked_response = resend_verification(
+        EmailVerificationResendRequest(email=blocked.email),
+        make_request("/auth/resend-verification"),
+        session,
+    )
+
+    assert verified_response.email_delivery_status == "accepted"
+    assert blocked_response.email_delivery_status == "accepted"
+    assert session.query(EmailOutbox).filter(
+        EmailOutbox.recipient_user_id.in_([verified.id, blocked.id])
+    ).count() == 0
+    session.close()
+
+
+def test_root_can_diagnose_active_unverified_users_without_raw_email_token(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    session = create_test_session()
+    root = make_user(session, "root-verification-diagnostic", "ROOT")
+    user = make_user(
+        session,
+        "legacy-active-unverified",
+        email="legacy-active-unverified@example.com",
+        status="ACTIVE",
+        is_active=True,
+    )
+    user.email_verified = False
+    user.email_verification_token_hash = hash_value("never-return-this")
+    session.commit()
+
+    result = admin_email_verification_inconsistent(session, root)
+
+    assert result["count"] == 1
+    diagnostic_user = result["users"][0]
+    assert diagnostic_user["user_id"] == user.id
+    assert diagnostic_user["email"].startswith("le***")
+    assert diagnostic_user["email"].endswith("@example.com")
+    assert diagnostic_user["organization_id"] == user.organization_id
+    assert diagnostic_user["status"] == "ACTIVE"
+    assert diagnostic_user["is_active"] is True
+    assert "never-return-this" not in str(result)
     session.close()
 
 

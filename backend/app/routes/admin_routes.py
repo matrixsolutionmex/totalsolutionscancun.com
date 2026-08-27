@@ -11,7 +11,7 @@ from app.auth.jwt_handler import get_db, require_admin_user, require_root_user, 
 from app.auth.routes import create_email_verification_link, issue_email_verification
 from app.core.auth_security import audit_auth_event
 from app.core.security import hash_password
-from app.core.user_status import PENDING_ADMIN_STATUSES, PENDING_USER_STATUSES
+from app.core.user_status import EMAIL_VERIFICATION_RESEND_STATUSES, PENDING_ADMIN_STATUSES, PENDING_USER_STATUSES
 from app.models.lead import Lead
 from app.models.user import User
 from app.models.organization import Organization
@@ -57,7 +57,7 @@ from app.services.platform_admin_service import (
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
-PENDING_EMAIL_SUPPORT_STATUSES = PENDING_USER_STATUSES
+PENDING_EMAIL_SUPPORT_STATUSES = EMAIL_VERIFICATION_RESEND_STATUSES
 
 
 def mask_email_for_admin(value: str | None) -> str:
@@ -739,6 +739,32 @@ def admin_platform_user_access_diagnostic(
     }
 
 
+@router.get("/platform/email-verification/inconsistent")
+def admin_email_verification_inconsistent(
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_root_user),
+):
+    users = (
+        db.query(User)
+        .filter(User.status == "ACTIVE", User.email_verified.is_(False))
+        .order_by(User.id.asc())
+        .all()
+    )
+    return {
+        "count": len(users),
+        "users": [
+            {
+                "user_id": user.id,
+                "email": mask_email_for_admin(user.email),
+                "organization_id": user.organization_id,
+                "status": user.status,
+                "is_active": bool(user.is_active),
+            }
+            for user in users
+        ],
+    }
+
+
 @router.patch("/platform/users/{user_id}/role")
 def admin_platform_change_role(
     user_id: int,
@@ -984,6 +1010,8 @@ def reactivate_user(
     user = load_target_user(db, user_id, actor)
     if user.status not in {"SUSPENDED", "ARCHIVED", "PENDING", "PENDING_APPROVAL", "PENDING_ADMIN"}:
         raise HTTPException(status_code=400, detail="Usuario nao esta em estado de reativacao")
+    if not user.email_verified:
+        raise HTTPException(status_code=400, detail="Correo pendiente de confirmación")
     role, manager_id = validate_role_and_manager(db, actor, payload.role, payload.manager_id)
     user.role = role
     user.manager_id = manager_id

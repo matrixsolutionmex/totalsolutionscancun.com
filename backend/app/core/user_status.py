@@ -3,3 +3,6 @@
 PENDING_ADMIN_STATUSES = frozenset({"PENDING", "PENDING_APPROVAL", "PENDING_ADMIN"})
 PENDING_EMAIL_STATUSES = frozenset({"PENDING_EMAIL"})
 PENDING_USER_STATUSES = PENDING_ADMIN_STATUSES | PENDING_EMAIL_STATUSES
+# ACTIVE accounts can still require email verification after a legacy or
+# administrative transition. Blocked/deleted statuses remain excluded.
+EMAIL_VERIFICATION_RESEND_STATUSES = PENDING_USER_STATUSES | frozenset({"ACTIVE"})
