@@ -35,6 +35,7 @@ from app.services.service_order_financial_service import (
 from app.models.payment import Payment
 from app.models.service_order_financial import ServiceOrderFinancial
 from app.models.visit_pricing_snapshot import VisitPricingSnapshot
+from app.services.service_order_quote_service import public_quote_projection
 
 
 ALLOWED_MEDIA_TYPES = {
@@ -475,7 +476,8 @@ def service_request_public_tracking(request: ServiceRequest, db: Session | None 
             destination_lat,
             destination_lng,
             cache_key=f"service-order:{order.id}",
-        )
+            )
+    commercial_projection = public_quote_projection(db, order) if db and order else None
     return {
         "tracking_token": request.tracking_token,
         "language": normalize_language(request.public_language),
@@ -509,6 +511,8 @@ def service_request_public_tracking(request: ServiceRequest, db: Session | None 
         "currency": visit_snapshot.currency if visit_snapshot else None,
         "payment_status": payment_status,
         "checkout_available": bool(visit_required and payment_status not in {"PAID", "PAID_CASH"} and not getattr(order, "status", "").upper() in {"CANCELLED", "CANCELADA", "CONCLUIDA", "FINALIZADA"}),
+        "diagnosis": commercial_projection.get("diagnosis") if commercial_projection else None,
+        "quote": commercial_projection.get("quote") if commercial_projection else None,
     }
 
 

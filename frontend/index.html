@@ -12020,9 +12020,9 @@
       };
       const normalizePortalLanguage = (value) => String(value || "").toLowerCase().startsWith("pt") ? "pt-BR" : String(value || "").toLowerCase().startsWith("en") ? "en" : "es";
       const trackingTranslations = {
-        es: { interrupted: "Ubicación interrumpida", stale: "Ubicación sin actualización reciente", onWay: "Tu técnico está en camino", waiting: "Esperando ubicación del técnico", updatedNow: "Actualizada ahora", lastUpdate: "Última actualización hace", seconds: "segundos", recalculating: "Recalculando ruta...", approximateEta: "Llegada estimada aproximada", estimatedArrival: "Llegada estimada", distance: "Distancia restante", time: "Hora", etaUnavailable: "ETA temporalmente no disponible", accuracy: "Precisión", map: "Mapa de seguimiento del servicio", technician: "Técnico", destination: "Destino del servicio", visitPayment: "Pago de la visita", visitPending: "Estamos confirmando tu pago.", visitPaid: "Visita pagada ✓", checkoutUnavailable: "Pago de visita no disponible." },
-        en: { interrupted: "Location interrupted", stale: "Location has not updated recently", onWay: "Your technician is on the way", waiting: "Waiting for technician location", updatedNow: "Updated now", lastUpdate: "Last update", seconds: "seconds ago", recalculating: "Recalculating route...", approximateEta: "Approximate ETA", estimatedArrival: "Estimated arrival", distance: "Distance remaining", time: "Time", etaUnavailable: "ETA temporarily unavailable", accuracy: "Accuracy", map: "Service tracking map", technician: "Technician", destination: "Service destination", visitPayment: "Visit payment", visitPending: "We are confirming your payment.", visitPaid: "Visit paid ✓", checkoutUnavailable: "Visit payment unavailable." },
-        "pt-BR": { interrupted: "Localização interrompida", stale: "Localização sem atualização recente", onWay: "Seu técnico está a caminho", waiting: "Aguardando localização do técnico", updatedNow: "Atualizada agora", lastUpdate: "Última atualização há", seconds: "segundos", recalculating: "Recalculando rota...", approximateEta: "Chegada estimada aproximada", estimatedArrival: "Chegada estimada", distance: "Distância restante", time: "Hora", etaUnavailable: "ETA temporariamente indisponível", accuracy: "Precisão", map: "Mapa de acompanhamento do serviço", technician: "Técnico", destination: "Destino do serviço", visitPayment: "Pagamento da visita", visitPending: "Estamos confirmando seu pagamento.", visitPaid: "Visita paga ✓", checkoutUnavailable: "Pagamento da visita indisponível." }
+        es: { interrupted: "Ubicación interrumpida", stale: "Ubicación sin actualización reciente", onWay: "Tu técnico está en camino", waiting: "Esperando ubicación del técnico", updatedNow: "Actualizada ahora", lastUpdate: "Última actualización hace", seconds: "segundos", recalculating: "Recalculando ruta...", approximateEta: "Llegada estimada aproximada", estimatedArrival: "Llegada estimada", distance: "Distancia restante", time: "Hora", etaUnavailable: "ETA temporalmente no disponible", accuracy: "Precisión", map: "Mapa de seguimiento del servicio", technician: "Técnico", destination: "Destino del servicio", visitPayment: "Pago de la visita", visitPending: "Estamos confirmando tu pago.", visitPaid: "Visita pagada ✓", checkoutUnavailable: "Pago de visita no disponible.", diagnosis: "Diagnóstico", problemFound: "Problema encontrado", solution: "Solución recomendada", observations: "Observaciones", quote: "Presupuesto", quoteItems: "Ítems", itemDescription: "Descripción", quantity: "Cantidad", unit: "Unidad", unitPrice: "Precio", subtotal: "Subtotal", discount: "Descuento", tax: "Impuestos", total: "Total", validUntil: "Válido hasta", approveQuote: "Aprobar presupuesto", rejectQuote: "Rechazar presupuesto", approved: "Presupuesto aprobado", rejected: "Presupuesto rechazado", quoteError: "No fue posible actualizar el presupuesto." },
+        en: { interrupted: "Location interrupted", stale: "Location has not updated recently", onWay: "Your technician is on the way", waiting: "Waiting for technician location", updatedNow: "Updated now", lastUpdate: "Last update", seconds: "seconds ago", recalculating: "Recalculating route...", approximateEta: "Approximate ETA", estimatedArrival: "Estimated arrival", distance: "Distance remaining", time: "Time", etaUnavailable: "ETA temporarily unavailable", accuracy: "Accuracy", map: "Service tracking map", technician: "Technician", destination: "Service destination", visitPayment: "Visit payment", visitPending: "We are confirming your payment.", visitPaid: "Visit paid ✓", checkoutUnavailable: "Visit payment unavailable.", diagnosis: "Diagnosis", problemFound: "Problem found", solution: "Recommended solution", observations: "Observations", quote: "Quote", quoteItems: "Items", itemDescription: "Description", quantity: "Quantity", unit: "Unit", unitPrice: "Price", subtotal: "Subtotal", discount: "Discount", tax: "Tax", total: "Total", validUntil: "Valid until", approveQuote: "Approve quote", rejectQuote: "Reject quote", approved: "Quote approved", rejected: "Quote rejected", quoteError: "The quote could not be updated." },
+        "pt-BR": { interrupted: "Localização interrompida", stale: "Localização sem atualização recente", onWay: "Seu técnico está a caminho", waiting: "Aguardando localização do técnico", updatedNow: "Atualizada agora", lastUpdate: "Última atualização há", seconds: "segundos", recalculating: "Recalculando rota...", approximateEta: "Chegada estimada aproximada", estimatedArrival: "Chegada estimada", distance: "Distância restante", time: "Hora", etaUnavailable: "ETA temporariamente indisponível", accuracy: "Precisão", map: "Mapa de acompanhamento do serviço", technician: "Técnico", destination: "Destino do serviço", visitPayment: "Pagamento da visita", visitPending: "Estamos confirmando seu pagamento.", visitPaid: "Visita paga ✓", checkoutUnavailable: "Pagamento da visita indisponível.", diagnosis: "Diagnóstico", problemFound: "Problema encontrado", solution: "Solução recomendada", observations: "Observações", quote: "Orçamento", quoteItems: "Itens", itemDescription: "Descrição", quantity: "Quantidade", unit: "Unidade", unitPrice: "Preço", subtotal: "Subtotal", discount: "Desconto", tax: "Impostos", total: "Total", validUntil: "Válido até", approveQuote: "Aprovar orçamento", rejectQuote: "Recusar orçamento", approved: "Orçamento aprovado", rejected: "Orçamento recusado", quoteError: "Não foi possível atualizar o orçamento." }
       };
       const trackingText = (key) => trackingTranslations[portalLanguage]?.[key] || trackingTranslations.es[key];
       const localizedTrackingStatus = (value) => {
@@ -12421,6 +12421,43 @@
         .public-tracking-eta-card > div {
           background: #f8fafc;
         }
+        .public-quote-block {
+          min-width: 0;
+          margin-top: 18px;
+          padding: 18px;
+          border: 1px solid #cbd5e1;
+          border-radius: 10px;
+          background: #fff;
+        }
+        .public-quote-block h3 { margin: 0 0 14px; }
+        .public-quote-items {
+          display: grid;
+          min-width: 0;
+          overflow: hidden;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+        }
+        .public-quote-row {
+          display: grid;
+          grid-template-columns: minmax(0, 2fr) minmax(92px, .8fr) minmax(90px, .9fr) minmax(110px, 1fr) minmax(110px, 1fr);
+          gap: 12px;
+          align-items: center;
+          min-width: 0;
+          padding: 10px 12px;
+          border-bottom: 1px solid #e2e8f0;
+        }
+        .public-quote-row:last-child { border-bottom: 0; }
+        .public-quote-row > * { min-width: 0; overflow-wrap: anywhere; }
+        .public-quote-header {
+          color: var(--portal-muted);
+          background: #f8fafc;
+          font-size: 12px;
+          font-weight: 900;
+        }
+        .public-quote-header > * { white-space: nowrap; }
+        .public-quote-summary { display: grid; gap: 6px; margin-top: 14px; }
+        .public-quote-summary p { margin: 0; }
+        .public-quote-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
         @media (max-width: 980px) {
           .portal-shell { grid-template-columns: 1fr; }
           .portal-brand {
@@ -12446,6 +12483,19 @@
           .portal-panel-logo { width: 220px; }
           .portal-actions { flex-direction: column; }
           .portal-button { width: 100%; }
+          .public-quote-block { padding: 14px; }
+          .public-quote-header { display: none; }
+          .public-quote-row { display: block; }
+          .public-quote-row > * { display: block; margin-top: 8px; }
+          .public-quote-row > *:first-child { margin-top: 0; }
+          .public-quote-row > *::before {
+            display: block;
+            margin-bottom: 2px;
+            color: var(--portal-muted);
+            font-size: 11px;
+            font-weight: 800;
+          }
+          .public-quote-row > *::before { content: attr(data-label); }
         }
       `;
       document.head.appendChild(style);
@@ -12778,6 +12828,28 @@
             });
           }
         };
+        const renderPublicQuote = (data) => {
+          let element = document.getElementById("publicQuoteSection");
+          if (!element) return;
+          const diagnosis = data.diagnosis;
+          const quote = data.quote;
+          if (!diagnosis && !quote) { element.innerHTML = ""; return; }
+          const diagnosisMarkup = diagnosis ? `<section class="public-quote-block"><h3>${escapeHtml(trackingText("diagnosis"))}</h3>${diagnosis.problem_found ? `<p><strong>${escapeHtml(trackingText("problemFound"))}:</strong> ${escapeHtml(diagnosis.problem_found)}</p>` : ""}${diagnosis.recommended_solution ? `<p><strong>${escapeHtml(trackingText("solution"))}:</strong> ${escapeHtml(diagnosis.recommended_solution)}</p>` : ""}${diagnosis.observations ? `<p><strong>${escapeHtml(trackingText("observations"))}:</strong> ${escapeHtml(diagnosis.observations)}</p>` : ""}</section>` : "";
+          const quoteItems = Array.isArray(quote?.items) ? quote.items : [];
+          const quoteMarkup = quote ? `<section class="public-quote-block"><h3>${escapeHtml(trackingText("quote"))} v${escapeHtml(quote.version)}</h3><div class="public-quote-items"><div class="public-quote-row public-quote-header"><span>${escapeHtml(trackingText("itemDescription"))}</span><span>${escapeHtml(trackingText("quantity"))}</span><span>${escapeHtml(trackingText("unit"))}</span><span>${escapeHtml(trackingText("unitPrice"))}</span><span>${escapeHtml(trackingText("subtotal"))}</span></div>${quoteItems.map((item) => `<div class="public-quote-row"><span data-label="${escapeHtml(trackingText("itemDescription"))}">${escapeHtml(item.description)}</span><span data-label="${escapeHtml(trackingText("quantity"))}">${escapeHtml(item.quantity)}</span><span data-label="${escapeHtml(trackingText("unit"))}">${escapeHtml(item.unit || "-")}</span><span data-label="${escapeHtml(trackingText("unitPrice"))}">${escapeHtml(formatVisitAmount(item.unit_price, quote.currency))}</span><strong data-label="${escapeHtml(trackingText("subtotal"))}">${escapeHtml(formatVisitAmount(item.subtotal, quote.currency))}</strong></div>`).join("")}</div><div class="public-quote-summary"><p>${escapeHtml(trackingText("subtotal"))}: ${escapeHtml(formatVisitAmount(quote.subtotal, quote.currency))}</p>${Number(quote.discount_amount) ? `<p>${escapeHtml(trackingText("discount"))}: -${escapeHtml(formatVisitAmount(quote.discount_amount, quote.currency))}</p>` : ""}${Number(quote.tax_amount) ? `<p>${escapeHtml(trackingText("tax"))}: +${escapeHtml(formatVisitAmount(quote.tax_amount, quote.currency))}</p>` : ""}<p><strong>${escapeHtml(trackingText("total"))}: ${escapeHtml(formatVisitAmount(quote.total, quote.currency))}</strong></p>${quote.valid_until ? `<p>${escapeHtml(trackingText("validUntil"))}: ${escapeHtml(formatTrackingDate(quote.valid_until))}</p>` : ""}<p><strong>${escapeHtml(quote.status === "APPROVED" ? trackingText("approved") : quote.status === "REJECTED" ? trackingText("rejected") : "")}</strong></p></div>${quote.status === "SENT" ? `<div class="public-quote-actions"><button type="button" class="portal-button" data-quote-action="approve">${escapeHtml(trackingText("approveQuote"))}</button><button type="button" class="portal-button" data-quote-action="reject">${escapeHtml(trackingText("rejectQuote"))}</button></div>` : ""}</section>` : "";
+          element.innerHTML = diagnosisMarkup + quoteMarkup;
+          element.querySelectorAll("[data-quote-action]").forEach((button) => button.addEventListener("click", async () => {
+            button.disabled = true;
+            const action = button.dataset.quoteAction;
+            const reason = action === "reject" ? window.prompt(trackingText("rejectQuote")) : null;
+            try {
+              const response = await fetch(`${apiBase}/public/service-requests/${encodeURIComponent(token)}/quote/${action}`, { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify(reason ? { reason } : {}) });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.detail || trackingText("quoteError"));
+              renderPublicTracking(result);
+            } catch (error) { button.disabled = false; window.alert(error.message || trackingText("quoteError")); }
+          }));
+        };
         const renderPublicTracking = (data) => {
           const active = data.tracking_active === true;
           const sessionKey = trackingSessionKey(data);
@@ -12835,6 +12907,7 @@
               ${displayRouteAvailable ? `<div class="public-tracking-eta-card"><div><small>${portalLanguage === "en" ? "Estimated arrival" : portalLanguage === "pt-BR" ? "Chegada estimada" : "Llegada estimada"}</small><strong>${escapeHtml(formatRouteDuration(displayRoute.route_duration_s))}</strong></div><div><small>${portalLanguage === "en" ? "Distance remaining" : portalLanguage === "pt-BR" ? "Distância restante" : "Distancia restante"}</small><strong>${escapeHtml(formatRouteDistance(displayRoute.route_distance_m))}</strong></div><div><small>${portalLanguage === "en" ? "Estimated time" : portalLanguage === "pt-BR" ? "Hora estimada" : "Hora estimada"}</small><strong>${escapeHtml(formatRouteEta(displayRoute.route_eta_at))}</strong></div></div>` : ""}
               <p id="publicTrackingProximity" class="portal-message">${escapeHtml(displayRouteAvailable ? trackingProximityMessage(displayRoute.route_distance_m) : locationMessage)}</p>
               <div id="publicVisitPayment" class="public-tracking-status"></div>
+              <div id="publicQuoteSection"></div>
               ${(active || hasDestination) ? `<div id="publicTrackingMap" class="public-tracking-map" aria-label="${trackingText("map")}"></div>` : ""}
               <p id="publicTrackingMapHint" class="portal-message">${active ? pt("mapHint") : pt("preparingShort")}</p>
             `;
@@ -12856,6 +12929,7 @@
             if (proximity) proximity.textContent = displayRouteAvailable ? trackingProximityMessage(displayRoute.route_distance_m) : locationMessage;
           }
           renderVisitPayment(data);
+          renderPublicQuote(data);
           const mapElement = document.getElementById("publicTrackingMap");
           if (!mapElement || !window.L || window.leafletLoadFailed) {
             lastAppliedSessionKey = sessionKey;

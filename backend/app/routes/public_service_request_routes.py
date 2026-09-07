@@ -7,6 +7,7 @@ from app.auth.jwt_handler import get_db
 from app.models.service_request import ServiceRequest
 from app.models.pricing_rate import PricingRate
 from app.services.customer_portal_service import create_customer_request_and_order, service_request_public_status, service_request_public_tracking
+from app.services.service_order_quote_service import approve_public_quote, reject_public_quote, resolve_public_order
 from app.services.marketplace_service import create_opportunity_from_service_request
 from app.services.notification_service import dispatch_web_push_for_notification_ids
 from app.services.reverse_geocode_service import reverse_geocode
@@ -167,3 +168,19 @@ def public_service_request_tracking(tracking_token: str, db: Session = Depends(g
     if not service_request:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
     return service_request_public_tracking(service_request, db)
+
+
+@router.post("/service-requests/{tracking_token}/quote/approve")
+def public_quote_approve(tracking_token: str, db: Session = Depends(get_db)):
+    order = resolve_public_order(db, tracking_token)
+    approve_public_quote(db, order)
+    db.commit()
+    return service_request_public_tracking(order.service_request, db)
+
+
+@router.post("/service-requests/{tracking_token}/quote/reject")
+def public_quote_reject(tracking_token: str, payload: dict | None = None, db: Session = Depends(get_db)):
+    order = resolve_public_order(db, tracking_token)
+    reject_public_quote(db, order, (payload or {}).get("reason"))
+    db.commit()
+    return service_request_public_tracking(order.service_request, db)
