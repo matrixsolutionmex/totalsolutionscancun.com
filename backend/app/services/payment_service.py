@@ -224,6 +224,9 @@ def handle_stripe_event(db: Session, event: dict) -> Payment | None:
                 payment.updated_at = datetime.utcnow()
                 db.flush()
                 return payment
+        if payment.payment_type.startswith("SERVICE_") and payment.status not in {"PAID", "PAID_CASH"}:
+            from app.services.service_order_payment_plan_service import record_service_installment_payment
+            return record_service_installment_payment(db, payment, provider_payload=object_data)
         return mark_payment_paid(db, payment, provider_payload=object_data)
     if event_type in {"payment_intent.payment_failed", "invoice.payment_failed"} and payment.status not in {"PAID", "PAID_CASH"}:
         payment.status = "FAILED"

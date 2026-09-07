@@ -22,6 +22,8 @@ from app.services.payment_service import (
     verify_stripe_signature,
     create_stripe_checkout,
 )
+from app.services.service_order_payment_plan_service import create_installment_checkout
+from app.services.service_order_quote_service import resolve_public_order
 
 
 router = APIRouter(prefix="/payments", tags=["payments"])
@@ -115,6 +117,18 @@ def create_public_visit_checkout(
     payment.status = "PENDING"
     db.commit()
     return {"status": payment.status, "checkout_url": payment.checkout_url}
+
+
+@router.post("/public/service-requests/{tracking_token}/installments/{installment_sequence}/checkout")
+def create_public_installment_checkout(
+    tracking_token: str,
+    installment_sequence: int,
+    db: Session = Depends(get_db),
+):
+    order = resolve_public_order(db, tracking_token)
+    payment = create_installment_checkout(db, order, installment_sequence, tracking_token=tracking_token)
+    db.commit()
+    return {"status": payment.status, "checkout_url": payment.checkout_url, "installment_sequence": installment_sequence}
 
 
 @router.get("")

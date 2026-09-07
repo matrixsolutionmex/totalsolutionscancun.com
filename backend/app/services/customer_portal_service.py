@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.storage import UPLOADS_DIR
@@ -36,6 +37,7 @@ from app.models.payment import Payment
 from app.models.service_order_financial import ServiceOrderFinancial
 from app.models.visit_pricing_snapshot import VisitPricingSnapshot
 from app.services.service_order_quote_service import public_quote_projection
+from app.services.service_order_payment_plan_service import payment_plan_projection
 
 
 ALLOWED_MEDIA_TYPES = {
@@ -478,6 +480,12 @@ def service_request_public_tracking(request: ServiceRequest, db: Session | None 
             cache_key=f"service-order:{order.id}",
             )
     commercial_projection = public_quote_projection(db, order) if db and order else None
+    try:
+        service_payment_plan = payment_plan_projection(db, order) if db and order else None
+    except OperationalError:
+        # Older installations are upgraded by startup before this projection is required.
+        db.rollback()
+        service_payment_plan = None
     return {
         "tracking_token": request.tracking_token,
         "language": normalize_language(request.public_language),
@@ -513,6 +521,7 @@ def service_request_public_tracking(request: ServiceRequest, db: Session | None 
         "checkout_available": bool(visit_required and payment_status not in {"PAID", "PAID_CASH"} and not getattr(order, "status", "").upper() in {"CANCELLED", "CANCELADA", "CONCLUIDA", "FINALIZADA"}),
         "diagnosis": commercial_projection.get("diagnosis") if commercial_projection else None,
         "quote": commercial_projection.get("quote") if commercial_projection else None,
+        "payment_plan": service_payment_plan,
     }
 
 

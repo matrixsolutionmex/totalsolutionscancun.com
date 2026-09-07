@@ -16,7 +16,7 @@ from app.core.organization import get_or_create_default_organization
 from app.core.storage import UPLOADS_DIR
 from app.auth.routes import router as auth_router
 from app.database.connection import Base, SessionLocal, engine
-from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, service_order_tracking, deletion_request, notification, user_lifecycle, auth_security, organization, organization_invitation, referral_attribution, service_property, service_request, service_opportunity, organization_marketplace_link, commercial_subscription, commercial_upgrade_intent, user_commercial_profile, pricing_rate, payment, service_order_financial, service_order_ledger_entry, visit_pricing_snapshot, organization_payment_policy, service_order_diagnosis, service_order_quote
+from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, service_order_tracking, deletion_request, notification, user_lifecycle, auth_security, organization, organization_invitation, referral_attribution, service_property, service_request, service_opportunity, organization_marketplace_link, commercial_subscription, commercial_upgrade_intent, user_commercial_profile, pricing_rate, payment, service_order_financial, service_order_ledger_entry, visit_pricing_snapshot, organization_payment_policy, service_order_diagnosis, service_order_quote, service_order_payment_plan
 from app.models.lead import Lead
 from app.models.service_order import ServiceOrder
 from app.models.user import User
@@ -330,6 +330,9 @@ def create_database_tables():
         add_column_if_missing(db, "commercial_upgrade_intents", "payment_confirmed_by_user_id", "INTEGER")
         add_column_if_missing(db, "commercial_upgrade_intents", "confirmation_source", "VARCHAR(40)")
         add_column_if_missing(db, "service_order_tracking", "last_heartbeat_at", "TIMESTAMP")
+        add_column_if_missing(db, "payments", "installment_id", "INTEGER")
+        add_column_if_missing(db, "service_order_financials", "service_paid_amount", "NUMERIC(12,2)")
+        add_column_if_missing(db, "service_order_financials", "service_outstanding_balance", "NUMERIC(12,2)")
 
         normalized_upgrade_intents = normalize_existing_upgrade_intents(db)
         if normalized_upgrade_intents:

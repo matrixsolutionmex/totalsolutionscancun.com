@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models.service_order import ServiceOrder
 from app.models.service_order_diagnosis import ServiceOrderDiagnosis
+from app.models.service_order_payment_plan import ServiceOrderPaymentPlan
 from app.models.service_order_quote import ServiceOrderQuote, ServiceOrderQuoteItem
 from app.models.service_request import ServiceRequest
 
@@ -93,8 +94,24 @@ def create_quote(db: Session, order: ServiceOrder, actor, payload: dict[str, Any
     if not raw_items:
         raise HTTPException(status_code=422, detail="O orçamento precisa de pelo menos um item")
     max_version = db.query(func.max(ServiceOrderQuote.version)).filter_by(service_order_id=order.id, organization_id=order.organization_id).scalar() or 0
-    for previous in db.query(ServiceOrderQuote).filter(ServiceOrderQuote.service_order_id == order.id, ServiceOrderQuote.organization_id == order.organization_id, ServiceOrderQuote.status.in_(ACTIVE_QUOTE_STATUSES)).all():
+    previous_quotes = db.query(ServiceOrderQuote).filter(
+        ServiceOrderQuote.service_order_id == order.id,
+        ServiceOrderQuote.organization_id == order.organization_id,
+        ServiceOrderQuote.status.in_(ACTIVE_QUOTE_STATUSES | {"APPROVED"}),
+    ).all()
+    for previous in previous_quotes:
+        previous_plan = db.query(ServiceOrderPaymentPlan).filter_by(
+            service_order_id=order.id,
+            organization_id=order.organization_id,
+            quote_id=previous.id,
+            quote_version=previous.version,
+            status="ACTIVE",
+        ).first()
+        if previous_plan and any(item.status == "PAID" for item in previous_plan.installments):
+            raise HTTPException(status_code=409, detail="Orçamento com pagamento não pode ser substituído")
         previous.status = "SUPERSEDED"
+        if previous_plan:
+            previous_plan.status = "SUPERSEDED"
     items = []
     subtotal = Decimal("0.00")
     for index, raw in enumerate(raw_items):
@@ -153,6 +170,8 @@ def approve_public_quote(db: Session, order: ServiceOrder) -> ServiceOrderQuote:
     quote.approved_source = "PUBLIC_TRACKING_TOKEN"
     quote.approved_total = quote.total
     quote.approved_snapshot = {"version": quote.version, "currency": quote.currency, "subtotal": str(quote.subtotal), "discount_amount": str(quote.discount_amount), "tax_amount": str(quote.tax_amount), "total": str(quote.total), "items": [{"description": i.description, "quantity": str(i.quantity), "unit": i.unit, "unit_price": str(i.unit_price), "subtotal": str(i.subtotal)} for i in quote.items]}
+    from app.services.service_order_payment_plan_service import create_payment_plan_for_approved_quote
+    create_payment_plan_for_approved_quote(db, order, quote)
     return quote
 
 

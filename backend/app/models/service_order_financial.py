@@ -17,6 +17,8 @@ class ServiceOrderFinancial(Base):
     currency = Column(String(8), nullable=False, default="MXN")
     visit_fee = Column(Numeric(12, 2), nullable=False, default=Decimal("0.00"))
     approved_quote_amount = Column(Numeric(12, 2), nullable=False, default=Decimal("0.00"))
+    service_paid_amount = Column(Numeric(12, 2), nullable=False, default=Decimal("0.00"))
+    service_outstanding_balance = Column(Numeric(12, 2), nullable=False, default=Decimal("0.00"))
     amount_due = Column(Numeric(12, 2), nullable=False, default=Decimal("0.00"))
     amount_paid = Column(Numeric(12, 2), nullable=False, default=Decimal("0.00"))
     amount_refunded = Column(Numeric(12, 2), nullable=False, default=Decimal("0.00"))

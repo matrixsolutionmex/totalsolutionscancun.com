@@ -17,6 +17,7 @@ class Payment(Base):
     lead_id = Column(Integer, ForeignKey("leads.id"), nullable=True, index=True)
     technician_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     upgrade_intent_id = Column(Integer, ForeignKey("commercial_upgrade_intents.id"), nullable=True, index=True)
+    installment_id = Column(Integer, ForeignKey("service_order_payment_installments.id"), nullable=True, index=True)
 
     payment_type = Column(String(40), nullable=False, index=True)
     payment_method = Column(String(40), nullable=False, index=True)
