@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.payment import Payment, PlatformLedgerEntry
+from app.services.service_order_financial_service import record_visit_payment
 
 
 STRIPE_API_URL = "https://api.stripe.com/v1"
@@ -130,8 +131,12 @@ def create_stripe_checkout(
         if recurring:
             data["line_items[0][price_data][recurring][interval]"] = "month"
     payload = _stripe_request("/checkout/sessions", data=data, idempotency_key=payment.idempotency_key)
-    payment.stripe_checkout_session_id = payload.get("id")
-    payment.checkout_url = payload.get("url")
+    checkout_session_id = payload.get("id")
+    checkout_url = payload.get("url")
+    if not checkout_session_id or not isinstance(checkout_url, str) or not checkout_url.strip():
+        raise HTTPException(status_code=502, detail="Stripe nao retornou um checkout valido")
+    payment.stripe_checkout_session_id = checkout_session_id
+    payment.checkout_url = checkout_url.strip()
     payment.status = "CHECKOUT_CREATED"
     payment.updated_at = datetime.utcnow()
     db.flush()
@@ -205,6 +210,20 @@ def handle_stripe_event(db: Session, event: dict) -> Payment | None:
         return None
     checkout_paid = event_type != "checkout.session.completed" or object_data.get("payment_status") == "paid"
     if checkout_paid and event_type in {"checkout.session.completed", "invoice.paid", "payment_intent.succeeded"}:
+        if payment.payment_type == "TECHNICAL_VISIT" and payment.status not in {"PAID", "PAID_CASH"}:
+            try:
+                expected_amount = object_data.get("amount_received")
+                if expected_amount is None:
+                    expected_amount = object_data.get("amount_total")
+                expected_currency = str(object_data.get("currency") or "").lower()
+                if expected_amount is None or not expected_currency:
+                    raise ValueError("visit payment amount or currency is missing")
+                record_visit_payment(db, payment, provider_payload=object_data)
+            except (TypeError, ValueError):
+                payment.status = "FAILED"
+                payment.updated_at = datetime.utcnow()
+                db.flush()
+                return payment
         return mark_payment_paid(db, payment, provider_payload=object_data)
     if event_type in {"payment_intent.payment_failed", "invoice.payment_failed"} and payment.status not in {"PAID", "PAID_CASH"}:
         payment.status = "FAILED"

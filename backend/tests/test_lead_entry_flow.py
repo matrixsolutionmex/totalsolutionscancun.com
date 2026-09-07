@@ -20,11 +20,16 @@ from app.models.lead_document import LeadDocument
 from app.models.lead_event import LeadEvent
 from app.models.notification import EmailOutbox, Notification, NotificationPreference, WebPushSubscription
 from app.models.organization import Organization
+from app.models.organization_payment_policy import OrganizationPaymentPolicy
 from app.models.service_order import ServiceOrder
 from app.models.service_order_tracking import ServiceOrderTracking
 from app.models.service_property import ServiceProperty
 from app.models.service_request import ServiceRequest, ServiceRequestMedia
 from app.models.service_opportunity import ServiceOpportunity
+from app.models.service_order_financial import ServiceOrderFinancial
+from app.models.service_order_ledger_entry import ServiceOrderLedgerEntry
+from app.models.visit_pricing_snapshot import VisitPricingSnapshot
+from app.models.payment import Payment, PlatformLedgerEntry
 from app.models.user import User
 from app.routes.integration_routes import create_integration_lead, require_integration_token
 from app.routes.lead_document_routes import (
@@ -84,6 +89,12 @@ def db():
             ServiceOrder.__table__,
             ServiceOrderTracking.__table__,
             ServiceOpportunity.__table__,
+            ServiceOrderFinancial.__table__,
+            ServiceOrderLedgerEntry.__table__,
+            VisitPricingSnapshot.__table__,
+            OrganizationPaymentPolicy.__table__,
+            Payment.__table__,
+            PlatformLedgerEntry.__table__,
             LeadEvent.__table__,
             LeadDocument.__table__,
             DeletionRequest.__table__,
@@ -117,6 +128,16 @@ def make_user(db, username, role, manager_id=None, organization_id=None, status=
     db.commit()
     db.refresh(user)
     return user
+
+
+def mark_order_without_visit_charge(db, order):
+    """Keep legacy tracking tests focused on tracking, without a payable visit."""
+    account = db.query(ServiceOrderFinancial).filter_by(service_order_id=order.id).one()
+    account.financial_status = "NO_CHARGE"
+    account.amount_due = 0
+    policy = db.query(OrganizationPaymentPolicy).filter_by(organization_id=order.organization_id).one()
+    policy.visit_payment_timing = "ON_ARRIVAL"
+    db.commit()
 
 
 def make_organization(db, slug, name):
@@ -1389,6 +1410,7 @@ def test_public_tracking_uses_canonical_state_for_stale_and_orphaned_sessions(db
     order.responsible_user_id = technician.id
     db.commit()
 
+    mark_order_without_visit_charge(db, order)
     start_tracking(db, order.id, technician, True)
     update_tracking_position(db, order.id, technician, 21.1610, -86.8505, 12)
     tracking = order.tracking
@@ -1567,6 +1589,7 @@ def test_public_tracking_exposes_only_current_active_position_and_hides_it_after
     order.location_lng = -86.8515
     db.commit()
 
+    mark_order_without_visit_charge(db, order)
     before_start = service_request_public_tracking(service_request)
     assert before_start["tracking_active"] is False
     assert before_start["technician_lat"] is None
@@ -1624,6 +1647,7 @@ def test_public_tracking_uses_active_order_status_when_request_status_is_stale(d
     order.location_lng = -86.8515
     db.commit()
 
+    mark_order_without_visit_charge(db, order)
     start_tracking(db, order.id, technician, True)
     update_tracking_position(db, order.id, technician, 21.1610, -86.8505, 12)
     service_request.status = "SALES_QUEUE"
@@ -1651,6 +1675,7 @@ def test_public_tracking_uses_tracking_technician_when_order_responsible_snapsho
     order.location_lat = 21.1619
     order.location_lng = -86.8515
     db.commit()
+    mark_order_without_visit_charge(db, order)
     start_tracking(db, order.id, technician, True)
     update_tracking_position(db, order.id, technician, 21.1610, -86.8505, 12)
     order.responsible_user_id = None
@@ -1670,6 +1695,7 @@ def test_public_tracking_hides_position_after_terminal_or_arrival_stop(db, reaso
     order = service_request.service_order
     order.responsible_user_id = technician.id
     db.commit()
+    mark_order_without_visit_charge(db, order)
     start_tracking(db, order.id, technician, True)
     update_tracking_position(db, order.id, technician, 21.1620, -86.8516, 12)
     stop_tracking(db, order.id, technician, reason)

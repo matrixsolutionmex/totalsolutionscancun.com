@@ -166,4 +166,4 @@ def public_service_request_tracking(tracking_token: str, db: Session = Depends(g
     )
     if not service_request:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
-    return service_request_public_tracking(service_request)
+    return service_request_public_tracking(service_request, db)

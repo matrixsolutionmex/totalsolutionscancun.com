@@ -92,6 +92,10 @@ def append_ledger_entry(db: Session, order, *, organization_id: int, entry_type:
     )
     db.add(entry)
     db.flush()
+    if db.query(ServiceOrderFinancial).filter_by(
+        service_order_id=order.id, organization_id=organization_id,
+    ).first():
+        sync_financial_account_projection(db, order, organization_id=organization_id)
     return entry
 
 
@@ -108,6 +112,24 @@ def calculate_order_balance(db: Session, order, *, organization_id: int) -> dict
             "outstanding_balance": max(Decimal("0"), charges - payments - refunds)}
 
 
+def sync_financial_account_projection(db: Session, order, *, organization_id: int, financial_status: str | None = None):
+    """Persist the ledger-derived amounts without creating a second balance source."""
+    _require_order_scope(order, organization_id)
+    account = db.query(ServiceOrderFinancial).filter_by(
+        service_order_id=order.id, organization_id=organization_id,
+    ).first()
+    if not account:
+        raise ValueError("financial account not found")
+    balance = calculate_order_balance(db, order, organization_id=organization_id)
+    account.amount_due = balance["outstanding_balance"]
+    account.amount_paid = balance["payments"]
+    account.outstanding_balance = balance["outstanding_balance"]
+    if financial_status is not None:
+        account.financial_status = financial_status
+    db.flush()
+    return balance
+
+
 def get_financial_snapshot(db: Session, order, *, organization_id: int) -> dict:
     """Read the tenant-scoped financial account and ledger-derived balance."""
     account = db.query(ServiceOrderFinancial).filter_by(
@@ -117,6 +139,53 @@ def get_financial_snapshot(db: Session, order, *, organization_id: int) -> dict:
         raise ValueError("financial account not found")
     balance = calculate_order_balance(db, order, organization_id=organization_id)
     return {"account": account, "balance": balance, "financial_status": account.financial_status}
+
+
+def record_visit_payment(db: Session, payment, *, provider_payload: dict):
+    """Apply a confirmed visit payment to the order ledger exactly once."""
+    from app.models.service_order import ServiceOrder
+
+    if payment.payment_type != "TECHNICAL_VISIT":
+        raise ValueError("payment is not a technical visit")
+    order = db.query(ServiceOrder).filter(ServiceOrder.id == payment.service_order_id).first()
+    if not order or payment.organization_id != order.organization_id:
+        raise ValueError("payment service order tenant mismatch")
+    snapshot = db.query(VisitPricingSnapshot).filter_by(
+        service_order_id=order.id, organization_id=payment.organization_id,
+    ).first()
+    account = db.query(ServiceOrderFinancial).filter_by(
+        service_order_id=order.id, organization_id=payment.organization_id,
+    ).first()
+    if not snapshot or not account:
+        raise ValueError("visit financial records are incomplete")
+
+    provider_currency = str(provider_payload.get("currency") or "").upper()
+    provider_amount_minor = provider_payload.get("amount_received")
+    if provider_amount_minor is None:
+        provider_amount_minor = provider_payload.get("amount_total")
+    expected_currency = str(payment.currency or snapshot.currency or "").upper()
+    expected_minor = int((_money(snapshot.total_amount) * 100).to_integral_value())
+    try:
+        provider_amount_minor = int(provider_amount_minor)
+    except (TypeError, ValueError):
+        raise ValueError("visit payment amount is invalid") from None
+    if provider_currency != expected_currency or provider_amount_minor != expected_minor:
+        raise ValueError("visit payment amount or currency mismatch")
+
+    entry = append_ledger_entry(
+        db, order, organization_id=payment.organization_id, entry_type="VISIT_PAYMENT",
+        amount=snapshot.total_amount, currency=snapshot.currency, payment_method="STRIPE_CARD",
+        payment_id=payment.id, external_reference=provider_payload.get("id"),
+        idempotency_key=f"visit-payment:{payment.id}",
+    )
+    account.visit_fee = _money(snapshot.total_amount)
+    balance = sync_financial_account_projection(
+        db, order, organization_id=payment.organization_id,
+        financial_status="VISIT_PAID" if calculate_order_balance(
+            db, order, organization_id=payment.organization_id,
+        )["outstanding_balance"] <= 0 else "PARTIALLY_PAID",
+    )
+    return entry
 
 
 def calculate_marketplace_fee(amount, *, order_origin: str, policy: OrganizationPaymentPolicy) -> Decimal:
@@ -156,7 +225,7 @@ def payment_schedule(amount, *, policy: OrganizationPaymentPolicy) -> list[dict]
 
 
 def can_dispatch_service_order(order, *, financial_account: ServiceOrderFinancial, policy: OrganizationPaymentPolicy, balance: dict) -> bool:
-    if financial_account.order_origin == "MARKETPLACE" and policy.visit_payment_timing == "PREPAID":
+    if financial_account.order_origin in {"MARKETPLACE", "MARKETPLACE_ESCALATED"} and policy.visit_payment_timing == "PREPAID":
         return any(value > 0 for key, value in balance.items() if key == "payments") and balance["outstanding_balance"] <= 0
     if policy.visit_payment_timing == "ON_ARRIVAL":
         return True

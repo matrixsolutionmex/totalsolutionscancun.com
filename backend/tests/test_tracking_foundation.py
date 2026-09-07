@@ -14,6 +14,11 @@ from app.models.lead_event import LeadEvent
 from app.models.organization import Organization
 from app.models.service_order import ServiceOrder
 from app.models.service_order_tracking import ServiceOrderTracking
+from app.models.service_order_financial import ServiceOrderFinancial
+from app.models.service_order_ledger_entry import ServiceOrderLedgerEntry
+from app.models.visit_pricing_snapshot import VisitPricingSnapshot
+from app.models.organization_payment_policy import OrganizationPaymentPolicy
+from app.models.payment import Payment, PlatformLedgerEntry
 from app.models.service_property import ServiceProperty
 from app.models.service_request import ServiceRequest
 from app.models.user import User
@@ -51,6 +56,12 @@ def db():
             ServiceOrder.__table__,
             ServiceOrderTracking.__table__,
             LeadEvent.__table__,
+            ServiceOrderFinancial.__table__,
+            ServiceOrderLedgerEntry.__table__,
+            VisitPricingSnapshot.__table__,
+            OrganizationPaymentPolicy.__table__,
+            Payment.__table__,
+            PlatformLedgerEntry.__table__,
         ],
     )
     session = sessionmaker(bind=engine)()

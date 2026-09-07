@@ -14,6 +14,8 @@ from app.services.customer_portal_service import public_tracking_url
 from app.services.route_intelligence_service import calculate_route
 from app.services.tracking_state_service import is_tracking_session_active, tracking_session_state
 from app.services.tracking_health_service import tracking_health
+from app.models.service_order_financial import ServiceOrderFinancial
+from app.services.service_order_financial_service import can_dispatch_service_order, calculate_order_balance, resolve_payment_policy
 
 
 STARTABLE_ORDER_STATUSES = TRACKING_STARTABLE_ORDER_STATUSES
@@ -223,6 +225,14 @@ def start_tracking(db: Session, order_id: int, actor: User, consent_granted: boo
     _require_assigned_technician(order, actor)
     if not consent_granted:
         raise HTTPException(status_code=400, detail="Consentimento obrigatorio para compartilhar a localizacao")
+    financial_account = db.query(ServiceOrderFinancial).filter_by(
+        service_order_id=order.id, organization_id=order.organization_id,
+    ).first()
+    if financial_account:
+        policy = resolve_payment_policy(db, organization_id=order.organization_id)
+        balance = calculate_order_balance(db, order, organization_id=order.organization_id)
+        if not can_dispatch_service_order(order, financial_account=financial_account, policy=policy, balance=balance):
+            raise HTTPException(status_code=409, detail="Pagamento da visita pendente")
     if (order.status or "").upper() in TERMINAL_ORDER_STATUSES:
         raise HTTPException(status_code=409, detail="A OS ja foi encerrada")
     normalized_status = (order.status or "").strip().upper()
@@ -440,7 +450,7 @@ def diagnose_tracking_for_root(db: Session, order_id: int, actor: User) -> dict:
     # Import locally because the tracking service already owns the public URL helper.
     from app.services.customer_portal_service import service_request_public_tracking
 
-    public_projection = service_request_public_tracking(order.service_request) if order.service_request else None
+    public_projection = service_request_public_tracking(order.service_request, db) if order.service_request else None
     if public_projection is not None:
         public_projection = dict(public_projection)
         public_projection.pop("tracking_token", None)

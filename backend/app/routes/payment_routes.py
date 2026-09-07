@@ -11,7 +11,10 @@ from app.auth.jwt_handler import get_current_user, get_db, require_admin_user
 from app.models.payment import Payment
 from app.models.service_order import ServiceOrder
 from app.models.service_request import ServiceRequest
+from app.models.service_order_financial import ServiceOrderFinancial
+from app.models.visit_pricing_snapshot import VisitPricingSnapshot
 from app.services.commercial_upgrade_service import activate_upgrade_from_paid_payment
+from app.services.service_order_financial_service import resolve_payment_policy
 from app.services.payment_service import (
     create_payment,
     handle_stripe_event,
@@ -49,8 +52,8 @@ def create_public_visit_checkout(
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
 ):
-    if not idempotency_key or len(idempotency_key) > 120:
-        raise HTTPException(status_code=400, detail="Idempotency-Key obrigatorio")
+    if idempotency_key and len(idempotency_key) > 120:
+        raise HTTPException(status_code=400, detail="Idempotency-Key invalido")
     if not os.getenv("STRIPE_SECRET_KEY", "").strip():
         raise HTTPException(status_code=503, detail="Checkout Stripe nao configurado")
     service_request = (
@@ -61,24 +64,47 @@ def create_public_visit_checkout(
     order = service_request.service_order if service_request else None
     if not order or not order.organization_id:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
-    amount = order.final_service_price or order.visit_calculated_price
-    if amount is None or Decimal(amount) <= 0:
+    snapshot = db.query(VisitPricingSnapshot).filter_by(
+        service_order_id=order.id, organization_id=order.organization_id,
+    ).first()
+    financial_account = db.query(ServiceOrderFinancial).filter_by(
+        service_order_id=order.id, organization_id=order.organization_id,
+    ).first()
+    policy = resolve_payment_policy(db, organization_id=order.organization_id)
+    if not snapshot or not financial_account or not policy.visit_required:
+        raise HTTPException(status_code=409, detail="La visita no esta disponible para pago")
+    if (order.status or "").strip().upper() in {"CANCELLED", "CANCELADA", "CONCLUIDA", "FINALIZADA", "COMPLETED"}:
+        raise HTTPException(status_code=409, detail="La orden no admite pago de visita")
+    amount = Decimal(snapshot.total_amount)
+    if amount <= 0:
         raise HTTPException(status_code=409, detail="La visita aun no tiene un importe definido")
-    base_url = _public_base_url()
-    if not base_url:
-        raise HTTPException(status_code=503, detail="Checkout publico no configurado")
-    payment = create_payment(
+    if str(snapshot.currency).upper() != str(policy.currency).upper():
+        raise HTTPException(status_code=409, detail="La moneda de la visita no coincide con la politica")
+    existing = db.query(Payment).filter(
+        Payment.service_order_id == order.id,
+        Payment.organization_id == order.organization_id,
+        Payment.payment_type == "TECHNICAL_VISIT",
+        Payment.status.in_(["PENDING", "CHECKOUT_CREATED", "PAID"]),
+    ).order_by(Payment.created_at.desc(), Payment.id.desc()).first()
+    if existing and existing.status == "PAID":
+        raise HTTPException(status_code=409, detail="VISIT_ALREADY_PAID")
+    payment = existing or create_payment(
         db,
         organization_id=order.organization_id,
-        payment_type="SERVICE" if order.final_service_price is not None else "TECHNICAL_VISIT",
+        payment_type="TECHNICAL_VISIT",
         payment_method="STRIPE_CARD",
-        amount=Decimal(amount),
+        amount=amount,
         service_request_id=service_request.id,
         service_order_id=order.id,
         lead_id=order.lead_id,
         technician_id=order.responsible_user_id,
-        idempotency_key=f"public-checkout:{tracking_token}:{idempotency_key}",
+        idempotency_key=f"visit-checkout:{order.id}",
     )
+    if payment.gross_amount != amount or str(payment.currency).upper() != str(snapshot.currency).upper():
+        raise HTTPException(status_code=409, detail="El pago pendiente no coincide con el snapshot")
+    base_url = _public_base_url()
+    if not base_url:
+        raise HTTPException(status_code=503, detail="Checkout publico no configurado")
     create_stripe_checkout(
         db,
         payment,
@@ -86,8 +112,9 @@ def create_public_visit_checkout(
         cancel_url=f"{base_url}/seguimiento/{tracking_token}?payment=cancelled",
         description="Total Solutions - visita tecnica",
     )
+    payment.status = "PENDING"
     db.commit()
-    return {"payment_id": payment.id, "status": payment.status, "checkout_url": payment.checkout_url}
+    return {"status": payment.status, "checkout_url": payment.checkout_url}
 
 
 @router.get("")

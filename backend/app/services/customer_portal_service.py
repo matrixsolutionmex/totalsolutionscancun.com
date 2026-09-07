@@ -26,6 +26,15 @@ from app.services.tracking_health_service import tracking_health
 from app.services.tracking_state_service import is_tracking_session_active, tracking_session_state
 from app.services.pricing_engine_service import calculate_preliminary_pricing, pricing_snapshot
 from app.services.localization_service import normalize_language
+from app.services.service_order_financial_service import (
+    append_ledger_entry,
+    create_visit_pricing_snapshot,
+    ensure_financial_account,
+    resolve_payment_policy,
+)
+from app.models.payment import Payment
+from app.models.service_order_financial import ServiceOrderFinancial
+from app.models.visit_pricing_snapshot import VisitPricingSnapshot
 
 
 ALLOWED_MEDIA_TYPES = {
@@ -329,6 +338,32 @@ def create_customer_request_and_order(
     for field, value in pricing_fields.items():
         if hasattr(service_order, field):
             setattr(service_order, field, value)
+    order_origin = "MARKETPLACE" if marketplace_link else "PRIVATE"
+    financial_account = ensure_financial_account(
+        db, service_order, organization_id=organization_id, order_origin=order_origin,
+    )
+    policy = resolve_payment_policy(db, organization_id=organization_id)
+    visit_snapshot = create_visit_pricing_snapshot(
+        db, service_order, organization_id=organization_id,
+        pricing={
+            "base_price": pricing["visit_base_price"],
+            "zone_fee": pricing["travel_surcharge"],
+            "distance_fee": 0,
+            "urgency_fee": (pricing["visit_calculated_price"] or 0) - (pricing["visit_base_price"] or 0) - (pricing["travel_surcharge"] or 0),
+            "total_amount": pricing["visit_calculated_price"],
+            "currency": pricing["pricing_currency"],
+            "pricing_version": pricing["pricing_version"],
+        },
+    )
+    financial_account.visit_fee = visit_snapshot.total_amount
+    financial_account.amount_due = visit_snapshot.total_amount if policy.visit_required else 0
+    financial_account.financial_status = "VISIT_PAYMENT_PENDING" if policy.visit_required and visit_snapshot.total_amount else "NO_CHARGE"
+    if policy.visit_required and visit_snapshot.total_amount:
+        append_ledger_entry(
+            db, service_order, organization_id=organization_id, entry_type="VISIT_CHARGE",
+            amount=visit_snapshot.total_amount, currency=visit_snapshot.currency,
+            idempotency_key=f"visit-charge:{service_order.id}",
+        )
     db.add(
         LeadEvent(
             organization_id=organization_id,
@@ -402,7 +437,7 @@ def _public_operational_status(request: ServiceRequest, order) -> str:
     return labels[language].get(internal_status, labels[language]["SALES_QUEUE"])
 
 
-def service_request_public_tracking(request: ServiceRequest) -> dict[str, Any]:
+def service_request_public_tracking(request: ServiceRequest, db: Session | None = None) -> dict[str, Any]:
     """Serialize only current, token-authorized tracking data for the customer portal."""
     order = request.service_order
     tracking = getattr(order, "tracking", None) if order else None
@@ -418,6 +453,19 @@ def service_request_public_tracking(request: ServiceRequest) -> dict[str, Any]:
     if technician is None and tracking:
         technician = getattr(tracking, "technician", None)
     technician_name = (technician.full_name or technician.username) if technician else None
+    financial_account = db.query(ServiceOrderFinancial).filter_by(
+        service_order_id=order.id, organization_id=order.organization_id,
+    ).first() if db and order else None
+    visit_snapshot = db.query(VisitPricingSnapshot).filter_by(
+        service_order_id=order.id, organization_id=order.organization_id,
+    ).first() if db and order else None
+    visit_payment = db.query(Payment).filter(
+        Payment.service_order_id == order.id,
+        Payment.organization_id == order.organization_id,
+        Payment.payment_type == "TECHNICAL_VISIT",
+    ).order_by(Payment.created_at.desc(), Payment.id.desc()).first() if db and order else None
+    payment_status = visit_payment.status if visit_payment else "NOT_STARTED"
+    visit_required = bool(financial_account and visit_snapshot and visit_snapshot.total_amount and financial_account.financial_status != "NO_CHARGE")
     health = tracking_health(tracking) if tracking_active else tracking_health(None)
     route = {"available": False, "distance_m": None, "duration_s": None, "eta_at": None, "geometry": None}
     if tracking_active and tracking.current_lat is not None and tracking.current_lng is not None and destination_lat is not None and destination_lng is not None:
@@ -456,6 +504,11 @@ def service_request_public_tracking(request: ServiceRequest) -> dict[str, Any]:
         "route_duration_s": route.get("duration_s") if tracking_active else None,
         "route_eta_at": route.get("eta_at") if tracking_active and health["tracking_health"] != "OFFLINE" else None,
         "route_geometry": route.get("geometry") if tracking_active else None,
+        "visit_required": visit_required,
+        "visit_amount": visit_snapshot.total_amount if visit_required else None,
+        "currency": visit_snapshot.currency if visit_snapshot else None,
+        "payment_status": payment_status,
+        "checkout_available": bool(visit_required and payment_status not in {"PAID", "PAID_CASH"} and not getattr(order, "status", "").upper() in {"CANCELLED", "CANCELADA", "CONCLUIDA", "FINALIZADA"}),
     }
 
 

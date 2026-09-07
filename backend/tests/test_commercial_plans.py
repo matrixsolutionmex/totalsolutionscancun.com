@@ -23,6 +23,10 @@ from app.models.service_order import ServiceOrder
 from app.models.service_request import ServiceRequest
 from app.models.service_property import ServiceProperty
 from app.models.service_order_tracking import ServiceOrderTracking  # noqa: F401 - registers ServiceOrder relationship
+from app.models.service_order_financial import ServiceOrderFinancial
+from app.models.service_order_ledger_entry import ServiceOrderLedgerEntry
+from app.models.visit_pricing_snapshot import VisitPricingSnapshot
+from app.models.organization_payment_policy import OrganizationPaymentPolicy
 from app.models.user import User
 from app.models.user_commercial_profile import UserCommercialProfile
 from app.routes.organization_routes import available_organizations
@@ -41,7 +45,10 @@ from app.services.commercial_upgrade_service import (
     normalize_existing_upgrade_intents,
     activate_upgrade_from_paid_payment,
 )
-from app.services.payment_service import handle_stripe_event, mark_payment_paid, record_cash_payment
+from app.services.payment_service import create_payment, create_stripe_checkout, handle_stripe_event, mark_payment_paid, record_cash_payment
+from app.services.customer_portal_service import service_request_public_tracking
+from app.services.service_order_financial_service import append_ledger_entry, can_dispatch_service_order, sync_financial_account_projection
+from app.services.service_order_financial_service import calculate_order_balance
 from app.services.notification_service import notification_push_payload
 from app.services.entitlement_service import account_snapshot, can_use_feature, current_plan, get_plan_limits, plan_catalog, resolve_plan
 from app.services.platform_admin_service import (
@@ -56,7 +63,7 @@ from app.services.platform_admin_service import (
 @pytest.fixture()
 def commercial_db():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(bind=engine, tables=[Organization.__table__, User.__table__, Lead.__table__, OrganizationMarketplaceLink.__table__, ServiceProperty.__table__, ServiceRequest.__table__, ServiceOrder.__table__, ServiceOpportunity.__table__, CommercialSubscription.__table__, PlanChangeEvent.__table__, CommercialUpgradeIntent.__table__, Payment.__table__, PlatformLedgerEntry.__table__, AuthAuditEvent.__table__, Notification.__table__, NotificationPreference.__table__, WebPushSubscription.__table__])
+    Base.metadata.create_all(bind=engine, tables=[Organization.__table__, User.__table__, Lead.__table__, OrganizationMarketplaceLink.__table__, ServiceProperty.__table__, ServiceRequest.__table__, ServiceOrder.__table__, ServiceOpportunity.__table__, ServiceOrderTracking.__table__, CommercialSubscription.__table__, PlanChangeEvent.__table__, CommercialUpgradeIntent.__table__, Payment.__table__, PlatformLedgerEntry.__table__, ServiceOrderFinancial.__table__, ServiceOrderLedgerEntry.__table__, VisitPricingSnapshot.__table__, OrganizationPaymentPolicy.__table__, AuthAuditEvent.__table__, Notification.__table__, NotificationPreference.__table__, WebPushSubscription.__table__])
     db = sessionmaker(bind=engine)()
     db.execute(text("CREATE UNIQUE INDEX uq_commercial_active_intent_org ON commercial_upgrade_intents (organization_id) WHERE status IN ('CHECKOUT_OPENED', 'PAYMENT_PENDING', 'PAYMENT_CONFIRMED', 'PAID')"))
     org = Organization(name="Commercial Org", slug="commercial-org")
@@ -338,6 +345,11 @@ def test_public_visit_checkout_uses_order_amount_and_is_idempotent(commercial_db
     )
     db.add(order)
     db.commit()
+    account = ServiceOrderFinancial(organization_id=actor.organization_id, service_order_id=order.id, financial_status="VISIT_PAYMENT_PENDING", amount_due=Decimal("450.00"))
+    snapshot = VisitPricingSnapshot(organization_id=actor.organization_id, service_order_id=order.id, total_amount=Decimal("450.00"), currency="MXN", pricing_version="test")
+    policy = OrganizationPaymentPolicy(organization_id=actor.organization_id)
+    db.add_all([account, snapshot, policy])
+    db.commit()
     monkeypatch.setenv("STRIPE_SECRET_KEY", "sandbox-test-secret")
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.test")
     monkeypatch.setattr(
@@ -349,15 +361,180 @@ def test_public_visit_checkout_uses_order_amount_and_is_idempotent(commercial_db
         "public-payment-token", PublicStripeCheckoutRequest(), "visit-key-1", db,
     )
     repeated = create_public_visit_checkout(
-        "public-payment-token", PublicStripeCheckoutRequest(), "visit-key-1", db,
+        "public-payment-token", PublicStripeCheckoutRequest(), "visit-key-2", db,
     )
-    payment = db.query(Payment).filter(Payment.id == result["payment_id"]).one()
-    assert result == repeated
+    payment = db.query(Payment).filter(Payment.service_order_id == order.id).one()
+    assert result["status"] == repeated["status"] == "PENDING"
+    assert result["checkout_url"] == repeated["checkout_url"]
     assert payment.payment_type == "TECHNICAL_VISIT"
     assert payment.gross_amount == Decimal("450.00")
-    assert payment.status == "CHECKOUT_CREATED"
+    assert payment.status == "PENDING"
     assert payment.paid_at is None
     assert db.query(Payment).filter(Payment.service_order_id == order.id).count() == 1
+
+
+def test_checkout_url_keeps_fragment_and_missing_url_is_rejected(commercial_db, monkeypatch):
+    db, actor, _, _ = commercial_db
+    payment = create_payment(
+        db, organization_id=actor.organization_id, payment_type="TECHNICAL_VISIT",
+        payment_method="STRIPE_CARD", amount=Decimal("450.00"),
+        idempotency_key="checkout-url-integrity",
+    )
+    db.commit()
+    checkout_url = "https://checkout.stripe.com/c/pay/cs_test_integrity#fid=abc%2Fdef&locale=es"
+    monkeypatch.setattr(
+        "app.services.payment_service._stripe_request",
+        lambda *args, **kwargs: {"id": "cs_test_integrity", "url": checkout_url},
+    )
+    create_stripe_checkout(
+        db, payment, success_url="https://example.test/success",
+        cancel_url="https://example.test/cancel", description="Visita",
+    )
+    assert payment.checkout_url == checkout_url
+
+    missing_url_payment = create_payment(
+        db, organization_id=actor.organization_id, payment_type="TECHNICAL_VISIT",
+        payment_method="STRIPE_CARD", amount=Decimal("450.00"),
+        idempotency_key="checkout-url-missing",
+    )
+    monkeypatch.setattr(
+        "app.services.payment_service._stripe_request",
+        lambda *args, **kwargs: {"id": "cs_test_missing_url"},
+    )
+    with pytest.raises(Exception) as error:
+        create_stripe_checkout(
+            db, missing_url_payment, success_url="https://example.test/success",
+            cancel_url="https://example.test/cancel", description="Visita",
+        )
+    assert getattr(error.value, "status_code", None) == 502
+
+
+def test_visit_balance_projection_survives_new_session_after_charge(commercial_db):
+    db, actor, _, _ = commercial_db
+    _, order, account = _visit_payment_fixture(db, actor.organization_id, token="projection-new-session")
+    db.commit()
+    order_id = order.id
+    organization_id = actor.organization_id
+    engine = db.get_bind()
+    db.close()
+    reopened = sessionmaker(bind=engine)()
+    try:
+        fresh_order = reopened.query(ServiceOrder).filter_by(id=order_id).one()
+        fresh_account = reopened.query(ServiceOrderFinancial).filter_by(service_order_id=order_id).one()
+        assert calculate_order_balance(reopened, fresh_order, organization_id=organization_id)["outstanding_balance"] == Decimal("450.00")
+        assert fresh_account.outstanding_balance == Decimal("450.00")
+        assert fresh_account.amount_paid == Decimal("0.00")
+    finally:
+        reopened.close()
+
+
+def _visit_payment_fixture(db, organization_id, token="visit-payment-token", *, origin="MARKETPLACE"):
+    lead = Lead(organization_id=organization_id, nome="Cliente visita", tipo_servico="HIDRAULICA")
+    db.add(lead)
+    db.flush()
+    request = ServiceRequest(
+        organization_id=organization_id, lead_id=lead.id, tracking_token=token,
+        service_category="HIDRAULICA", requester_name="Cliente visita",
+    )
+    db.add(request)
+    db.flush()
+    order = ServiceOrder(
+        organization_id=organization_id, lead_id=lead.id, service_request_id=request.id,
+        status="ABERTA", order_number=f"TS-2026-{lead.id:06d}",
+    )
+    db.add(order)
+    db.flush()
+    account = ServiceOrderFinancial(
+        organization_id=organization_id, service_order_id=order.id, order_origin=origin,
+        financial_status="VISIT_PAYMENT_PENDING", amount_due=Decimal("450.00"),
+    )
+    snapshot = VisitPricingSnapshot(
+        organization_id=organization_id, service_order_id=order.id, total_amount=Decimal("450.00"),
+        currency="MXN", pricing_version="test",
+    )
+    policy = OrganizationPaymentPolicy(organization_id=organization_id)
+    db.add_all([account, snapshot, policy])
+    db.flush()
+    append_ledger_entry(
+        db, order, organization_id=organization_id, entry_type="VISIT_CHARGE", amount=450,
+        currency="MXN", idempotency_key=f"visit-charge:{order.id}",
+    )
+    db.commit()
+    return request, order, account
+
+
+def test_visit_checkout_uses_snapshot_and_webhook_records_one_payment(commercial_db, monkeypatch):
+    db, actor, _, _ = commercial_db
+    request, order, account = _visit_payment_fixture(db, actor.organization_id)
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sandbox-test-secret")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.test")
+    monkeypatch.setattr(
+        "app.services.payment_service._stripe_request",
+        lambda *args, **kwargs: {"id": "cs_visit_paid", "url": "https://checkout.stripe.test/cs_visit_paid"},
+    )
+
+    result = create_public_visit_checkout(request.tracking_token, PublicStripeCheckoutRequest(), "client-key", db)
+    payment = db.query(Payment).filter_by(service_order_id=order.id).one()
+    assert "payment_id" not in result
+    assert payment.status == "PENDING"
+    assert account.financial_status == "VISIT_PAYMENT_PENDING"
+
+    event = {"type": "checkout.session.completed", "id": "evt_visit_1", "data": {"object": {
+        "id": "cs_visit_paid", "client_reference_id": str(payment.id), "payment_status": "paid",
+        "amount_total": 45000, "currency": "mxn",
+    }}}
+    handle_stripe_event(db, event)
+    db.commit()
+    handle_stripe_event(db, event)
+    db.commit()
+    db.refresh(account)
+    assert payment.status == "PAID"
+    assert db.query(ServiceOrderLedgerEntry).filter_by(service_order_id=order.id, entry_type="VISIT_PAYMENT").count() == 1
+    assert account.financial_status == "VISIT_PAID"
+    assert calculate_order_balance(db, order, organization_id=actor.organization_id)["outstanding_balance"] == Decimal("0.00")
+
+
+def test_visit_webhook_amount_mismatch_does_not_release_dispatch(commercial_db, monkeypatch):
+    db, actor, _, _ = commercial_db
+    request, order, account = _visit_payment_fixture(db, actor.organization_id, token="visit-mismatch-token")
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sandbox-test-secret")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.test")
+    monkeypatch.setattr("app.services.payment_service._stripe_request", lambda *args, **kwargs: {"id": "cs_bad", "url": "https://checkout.stripe.test/cs_bad"})
+    create_public_visit_checkout(request.tracking_token, PublicStripeCheckoutRequest(), None, db)
+    payment = db.query(Payment).filter_by(service_order_id=order.id).one()
+    handle_stripe_event(db, {"type": "checkout.session.completed", "data": {"object": {
+        "id": "cs_bad", "client_reference_id": str(payment.id), "payment_status": "paid",
+        "amount_total": 99900, "currency": "mxn",
+    }}})
+    db.commit()
+    assert payment.status == "FAILED"
+    assert db.query(ServiceOrderLedgerEntry).filter_by(service_order_id=order.id, entry_type="VISIT_PAYMENT").count() == 0
+    assert account.financial_status == "VISIT_PAYMENT_PENDING"
+
+
+def test_public_tracking_exposes_only_visit_payment_projection(commercial_db):
+    db, actor, _, _ = commercial_db
+    request, order, _ = _visit_payment_fixture(db, actor.organization_id, token="visit-projection-token")
+    projection = service_request_public_tracking(request, db)
+    assert projection["visit_required"] is True
+    assert projection["visit_amount"] == Decimal("450.00")
+    assert projection["payment_status"] == "NOT_STARTED"
+    assert projection["checkout_available"] is True
+    assert "payment_id" not in projection
+    assert "stripe_checkout_session_id" not in projection
+
+
+def test_dispatch_uses_financial_policy_for_marketplace_prepaid(commercial_db):
+    db, actor, _, _ = commercial_db
+    _, order, account = _visit_payment_fixture(db, actor.organization_id, token="visit-dispatch-token")
+    policy = db.query(OrganizationPaymentPolicy).filter_by(organization_id=actor.organization_id).one()
+    balance = calculate_order_balance(db, order, organization_id=actor.organization_id)
+    assert can_dispatch_service_order(order, financial_account=account, policy=policy, balance=balance) is False
+    append_ledger_entry(db, order, organization_id=actor.organization_id, entry_type="VISIT_PAYMENT", amount=450, payment_method="STRIPE_CARD", idempotency_key="dispatch-paid", payment_id=None)
+    db.commit()
+    balance = calculate_order_balance(db, order, organization_id=actor.organization_id)
+    account.financial_status = "VISIT_PAID"
+    assert can_dispatch_service_order(order, financial_account=account, policy=policy, balance=balance) is True
 
 
 def test_broker_cannot_confirm_or_activate_own_upgrade_intent(commercial_db):
