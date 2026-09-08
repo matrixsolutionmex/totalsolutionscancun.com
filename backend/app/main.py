@@ -16,7 +16,7 @@ from app.core.organization import get_or_create_default_organization
 from app.core.storage import UPLOADS_DIR
 from app.auth.routes import router as auth_router
 from app.database.connection import Base, SessionLocal, engine
-from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, service_order_tracking, deletion_request, notification, user_lifecycle, auth_security, organization, organization_invitation, referral_attribution, service_property, service_request, service_opportunity, organization_marketplace_link, commercial_subscription, commercial_upgrade_intent, user_commercial_profile, pricing_rate, payment, service_order_financial, service_order_ledger_entry, visit_pricing_snapshot, organization_payment_policy, service_order_diagnosis, service_order_quote, service_order_payment_plan, service_order_installment_release_event, service_order_completion, service_order_warranty_claim
+from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, service_order_tracking, deletion_request, notification, user_lifecycle, auth_security, organization, organization_invitation, referral_attribution, service_property, service_request, service_opportunity, organization_marketplace_link, commercial_subscription, commercial_upgrade_intent, user_commercial_profile, pricing_rate, payment, service_order_financial, service_order_ledger_entry, visit_pricing_snapshot, organization_payment_policy, service_order_diagnosis, service_order_quote, service_order_payment_plan, service_order_installment_release_event, service_order_completion, service_order_warranty_claim, service_order_review
 from app.models.lead import Lead
 from app.models.service_order import ServiceOrder
 from app.models.user import User
@@ -39,6 +39,7 @@ from app.routes.payment_routes import router as payment_router
 from app.routes.service_order_quote_routes import router as service_order_quote_router
 from app.routes.service_order_completion_routes import router as service_order_completion_router
 from app.routes.service_order_warranty_claim_routes import router as service_order_warranty_claim_router
+from app.routes.service_order_review_routes import router as service_order_review_router
 from app.services.service_order_service import ensure_service_order
 from app.services.notification_service import process_email_outbox
 from app.services.commercial_upgrade_service import normalize_existing_upgrade_intents
@@ -98,6 +99,7 @@ app.include_router(payment_router)
 app.include_router(service_order_quote_router)
 app.include_router(service_order_completion_router)
 app.include_router(service_order_warranty_claim_router)
+app.include_router(service_order_review_router)
 app.include_router(pablo_router)
 
 frontend_dir = Path(__file__).resolve().parents[2] / "frontend"

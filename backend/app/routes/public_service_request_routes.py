@@ -16,6 +16,7 @@ from app.services.localization_service import resolve_language
 from app.services.organization_marketplace_service import public_marketplace_payload, resolve_marketplace_link
 from app.services.service_order_completion_service import customer_acceptance, customer_report_problem
 from app.services.service_order_warranty_claim_service import create_claim, customer_confirm
+from app.services.service_order_review_service import submit_public_review
 
 
 router = APIRouter(prefix="/public", tags=["public-service-requests"])
@@ -26,6 +27,15 @@ class PublicWarrantyClaimInput(BaseModel):
     description: str | None = Field(default=None, max_length=4000)
     evidence_reference: str | None = Field(default=None, max_length=240)
     idempotency_key: str | None = Field(default=None, max_length=128)
+
+
+class PublicReviewInput(BaseModel):
+    overall_rating: int = Field(ge=1, le=5)
+    service_quality_rating: int = Field(ge=1, le=5)
+    punctuality_rating: int = Field(ge=1, le=5)
+    communication_rating: int = Field(ge=1, le=5)
+    nps_score: int | None = Field(default=None, ge=0, le=10)
+    comment: str | None = Field(default=None, max_length=2000)
 
 
 @router.get("/marketplaces/{organization_slug}")
@@ -214,6 +224,15 @@ def public_completion_problem(tracking_token: str, payload: dict | None = None, 
         idempotency_key=f"problem:{tracking_token}",
     )
     db.commit()
+    return service_request_public_tracking(order.service_request, db)
+
+
+@router.post("/service-requests/{tracking_token}/review")
+def public_service_order_review(tracking_token: str, payload: PublicReviewInput, db: Session = Depends(get_db)):
+    order = resolve_public_order(db, tracking_token)
+    row = submit_public_review(db, order, payload.model_dump())
+    db.commit()
+    db.refresh(row)
     return service_request_public_tracking(order.service_request, db)
 
 

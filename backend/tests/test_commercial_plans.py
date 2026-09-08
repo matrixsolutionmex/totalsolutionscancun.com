@@ -522,6 +522,19 @@ def test_public_tracking_exposes_only_visit_payment_projection(commercial_db):
     assert projection["checkout_available"] is True
     assert "payment_id" not in projection
     assert "stripe_checkout_session_id" not in projection
+    assert "tracking_token" not in projection
+    assert not any(
+        key in projection
+        for key in (
+            "organization_id",
+            "customer_id",
+            "technician_id",
+            "service_order_id",
+            "review_id",
+            "ledger_id",
+            "actor_id",
+        )
+    )
 
 
 def test_dispatch_uses_financial_policy_for_marketplace_prepaid(commercial_db):

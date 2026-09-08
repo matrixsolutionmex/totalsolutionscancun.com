@@ -38,6 +38,7 @@ from app.models.service_order_financial import ServiceOrderFinancial
 from app.models.visit_pricing_snapshot import VisitPricingSnapshot
 from app.services.service_order_quote_service import public_quote_projection
 from app.services.service_order_payment_plan_service import payment_plan_projection
+from app.services.service_order_review_service import public_review_projection
 from app.services.service_order_completion_service import completion_projection
 from app.services.service_order_warranty_claim_service import claims_projection
 
@@ -488,8 +489,12 @@ def service_request_public_tracking(request: ServiceRequest, db: Session | None 
         # Older installations are upgraded by startup before this projection is required.
         db.rollback()
         service_payment_plan = None
+    try:
+        review = public_review_projection(db, order) if db and order else {"eligible": False, "submitted": False}
+    except OperationalError:
+        db.rollback()
+        review = {"submitted": False}
     return {
-        "tracking_token": request.tracking_token,
         "language": normalize_language(request.public_language),
         "order_number": order.order_number if order else None,
         "service_category": request.service_category,
@@ -526,6 +531,7 @@ def service_request_public_tracking(request: ServiceRequest, db: Session | None 
         "payment_plan": service_payment_plan,
         "completion": completion_projection(db, order, public=True) if db and order else None,
         "warranty_claims": claims_projection(db, order, public=True) if db and order else [],
+        "review": review,
     }
 
 

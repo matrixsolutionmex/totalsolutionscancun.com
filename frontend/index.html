@@ -986,6 +986,29 @@
       margin-top: 14px;
     }
 
+    .quality-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(120px, 1fr));
+      gap: 10px;
+      margin: 12px 0 16px;
+    }
+
+    .quality-technician-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .quality-technician-row {
+      display: grid;
+      grid-template-columns: minmax(160px, 1.4fr) repeat(5, minmax(90px, 1fr));
+      gap: 10px;
+      align-items: center;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+    }
+
     .tracking-route-row {
       display: grid;
       gap: 4px;
@@ -997,6 +1020,16 @@
 
     .tracking-route-row strong {
       color: var(--text);
+    }
+
+    @media (max-width: 720px) {
+      .quality-summary-grid,
+      .quality-technician-row {
+        grid-template-columns: 1fr 1fr;
+      }
+      .quality-technician-row strong {
+        grid-column: 1 / -1;
+      }
     }
 
     .tracking-route-metrics,
@@ -3820,6 +3853,12 @@
           <div class="metric">Servicio aprobado<strong id="metricWon">0</strong></div>
         </div>
       </div>
+      <div class="panel-box manager-only" style="grid-column: 1 / -1;">
+        <div class="panel-title">Calidad del servicio</div>
+        <div class="line" id="qualityStatus">Cargando métricas...</div>
+        <div id="qualitySummary" class="quality-summary-grid"></div>
+        <div id="qualityTechnicians" class="quality-technician-list"></div>
+      </div>
     </div>
   </section>
 
@@ -6170,6 +6209,12 @@
           });
         }
       }
+      if (viewName === "relatorios" && ["ROOT", "GERENTE", "SUPERVISOR", "BROKER", "TECNICO", "TÉCNICO"].includes(currentUser?.role)) {
+        loadOrganizationQuality().catch((error) => {
+          const status = document.getElementById("qualityStatus");
+          if (status) status.textContent = error.message || "No fue posible cargar las métricas de calidad.";
+        });
+      }
       if (viewName === "planos") {
         loadCommercialPlans().catch(() => {});
       }
@@ -6429,6 +6474,30 @@
       if (!value) return "-";
       const date = new Date(value);
       return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
+    }
+
+    async function loadOrganizationQuality() {
+      const status = document.getElementById("qualityStatus");
+      const summary = document.getElementById("qualitySummary");
+      const technicians = document.getElementById("qualityTechnicians");
+      if (!status || !summary || !technicians) return;
+      const response = await apiFetch(`${API_BASE}/organization/quality`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "No fue posible cargar las métricas de calidad.");
+      const labels = currentLanguage?.toLowerCase().startsWith("pt")
+        ? {completed: "Serviços concluídos", reviews: "Avaliações", rating: "Nota média", nps: "NPS", claims: "Chamados de garantia", claimRate: "Taxa de garantia"}
+        : currentLanguage?.toLowerCase().startsWith("en")
+          ? {completed: "Completed services", reviews: "Reviews", rating: "Average rating", nps: "NPS", claims: "Warranty claims", claimRate: "Warranty claim rate"}
+          : {completed: "Servicios completados", reviews: "Evaluaciones", rating: "Nota media", nps: "NPS", claims: "Casos de garantía", claimRate: "Tasa de garantía"};
+      const metrics = data.organization || {};
+      const metricValue = (value, suffix = "") => value == null ? "N/A" : `${value}${suffix}`;
+      const metricItems = [[labels.completed, metrics.services_completed], [labels.reviews, metrics.reviews_total], [labels.rating, metricValue(metrics.average_rating)], [labels.nps, metricValue(metrics.nps)], [labels.claims, metrics.warranty_claim_count ?? metrics.warranty_claims ?? 0], [labels.claimRate, metricValue(metrics.warranty_claim_rate, "%")]];
+      summary.innerHTML = metricItems.map(([label, value]) => `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong></div>`).join("");
+      technicians.innerHTML = (data.technicians || []).map((item) => {
+        const row = item.metrics || {};
+        return `<div class="quality-technician-row"><strong>${escapeHtml(item.display_name || "-")}</strong><span>${labels.completed}: ${escapeHtml(String(row.services_completed ?? 0))}</span><span>${labels.reviews}: ${escapeHtml(String(row.reviews_total ?? 0))}</span><span>${labels.rating}: ${escapeHtml(metricValue(row.average_rating))}</span><span>${labels.nps}: ${escapeHtml(metricValue(row.nps))}</span><span>${labels.claimRate}: ${escapeHtml(metricValue(row.warranty_claim_rate, "%"))}</span></div>`;
+      }).join("");
+      status.textContent = technicians.innerHTML ? "" : "";
     }
 
     function trackingOperationsStatus(route) {
@@ -12189,6 +12258,9 @@
       Object.assign(trackingTranslations.es, { serviceTotal: "Total del servicio", paid: "Pagado", outstanding: "Saldo restante", paymentTypeFull: "Pago total", paymentTypeDeposit: "Anticipo", paymentTypeProgress: "Pago intermedio", paymentTypeFinal: "Pago final", installmentWaiting: "Esperando liberación", installmentPending: "Pendiente", installmentPaymentPending: "Pago pendiente", installmentAvailable: "Disponible para pago" });
       Object.assign(trackingTranslations.en, { serviceTotal: "Service total", paid: "Paid", outstanding: "Remaining balance", paymentTypeFull: "Full payment", paymentTypeDeposit: "Deposit", paymentTypeProgress: "Progress payment", paymentTypeFinal: "Final payment", installmentWaiting: "Waiting for release", installmentPending: "Pending", installmentPaymentPending: "Payment pending", installmentAvailable: "Available for payment" });
       Object.assign(trackingTranslations["pt-BR"], { serviceTotal: "Total do serviço", paid: "Pago", outstanding: "Saldo restante", paymentTypeFull: "Pagamento integral", paymentTypeDeposit: "Entrada", paymentTypeProgress: "Parcela intermediária", paymentTypeFinal: "Parcela final", installmentWaiting: "Aguardando liberação", installmentPending: "Pendente", installmentPaymentPending: "Pagamento pendente", installmentAvailable: "Disponível para pagamento" });
+      Object.assign(trackingTranslations.es, { review: "Evalúa tu servicio", reviewSubmitted: "Evaluación enviada", reviewOverall: "Evaluación general", reviewQuality: "Calidad del servicio", reviewPunctuality: "Puntualidad", reviewCommunication: "Comunicación", reviewNps: "¿Recomendarías este servicio?", reviewComment: "Comentario (opcional)", reviewSubmit: "Enviar evaluación", reviewThanks: "Gracias por tu evaluación", reviewError: "No fue posible enviar la evaluación." });
+      Object.assign(trackingTranslations.en, { review: "Rate your service", reviewSubmitted: "Review submitted", reviewOverall: "Overall rating", reviewQuality: "Service quality", reviewPunctuality: "Punctuality", reviewCommunication: "Communication", reviewNps: "Would you recommend this service?", reviewComment: "Comment (optional)", reviewSubmit: "Submit review", reviewThanks: "Thank you for your review", reviewError: "The review could not be submitted." });
+      Object.assign(trackingTranslations["pt-BR"], { review: "Avalie seu atendimento", reviewSubmitted: "Avaliação enviada", reviewOverall: "Avaliação geral", reviewQuality: "Qualidade do serviço", reviewPunctuality: "Pontualidade", reviewCommunication: "Comunicação", reviewNps: "Você recomendaria este serviço?", reviewComment: "Comentário (opcional)", reviewSubmit: "Enviar avaliação", reviewThanks: "Obrigado pela sua avaliação", reviewError: "Não foi possível enviar a avaliação." });
       const trackingText = (key) => trackingTranslations[portalLanguage]?.[key] || trackingTranslations.es[key];
       const localizedTrackingStatus = (value) => {
         const normalized = String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -12626,6 +12698,11 @@
         .warranty-claim-list { display: grid; gap: 12px; margin-top: 16px; }
         .warranty-claim { display: grid; gap: 8px; padding: 14px; border: 1px solid #cbd5e1; border-radius: 8px; background: #f8fafc; }
         .warranty-claim-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+        .public-review-form { display: grid; gap: 14px; margin-top: 16px; }
+        .public-review-field { display: grid; gap: 6px; }
+        .public-review-field select, .public-review-field textarea { width: 100%; box-sizing: border-box; min-height: 46px; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 8px; font: inherit; color: var(--portal-ink); background: #fff; }
+        .public-review-field textarea { min-height: 96px; resize: vertical; }
+        .public-review-rating { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
         @media (max-width: 980px) {
           .portal-shell { grid-template-columns: 1fr; }
           .portal-brand {
@@ -13064,6 +13141,33 @@
             } catch (error) { button.disabled = false; window.alert(error.message || claimLabels.error); }
           }));
         };
+        const renderPublicReview = (data) => {
+          const element = document.getElementById("publicReviewSection");
+          const review = data.review || {};
+          if (!element || (!review.eligible && !review.submitted)) { if (element) element.innerHTML = ""; return; }
+          const fields = [["overall_rating", "reviewOverall"], ["service_quality_rating", "reviewQuality"], ["punctuality_rating", "reviewPunctuality"], ["communication_rating", "reviewCommunication"]];
+          if (review.submitted) {
+            element.innerHTML = `<section class="public-quote-block"><h3>${escapeHtml(trackingText("reviewSubmitted"))}</h3><p class="portal-message ok">${escapeHtml(trackingText("reviewThanks"))}</p></section>`;
+            return;
+          }
+          const options = `<option value="">${escapeHtml(trackingText("reviewOverall"))}</option>${[1, 2, 3, 4, 5].map((value) => `<option value="${value}">${"★".repeat(value)} (${value}/5)</option>`).join("")}`;
+          element.innerHTML = `<section class="public-quote-block"><h3>${escapeHtml(trackingText("review"))}</h3><form class="public-review-form" id="publicReviewForm">${fields.map(([name, label]) => `<label class="public-review-field"><span>${escapeHtml(trackingText(label))}</span><select name="${name}" required>${options}</select></label>`).join("")}<label class="public-review-field"><span>${escapeHtml(trackingText("reviewNps"))}</span><select name="nps_score"><option value="">-</option>${Array.from({ length: 11 }, (_, value) => `<option value="${value}">${value}</option>`).join("")}</select></label><label class="public-review-field"><span>${escapeHtml(trackingText("reviewComment"))}</span><textarea name="comment" maxlength="2000"></textarea></label><button type="submit" class="portal-button">${escapeHtml(trackingText("reviewSubmit"))}</button></form></section>`;
+          element.querySelector("form")?.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const form = event.currentTarget;
+            const button = form.querySelector("button[type=submit]");
+            button.disabled = true;
+            const formData = new FormData(form);
+            const body = Object.fromEntries(formData.entries());
+            ["overall_rating", "service_quality_rating", "punctuality_rating", "communication_rating", "nps_score"].forEach((key) => { if (body[key] !== "") body[key] = Number(body[key]); else delete body[key]; });
+            try {
+              const response = await fetch(`${apiBase}/public/service-requests/${encodeURIComponent(token)}/review`, { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify(body) });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.detail || trackingText("reviewError"));
+              renderPublicTracking(result);
+            } catch (error) { button.disabled = false; window.alert(error.message || trackingText("reviewError")); }
+          });
+        };
         const renderPublicQuote = (data) => {
           let element = document.getElementById("publicQuoteSection");
           if (!element) return;
@@ -13146,6 +13250,7 @@
               <div id="publicQuoteSection"></div>
               <div id="publicServicePaymentPlan"></div>
               <div id="publicCompletion"></div>
+              <div id="publicReviewSection"></div>
               ${(active || hasDestination) ? `<div id="publicTrackingMap" class="public-tracking-map" aria-label="${trackingText("map")}"></div>` : ""}
               <p id="publicTrackingMapHint" class="portal-message">${active ? pt("mapHint") : pt("preparingShort")}</p>
             `;
@@ -13170,6 +13275,7 @@
           renderPublicQuote(data);
           renderServicePaymentPlan(data);
           renderCompletion(data);
+          renderPublicReview(data);
           const mapElement = document.getElementById("publicTrackingMap");
           if (!mapElement || !window.L || window.leafletLoadFailed) {
             lastAppliedSessionKey = sessionKey;
