@@ -13,6 +13,7 @@ from app.services.notification_service import dispatch_web_push_for_notification
 from app.services.reverse_geocode_service import reverse_geocode
 from app.services.localization_service import resolve_language
 from app.services.organization_marketplace_service import public_marketplace_payload, resolve_marketplace_link
+from app.services.service_order_completion_service import customer_acceptance, customer_report_problem
 
 
 router = APIRouter(prefix="/public", tags=["public-service-requests"])
@@ -182,5 +183,26 @@ def public_quote_approve(tracking_token: str, db: Session = Depends(get_db)):
 def public_quote_reject(tracking_token: str, payload: dict | None = None, db: Session = Depends(get_db)):
     order = resolve_public_order(db, tracking_token)
     reject_public_quote(db, order, (payload or {}).get("reason"))
+    db.commit()
+    return service_request_public_tracking(order.service_request, db)
+
+
+@router.post("/service-requests/{tracking_token}/completion/accept")
+def public_completion_accept(tracking_token: str, db: Session = Depends(get_db)):
+    order = resolve_public_order(db, tracking_token)
+    customer_acceptance(db, order, idempotency_key=f"accept:{tracking_token}")
+    db.commit()
+    return service_request_public_tracking(order.service_request, db)
+
+
+@router.post("/service-requests/{tracking_token}/completion/problem")
+def public_completion_problem(tracking_token: str, payload: dict | None = None, db: Session = Depends(get_db)):
+    order = resolve_public_order(db, tracking_token)
+    customer_report_problem(
+        db,
+        order,
+        reason=(payload or {}).get("reason"),
+        idempotency_key=f"problem:{tracking_token}",
+    )
     db.commit()
     return service_request_public_tracking(order.service_request, db)

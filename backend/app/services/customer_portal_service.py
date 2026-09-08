@@ -38,6 +38,7 @@ from app.models.service_order_financial import ServiceOrderFinancial
 from app.models.visit_pricing_snapshot import VisitPricingSnapshot
 from app.services.service_order_quote_service import public_quote_projection
 from app.services.service_order_payment_plan_service import payment_plan_projection
+from app.services.service_order_completion_service import completion_projection
 
 
 ALLOWED_MEDIA_TYPES = {
@@ -522,6 +523,7 @@ def service_request_public_tracking(request: ServiceRequest, db: Session | None 
         "diagnosis": commercial_projection.get("diagnosis") if commercial_projection else None,
         "quote": commercial_projection.get("quote") if commercial_projection else None,
         "payment_plan": service_payment_plan,
+        "completion": completion_projection(db, order, public=True) if db and order else None,
     }
 
 

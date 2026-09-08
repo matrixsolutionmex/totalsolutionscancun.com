@@ -4252,6 +4252,12 @@
               </div>
             </div>
             <div class="lead-action-group">
+              <div class="lead-action-title">Conclusão e garantia</div>
+              <div id="leadCompletionPanel" class="operational-payment-plan">
+                <span class="operational-payment-status">Nenhuma conclusão técnica registrada.</span>
+              </div>
+            </div>
+            <div class="lead-action-group">
               <div class="lead-action-title">Documentación</div>
               <div class="lead-action-row">
                 <button class="ghost" type="button" id="leadDossierButton">📄 Dossiê PDF</button>
@@ -8586,6 +8592,37 @@
       renderOperationalPaymentPlan(await response.json(), orderId);
     }
 
+    function renderOperationalCompletion(completion) {
+      const panel = document.getElementById("leadCompletionPanel");
+      if (!panel) return;
+      if (!completion || !completion.technical_complete) {
+        panel.innerHTML = `<span class="operational-payment-status">Nenhuma conclusão técnica registrada.</span>`;
+        return;
+      }
+      const technical = completion.technical || {};
+      const warranty = completion.warranty?.active
+        ? `<div>Garantia: <strong>${escapeHtml(trackingOperationsDate(completion.warranty.starts_at))} - ${escapeHtml(trackingOperationsDate(completion.warranty.ends_at))}</strong></div>`
+        : "";
+      panel.innerHTML = `
+        <div>Execução técnica: <strong>${escapeHtml(technical.status || "REPORTED")}</strong></div>
+        <div>Aceite do cliente: <strong>${escapeHtml(completion.customer_status || "pending")}</strong></div>
+        ${technical.completion_notes ? `<div>Notas: ${escapeHtml(technical.completion_notes)}</div>` : ""}
+        ${technical.final_observation ? `<div>Observação final: ${escapeHtml(technical.final_observation)}</div>` : ""}
+        ${warranty}
+      `;
+    }
+
+    async function loadOperationalCompletion(orderId) {
+      const panel = document.getElementById("leadCompletionPanel");
+      if (!orderId || !["ROOT", "GERENTE", "SUPERVISOR"].includes(currentUser?.role)) {
+        if (panel) panel.innerHTML = "";
+        return;
+      }
+      const response = await apiFetch(`${API_BASE}/service-orders/${encodeURIComponent(orderId)}/completion`, { headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error("completion unavailable");
+      renderOperationalCompletion(await response.json());
+    }
+
     async function releaseOperationalInstallment(orderId, sequence, triggerType) {
       const response = await apiFetch(`${API_BASE}/payments/service-orders/${encodeURIComponent(orderId)}/payment-plan/installments/${encodeURIComponent(sequence)}/release`, {
         method: "POST",
@@ -8643,6 +8680,9 @@
       document.getElementById("leadBrokerTarget").value = lead.assigned_to_user_id || "";
       loadOperationalPaymentPlan(lead.service_order?.id).catch(() => {
         renderOperationalPaymentPlan(null);
+      });
+      loadOperationalCompletion(lead.service_order?.id).catch(() => {
+        renderOperationalCompletion(null);
       });
       updateLeadResponsibleSummary();
       renderPropertyExtraFields(parsePropertyExtra(lead.property_extra_json));
@@ -12971,6 +13011,32 @@
             } catch (error) { button.disabled = false; window.alert(error.message || trackingText("checkoutUnavailable")); }
           }));
         };
+        const renderCompletion = (data) => {
+          const element = document.getElementById("publicCompletion");
+          const completion = data.completion;
+          if (!element || !completion || !completion.technical_complete) { if (element) element.innerHTML = ""; return; }
+          const copy = portalLanguage === "en"
+            ? { title: "Service completion", ready: "Ready for your acceptance", pending: "Technical completion recorded; awaiting confirmation", accept: "Accept completion", problem: "Report a problem", accepted: "Completion accepted", reported: "Problem reported", warranty: "Warranty", receipt: "Receipt", ends: "Valid until", reason: "Problem details (optional)" }
+            : portalLanguage === "pt-BR"
+              ? { title: "Conclusão do serviço", ready: "Pronto para sua aceitação", pending: "Conclusão técnica registrada; aguardando confirmação", accept: "Aceitar conclusão", problem: "Relatar um problema", accepted: "Conclusão aceita", reported: "Problema relatado", warranty: "Garantia", receipt: "Recibo", ends: "Válida até", reason: "Detalhes do problema (opcional)" }
+              : { title: "Finalización del servicio", ready: "Lista para su aceptación", pending: "Finalización técnica registrada; esperando confirmación", accept: "Aceptar finalización", problem: "Reportar un problema", accepted: "Finalización aceptada", reported: "Problema reportado", warranty: "Garantía", receipt: "Recibo", ends: "Válida hasta", reason: "Detalles del problema (opcional)" };
+          const status = completion.customer_status === "accepted" ? `<strong>${escapeHtml(copy.accepted)}</strong>` : completion.customer_status === "problem_reported" ? `<strong>${escapeHtml(copy.reported)}</strong>` : completion.ready_for_acceptance ? `<strong>${escapeHtml(copy.ready)}</strong>` : `<strong>${escapeHtml(copy.pending)}</strong>`;
+          const warranty = completion.warranty?.active ? `<p><strong>${escapeHtml(copy.warranty)}:</strong> ${escapeHtml(formatTrackingDate(completion.warranty.starts_at))} - ${escapeHtml(formatTrackingDate(completion.warranty.ends_at))}</p>` : "";
+          const receipt = completion.receipt ? `<p><strong>${escapeHtml(copy.receipt)}:</strong> ${escapeHtml(completion.receipt.order_number || "-")} · ${escapeHtml(copy.ends)} ${escapeHtml(formatTrackingDate(completion.receipt.warranty_ends_at))}</p>` : "";
+          const actions = completion.ready_for_acceptance ? `<div class="public-quote-actions"><button type="button" class="portal-button" data-completion-action="accept">${escapeHtml(copy.accept)}</button><button type="button" class="portal-button" data-completion-action="problem">${escapeHtml(copy.problem)}</button></div>` : "";
+          element.innerHTML = `<section class="public-quote-block"><h3>${escapeHtml(copy.title)}</h3>${status}${warranty}${receipt}${completion.problem_reported ? `<p>${escapeHtml(completion.problem_reason || "")}</p>` : ""}${actions}</section>`;
+          element.querySelectorAll("[data-completion-action]").forEach((button) => button.addEventListener("click", async () => {
+            const action = button.dataset.completionAction;
+            const reason = action === "problem" ? window.prompt(copy.reason) : null;
+            button.disabled = true;
+            try {
+              const response = await fetch(`${apiBase}/public/service-requests/${encodeURIComponent(token)}/completion/${action}`, { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify(reason ? { reason } : {}) });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.detail || copy.title);
+              renderPublicTracking(result);
+            } catch (error) { button.disabled = false; window.alert(error.message || copy.title); }
+          }));
+        };
         const renderPublicQuote = (data) => {
           let element = document.getElementById("publicQuoteSection");
           if (!element) return;
@@ -13052,6 +13118,7 @@
               <div id="publicVisitPayment" class="public-tracking-status"></div>
               <div id="publicQuoteSection"></div>
               <div id="publicServicePaymentPlan"></div>
+              <div id="publicCompletion"></div>
               ${(active || hasDestination) ? `<div id="publicTrackingMap" class="public-tracking-map" aria-label="${trackingText("map")}"></div>` : ""}
               <p id="publicTrackingMapHint" class="portal-message">${active ? pt("mapHint") : pt("preparingShort")}</p>
             `;
@@ -13075,6 +13142,7 @@
           renderVisitPayment(data);
           renderPublicQuote(data);
           renderServicePaymentPlan(data);
+          renderCompletion(data);
           const mapElement = document.getElementById("publicTrackingMap");
           if (!mapElement || !window.L || window.leafletLoadFailed) {
             lastAppliedSessionKey = sessionKey;
