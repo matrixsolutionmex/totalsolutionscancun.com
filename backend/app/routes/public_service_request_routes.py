@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth.jwt_handler import get_db
@@ -14,9 +15,17 @@ from app.services.reverse_geocode_service import reverse_geocode
 from app.services.localization_service import resolve_language
 from app.services.organization_marketplace_service import public_marketplace_payload, resolve_marketplace_link
 from app.services.service_order_completion_service import customer_acceptance, customer_report_problem
+from app.services.service_order_warranty_claim_service import create_claim, customer_confirm
 
 
 router = APIRouter(prefix="/public", tags=["public-service-requests"])
+
+
+class PublicWarrantyClaimInput(BaseModel):
+    reason: str = Field(min_length=1, max_length=240)
+    description: str | None = Field(default=None, max_length=4000)
+    evidence_reference: str | None = Field(default=None, max_length=240)
+    idempotency_key: str | None = Field(default=None, max_length=128)
 
 
 @router.get("/marketplaces/{organization_slug}")
@@ -204,5 +213,38 @@ def public_completion_problem(tracking_token: str, payload: dict | None = None, 
         reason=(payload or {}).get("reason"),
         idempotency_key=f"problem:{tracking_token}",
     )
+    db.commit()
+    return service_request_public_tracking(order.service_request, db)
+
+
+@router.post("/service-requests/{tracking_token}/warranty-claims", status_code=201)
+def public_warranty_claim(tracking_token: str, payload: PublicWarrantyClaimInput, db: Session = Depends(get_db)):
+    order = resolve_public_order(db, tracking_token)
+    values = payload.model_dump()
+    row = create_claim(
+        db, order,
+        reason=values["reason"],
+        description=values.get("description"),
+        evidence_reference=values.get("evidence_reference"),
+        idempotency_key=values.get("idempotency_key") or f"warranty:{tracking_token}",
+        source="PUBLIC_TRACKING",
+    )
+    db.commit()
+    db.refresh(row)
+    return service_request_public_tracking(order.service_request, db)
+
+
+@router.post("/service-requests/{tracking_token}/warranty-claims/{claim_id}/confirm")
+def public_warranty_claim_confirm(tracking_token: str, claim_id: int, payload: dict | None = None, db: Session = Depends(get_db)):
+    order = resolve_public_order(db, tracking_token)
+    customer_confirm(db, order, claim_id, problem=False, notes=(payload or {}).get("notes"))
+    db.commit()
+    return service_request_public_tracking(order.service_request, db)
+
+
+@router.post("/service-requests/{tracking_token}/warranty-claims/{claim_id}/problem")
+def public_warranty_claim_problem(tracking_token: str, claim_id: int, payload: dict | None = None, db: Session = Depends(get_db)):
+    order = resolve_public_order(db, tracking_token)
+    customer_confirm(db, order, claim_id, problem=True, notes=(payload or {}).get("notes"))
     db.commit()
     return service_request_public_tracking(order.service_request, db)

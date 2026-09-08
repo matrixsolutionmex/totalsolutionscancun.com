@@ -12623,6 +12623,9 @@
         .public-quote-summary { display: grid; gap: 6px; margin-top: 14px; }
         .public-quote-summary p { margin: 0; }
         .public-quote-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+        .warranty-claim-list { display: grid; gap: 12px; margin-top: 16px; }
+        .warranty-claim { display: grid; gap: 8px; padding: 14px; border: 1px solid #cbd5e1; border-radius: 8px; background: #f8fafc; }
+        .warranty-claim-actions { display: flex; gap: 10px; flex-wrap: wrap; }
         @media (max-width: 980px) {
           .portal-shell { grid-template-columns: 1fr; }
           .portal-brand {
@@ -13024,7 +13027,16 @@
           const warranty = completion.warranty?.active ? `<p><strong>${escapeHtml(copy.warranty)}:</strong> ${escapeHtml(formatTrackingDate(completion.warranty.starts_at))} - ${escapeHtml(formatTrackingDate(completion.warranty.ends_at))}</p>` : "";
           const receipt = completion.receipt ? `<p><strong>${escapeHtml(copy.receipt)}:</strong> ${escapeHtml(completion.receipt.order_number || "-")} · ${escapeHtml(copy.ends)} ${escapeHtml(formatTrackingDate(completion.receipt.warranty_ends_at))}</p>` : "";
           const actions = completion.ready_for_acceptance ? `<div class="public-quote-actions"><button type="button" class="portal-button" data-completion-action="accept">${escapeHtml(copy.accept)}</button><button type="button" class="portal-button" data-completion-action="problem">${escapeHtml(copy.problem)}</button></div>` : "";
-          element.innerHTML = `<section class="public-quote-block"><h3>${escapeHtml(copy.title)}</h3>${status}${warranty}${receipt}${completion.problem_reported ? `<p>${escapeHtml(completion.problem_reason || "")}</p>` : ""}${actions}</section>`;
+          const claims = Array.isArray(data.warranty_claims) ? data.warranty_claims : [];
+          const claimLabels = portalLanguage === "en"
+            ? { title: "Warranty service", request: "Request warranty service", reason: "Reason", description: "Description", open: "Under review", under_review: "Under review", approved: "Warranty approved", rejected: "Warranty rejected", technician_assigned: "Technician assigned", in_progress: "In service", resolved: "Resolved", closed: "Closed", confirm: "Confirm resolution", problem: "Report a problem", error: "Could not register the claim." }
+            : portalLanguage === "pt-BR"
+              ? { title: "Atendimento em garantia", request: "Solicitar atendimento em garantia", reason: "Motivo", description: "Descrição", open: "Em análise", under_review: "Em análise", approved: "Garantia aprovada", rejected: "Garantia recusada", technician_assigned: "Técnico atribuído", in_progress: "Em atendimento", resolved: "Resolvido", closed: "Encerrado", confirm: "Confirmar solução", problem: "Relatar um problema", error: "Não foi possível registrar o chamado." }
+              : { title: "Atención en garantía", request: "Solicitar atención en garantía", reason: "Motivo", description: "Descripción", open: "En revisión", under_review: "En revisión", approved: "Garantía aprobada", rejected: "Garantía rechazada", technician_assigned: "Técnico asignado", in_progress: "En atención", resolved: "Resuelto", closed: "Cerrado", confirm: "Confirmar solución", problem: "Reportar un problema", error: "No fue posible registrar el llamado." };
+          const claimMarkup = completion.warranty?.active || claims.length
+            ? `<section class="public-quote-block"><h3>${escapeHtml(claimLabels.title)}</h3>${claims.map((claim) => `<div class="warranty-claim"><strong>${escapeHtml(claim.reason)}</strong>${claim.description ? `<span>${escapeHtml(claim.description)}</span>` : ""}<span>${escapeHtml(claimLabels[claim.status] || claimLabels.open)}</span>${claim.status === "resolved" ? `<div class="warranty-claim-actions"><button type="button" class="portal-button" data-warranty-action="confirm" data-claim-id="${escapeHtml(claim.id)}">${escapeHtml(claimLabels.confirm)}</button><button type="button" class="portal-button" data-warranty-action="problem" data-claim-id="${escapeHtml(claim.id)}">${escapeHtml(claimLabels.problem)}</button></div>` : ""}</div>`).join("")}<div class="public-quote-actions"><button type="button" class="portal-button" data-warranty-action="create">${escapeHtml(claimLabels.request)}</button></div></section>`
+            : "";
+          element.innerHTML = `<section class="public-quote-block"><h3>${escapeHtml(copy.title)}</h3>${status}${warranty}${receipt}${completion.problem_reported ? `<p>${escapeHtml(completion.problem_reason || "")}</p>` : ""}${actions}</section>${claimMarkup}`;
           element.querySelectorAll("[data-completion-action]").forEach((button) => button.addEventListener("click", async () => {
             const action = button.dataset.completionAction;
             const reason = action === "problem" ? window.prompt(copy.reason) : null;
@@ -13035,6 +13047,21 @@
               if (!response.ok) throw new Error(result.detail || copy.title);
               renderPublicTracking(result);
             } catch (error) { button.disabled = false; window.alert(error.message || copy.title); }
+          }));
+          element.querySelectorAll("[data-warranty-action]").forEach((button) => button.addEventListener("click", async () => {
+            const action = button.dataset.warrantyAction;
+            const reason = action === "create" ? window.prompt(claimLabels.reason) : null;
+            if (action === "create" && !reason) return;
+            const description = action === "create" ? window.prompt(claimLabels.description) : null;
+            button.disabled = true;
+            try {
+              const path = action === "create" ? "warranty-claims" : `warranty-claims/${encodeURIComponent(button.dataset.claimId)}/${action}`;
+              const body = action === "create" ? { reason, description, idempotency_key: `warranty:${token}:${Date.now()}` } : {};
+              const response = await fetch(`${apiBase}/public/service-requests/${encodeURIComponent(token)}/${path}`, { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify(body) });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.detail || claimLabels.error);
+              renderPublicTracking(result);
+            } catch (error) { button.disabled = false; window.alert(error.message || claimLabels.error); }
           }));
         };
         const renderPublicQuote = (data) => {
