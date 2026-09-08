@@ -95,6 +95,7 @@ def public_opportunity(opportunity: ServiceOpportunity, *, distance_km: float | 
     """Return only pre-claim operational information. No lead/contact/address data."""
     return {
         "public_id": opportunity.public_id,
+        "organization_id": opportunity.organization_id,
         "service_type": opportunity.service_type,
         "segment": opportunity.segment,
         "country": opportunity.country,
@@ -250,7 +251,7 @@ def claim_opportunity(db: Session, actor: User, public_id: str) -> dict:
 
 
 def _resolve_assignment_opportunity(
-    db: Session, actor: User, target: User, identifier: str, *, allow_service_request_id: bool = False
+    db: Session, actor: User, identifier: str, *, allow_service_request_id: bool = False
 ) -> ServiceOpportunity | None:
     """Resolve the UI identity without allowing cross-tenant fallback lookups.
 
@@ -269,24 +270,27 @@ def _resolve_assignment_opportunity(
         return None
     if actor.role != "ROOT":
         filters.append(ServiceOpportunity.organization_id == actor.organization_id)
-    opportunity = db.query(ServiceOpportunity).filter(*filters).first()
-    if opportunity and (target.role == "ROOT" or target.organization_id == opportunity.organization_id):
-        return opportunity
-    return None
+    return db.query(ServiceOpportunity).filter(*filters).first()
 
 
 def _claim_for_user(
-    db: Session, actor: User, target: User, public_id: str, *, audit_event: str,
+    db: Session, actor: User, target: User | None, public_id: str, *, audit_event: str,
     allow_service_request_id: bool = False,
 ) -> dict:
     """Atomically claim an opportunity for a backend-validated target user."""
-    if not target.is_active or target.status != "ACTIVE":
-        raise HTTPException(status_code=403, detail="O usuário de destino não está ativo.")
     opportunity = _resolve_assignment_opportunity(
-        db, actor, target, public_id, allow_service_request_id=allow_service_request_id,
+        db, actor, public_id, allow_service_request_id=allow_service_request_id,
     )
     if not opportunity:
         raise HTTPException(status_code=404, detail="Oportunidade não encontrada")
+    if not target:
+        raise HTTPException(status_code=404, detail="Usuário de destino não encontrado.")
+    if not target.is_active or target.status != "ACTIVE":
+        raise HTTPException(status_code=403, detail="O usuário de destino não está ativo.")
+    if target.organization_id is None:
+        raise HTTPException(status_code=403, detail="O técnico selecionado não possui organização válida.")
+    if target.organization_id != opportunity.organization_id:
+        raise HTTPException(status_code=403, detail="O técnico selecionado não pertence à organização desta oportunidade.")
     if opportunity.status != AVAILABLE:
         raise HTTPException(status_code=409, detail="Esta oportunidade acabou de ser aceita por outro profissional.")
     now = datetime.utcnow()

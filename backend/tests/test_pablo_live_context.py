@@ -710,6 +710,52 @@ Observação: Cliente solicitou diagnóstico de 12 aparelhos de ar-condicionado 
         self.assertEqual(result["opportunity"]["status"], "CLAIMED")
         self.assertEqual(self.db.query(LeadEvent).filter_by(event_type="MARKETPLACE_ASSIGNED_BY_ROOT").count(), 1)
 
+    def test_root_cross_organization_assignment_is_explicitly_forbidden(self):
+        root = User(
+            username=f"root-scope-{uuid4().hex[:8]}", full_name="Scoped Root", password_hash="hash",
+            role="ROOT", organization_id=self.other_org.id, status="ACTIVE", is_active=True,
+        )
+        target = User(
+            username=f"wrong-org-tech-{uuid4().hex[:8]}", full_name="Wrong Org Tech", password_hash="hash",
+            role="BROKER", organization_id=self.other_org.id, status="ACTIVE", is_active=True,
+        )
+        opportunity = ServiceOpportunity(
+            public_id="MKT-CROSS-ORG-ASSIGN", organization_id=self.org.id,
+            source="MARKETPLACE", service_type="HIDRAULICA",
+        )
+        self.db.add_all([root, target, opportunity])
+        self.db.commit()
+
+        with self.assertRaises(Exception) as error:
+            assign_opportunity(self.db, root, opportunity.public_id, target.id)
+
+        self.assertEqual(error.exception.status_code, 403)
+        self.assertIn("não pertence à organização", error.exception.detail)
+        self.assertEqual(opportunity.status, "AVAILABLE")
+
+    def test_assignment_rejects_target_without_organization(self):
+        root = User(
+            username=f"root-null-org-{uuid4().hex[:8]}", full_name="Root Null Org", password_hash="hash",
+            role="ROOT", organization_id=self.org.id, status="ACTIVE", is_active=True,
+        )
+        target = User(
+            username=f"null-org-tech-{uuid4().hex[:8]}", full_name="Unscoped Tech", password_hash="hash",
+            role="BROKER", organization_id=None, status="ACTIVE", is_active=True,
+        )
+        opportunity = ServiceOpportunity(
+            public_id="MKT-NULL-ORG-ASSIGN", organization_id=self.org.id,
+            source="MARKETPLACE", service_type="HIDRAULICA",
+        )
+        self.db.add_all([root, target, opportunity])
+        self.db.commit()
+
+        with self.assertRaises(Exception) as error:
+            assign_opportunity(self.db, root, opportunity.public_id, target.id)
+
+        self.assertEqual(error.exception.status_code, 403)
+        self.assertIn("organização válida", error.exception.detail)
+        self.assertEqual(opportunity.status, "AVAILABLE")
+
     def test_marketplace_claim_isolated_by_organization_and_pablo_requires_confirmation(self):
         other = ServiceOpportunity(public_id="MKT-OTHER-001", organization_id=self.other_org.id, source="MARKETPLACE", service_type="ELETRICA", city="Cancún")
         own = ServiceOpportunity(public_id="MKT-PABLO-001", organization_id=self.org.id, source="MARKETPLACE", service_type="AR-CONDICIONADO", city="Cancún", urgency="ALTA")

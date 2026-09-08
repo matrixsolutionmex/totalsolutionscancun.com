@@ -6907,7 +6907,7 @@
             <p>${marketplaceValue(item.description)}</p>
             <div class="pablo-action-card-actions">
               <button type="button" data-marketplace-details="${marketplaceValue(item.public_id)}">${t("uiViewDetails")}</button>
-              ${currentUser?.role === "GERENTE" || currentUser?.role === "ROOT" ? `<select data-marketplace-target aria-label="Técnico de destino"><option value="">Atribuir para...</option>${marketplaceAssignableUsers.map((user) => `<option value="${user.id}">${marketplaceValue(user.full_name || user.username)} · ${marketplaceValue(user.organization_name || "organização")}</option>`).join("")}</select><button type="button" data-marketplace-assign="${marketplaceValue(item.public_id)}">Atribuir à equipe</button>` : ""}
+              ${currentUser?.role === "GERENTE" || currentUser?.role === "ROOT" ? `<select data-marketplace-target aria-label="Técnico de destino"><option value="">Atribuir para...</option>${marketplaceAssignableUsers.filter((user) => Number(user.organization_id) === Number(item.organization_id)).map((user) => `<option value="${user.id}">${marketplaceValue(user.full_name || user.username)} · ${marketplaceValue(user.organization_name || "organização")}</option>`).join("")}</select><button type="button" data-marketplace-assign="${marketplaceValue(item.public_id)}">Atribuir à equipe</button>` : ""}
               ${currentUser?.role !== "ROOT" && currentUser?.role !== "GERENTE" ? `<button type="button" data-marketplace-claim="${marketplaceValue(item.public_id)}">${t("uiAcceptService")}</button>` : ""}
             </div>
           </article>`).join("");
