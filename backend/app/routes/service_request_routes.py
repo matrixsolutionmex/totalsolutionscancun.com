@@ -10,6 +10,7 @@ from app.models.service_order import ServiceOrder
 from app.models.service_request import ServiceRequest
 from app.models.user import User
 from app.services.customer_portal_service import service_request_sales_summary
+from app.services.technician_recommendation_service import validate_recommended_assignment
 from app.services.service_order_tracking_service import (
     get_tracking_for_actor,
     list_active_tracking_for_actor,
@@ -195,6 +196,8 @@ def assign_service_order_technician(
 ):
     order = _order_for_actor(db, order_id, actor)
     technician = _validate_assignee(db, payload.user_id, actor, {"BROKER"})
+    if actor.role == "GERENTE":
+        technician = validate_recommended_assignment(db, order, technician.id, actor)
     order.responsible_user_id = technician.id
     order.updated_at = datetime.utcnow()
     if order.lead:

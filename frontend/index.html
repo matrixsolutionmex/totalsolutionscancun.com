@@ -1396,6 +1396,26 @@
       justify-self: start;
     }
 
+    .technician-recommendation-panel {
+      display: grid;
+      gap: 10px;
+    }
+
+    .technician-recommendation-card {
+      display: grid;
+      gap: 6px;
+      border: 1px solid #dbe4ef;
+      border-radius: 4px;
+      padding: 10px;
+      background: #fff;
+    }
+
+    .technician-recommendation-card .recommendation-reasons {
+      color: #475569;
+      font-size: .88rem;
+      line-height: 1.35;
+    }
+
     @media (max-width: 640px) {
       .operational-payment-installment button {
         grid-column: 1 / -1;
@@ -4276,6 +4296,8 @@
                 <button type="button" id="moveLeadBrokerButton">Atribuir</button>
                 <button class="warning" type="button" id="reassignLeadButton">Reatribuir</button>
               </div>
+              <button class="ghost manager-only" type="button" id="findTechnicianButton">Encontrar técnico</button>
+              <div id="technicianRecommendationPanel" class="technician-recommendation-panel manager-only"></div>
             </div>
             <div class="lead-action-group">
               <div class="lead-action-title">Workflow</div>
@@ -5047,6 +5069,7 @@
         uiNoNotifications: "Sem notificações recentes.",
         uiPriority: "Prioridade",
         uiWaitingLocation: "Buscando localização...", uiLastUpdate: "Última atualização", uiPrecision: "Precisão", uiRemainingDistance: "Distância restante", uiEstimatedTime: "Tempo estimado", uiEstimatedArrival: "Horário estimado", uiViewTracking: "Ver acompanhamento", uiCopyLink: "Copiar link", uiTechnician: "Técnico", uiRouteWaiting: "Rota temporariamente indisponível",
+        technicianRecommendationsEmpty: "Nenhum técnico elegível encontrado.", technicianRecommendationsUnavailable: "Recomendações indisponíveis.", technicianRecommendationsLoading: "Buscando técnicos...", technicianRecommendationScore: "Pontuação", technicianRecommendationSkill: "Habilidade", technicianRecommendationAvailability: "Disponibilidade", technicianRecommendationDistance: "Distância", technicianRecommendationWorkload: "Carga ativa", technicianRecommendationReviews: "Avaliações", technicianRecommendationRating: "Nota", technicianRecommendationAssign: "Atribuir técnico",
         supportButton: "Pablo IA",
         supportTitle: "Pablo Yepez IA",
         supportSubtitle: "Técnico Supervisor Geral",
@@ -5233,6 +5256,7 @@
         uiNoNotifications: "No recent notifications.",
         uiPriority: "Priority",
         uiWaitingLocation: "Waiting for location...", uiLastUpdate: "Last update", uiPrecision: "Accuracy", uiRemainingDistance: "Remaining distance", uiEstimatedTime: "Estimated time", uiEstimatedArrival: "Estimated arrival", uiViewTracking: "View tracking", uiCopyLink: "Copy link", uiTechnician: "Technician", uiRouteWaiting: "Route temporarily unavailable",
+        technicianRecommendationsEmpty: "No eligible technician found.", technicianRecommendationsUnavailable: "Recommendations unavailable.", technicianRecommendationsLoading: "Searching for technicians...", technicianRecommendationScore: "Score", technicianRecommendationSkill: "Skill", technicianRecommendationAvailability: "Availability", technicianRecommendationDistance: "Distance", technicianRecommendationWorkload: "Active load", technicianRecommendationReviews: "Reviews", technicianRecommendationRating: "Rating", technicianRecommendationAssign: "Assign technician",
         supportButton: "Pablo AI",
         supportTitle: "Pablo Yepez AI",
         supportSubtitle: "General Technical Supervisor",
@@ -5427,6 +5451,7 @@
         uiNoNotifications: "Sin notificaciones recientes.",
         uiPriority: "Prioridad",
         uiWaitingLocation: "Esperando ubicación...", uiLastUpdate: "Última actualización", uiPrecision: "Precisión", uiRemainingDistance: "Distancia restante", uiEstimatedTime: "Tiempo estimado", uiEstimatedArrival: "Hora estimada", uiViewTracking: "Ver seguimiento", uiCopyLink: "Copiar enlace", uiTechnician: "Técnico", uiRouteWaiting: "Ruta temporalmente no disponible",
+        technicianRecommendationsEmpty: "No se encontró un técnico elegible.", technicianRecommendationsUnavailable: "Recomendaciones no disponibles.", technicianRecommendationsLoading: "Buscando técnicos...", technicianRecommendationScore: "Puntuación", technicianRecommendationSkill: "Habilidad", technicianRecommendationAvailability: "Disponibilidad", technicianRecommendationDistance: "Distancia", technicianRecommendationWorkload: "Carga activa", technicianRecommendationReviews: "Evaluaciones", technicianRecommendationRating: "Calificación", technicianRecommendationAssign: "Asignar técnico",
         supportButton: "Pablo IA",
         supportTitle: "Pablo Yepez IA",
         supportSubtitle: "Técnico Supervisor General",
@@ -5635,6 +5660,7 @@
     let marketplaceRefreshTimer = null;
     let marketplaceTab = "agenda";
     let marketplaceAssignableUsers = [];
+    let activeLeadServiceOrderId = null;
     let trackingOperationsMap = null;
     let trackingOperationsTimer = null;
     let trackingOperationsHasFitted = false;
@@ -8661,6 +8687,55 @@
       renderOperationalPaymentPlan(await response.json(), orderId);
     }
 
+    function renderTechnicianRecommendations(data, orderId) {
+      const panel = document.getElementById("technicianRecommendationPanel");
+      if (!panel) return;
+      const candidates = Array.isArray(data?.candidates) ? data.candidates : [];
+      if (!candidates.length) {
+        panel.innerHTML = `<span class="operational-payment-status">${escapeHtml(t("technicianRecommendationsEmpty"))}</span>`;
+        return;
+      }
+      panel.innerHTML = candidates.map((candidate) => {
+        const quality = candidate.quality || {};
+        const workload = candidate.workload || {};
+        const reasons = (candidate.reasons || []).map(escapeHtml).join(" · ");
+        return `<div class="technician-recommendation-card">
+          <strong>${escapeHtml(candidate.technician?.display_name || "Técnico")}</strong>
+          <span>${escapeHtml(t("technicianRecommendationScore"))}: ${escapeHtml(candidate.score)} · ${escapeHtml(t("technicianRecommendationSkill"))}: ${escapeHtml(candidate.skill_match)}</span>
+          <span>${escapeHtml(t("technicianRecommendationAvailability"))}: ${escapeHtml(candidate.availability)} · ${escapeHtml(t("technicianRecommendationDistance"))}: ${escapeHtml(candidate.distance_km ?? "N/A")} km</span>
+          <span>${escapeHtml(t("technicianRecommendationWorkload"))}: ${escapeHtml(workload.active_orders ?? 0)} · ${escapeHtml(t("technicianRecommendationReviews"))}: ${escapeHtml(quality.review_count ?? 0)} · ${escapeHtml(t("technicianRecommendationRating"))}: ${escapeHtml(quality.average_rating ?? "N/A")}</span>
+          <span class="recommendation-reasons">${reasons}</span>
+          <button class="small-btn" type="button" onclick="assignRecommendedTechnician(${orderId}, ${candidate.technician.id})">${escapeHtml(t("technicianRecommendationAssign"))}</button>
+        </div>`;
+      }).join("");
+    }
+
+    async function loadTechnicianRecommendations(orderId) {
+      const panel = document.getElementById("technicianRecommendationPanel");
+      if (!orderId || !["ROOT", "GERENTE"].includes(currentUser?.role)) {
+        if (panel) panel.innerHTML = "";
+        return;
+      }
+      if (panel) panel.innerHTML = `<span class="operational-payment-status">${escapeHtml(t("technicianRecommendationsLoading"))}</span>`;
+      const response = await apiFetch(`${API_BASE}/service-orders/${encodeURIComponent(orderId)}/technician-recommendations`, { headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error("recommendations unavailable");
+      renderTechnicianRecommendations(await response.json(), orderId);
+    }
+
+    async function assignRecommendedTechnician(orderId, technicianId) {
+      const response = await apiFetch(`${API_BASE}/service-orders/${encodeURIComponent(orderId)}/assign-technician`, {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: technicianId })
+      });
+      if (!response.ok) {
+        window.alert("No fue posible asignar el técnico recomendado.");
+        return;
+      }
+      await loadBoard();
+      await loadTechnicianRecommendations(orderId);
+    }
+
     function renderOperationalCompletion(completion) {
       const panel = document.getElementById("leadCompletionPanel");
       if (!panel) return;
@@ -8713,6 +8788,7 @@
       document.getElementById("leadModalTitle").textContent = "Editar cliente";
       document.getElementById("leadId").value = lead.id;
       document.getElementById("leadServiceOrderNumber").value = lead.service_order?.order_number || "";
+      activeLeadServiceOrderId = lead.service_order?.id || null;
       document.getElementById("leadPropertyId").value = lead.property_id || "";
       document.getElementById("leadTipoImovel").value = lead.tipo_imovel || "OUTRO";
       document.getElementById("leadTipoServico").value = lead.tipo_servico || "OUTRO";
@@ -8750,6 +8826,10 @@
       loadOperationalPaymentPlan(lead.service_order?.id).catch(() => {
         renderOperationalPaymentPlan(null);
       });
+      loadTechnicianRecommendations(lead.service_order?.id).catch(() => {
+        const panel = document.getElementById("technicianRecommendationPanel");
+        if (panel) panel.innerHTML = `<span class="operational-payment-status">${escapeHtml(t("technicianRecommendationsUnavailable"))}</span>`;
+      });
       loadOperationalCompletion(lead.service_order?.id).catch(() => {
         renderOperationalCompletion(null);
       });
@@ -8778,6 +8858,7 @@
       document.getElementById("leadModalTitle").textContent = "Nuevo cliente";
       document.getElementById("leadId").value = "";
       document.getElementById("leadServiceOrderNumber").value = "";
+      activeLeadServiceOrderId = null;
       document.getElementById("leadPropertyId").value = "";
       document.getElementById("leadTipoImovel").value = "CASA";
       document.getElementById("leadTipoServico").value = "HIDRAULICA";
@@ -11650,6 +11731,12 @@
     });
     document.getElementById("createBrokerButton").addEventListener("click", createBroker);
     document.getElementById("editMyProfileButton").addEventListener("click", openMyProfile);
+    document.getElementById("findTechnicianButton")?.addEventListener("click", () => {
+      loadTechnicianRecommendations(activeLeadServiceOrderId).catch(() => {
+        const panel = document.getElementById("technicianRecommendationPanel");
+        if (panel) panel.innerHTML = `<span class="operational-payment-status">${escapeHtml(t("technicianRecommendationsUnavailable"))}</span>`;
+      });
+    });
     profilePhotoButton.addEventListener("click", () => profilePhotoInput.click());
     profilePhotoInput.addEventListener("change", uploadProfilePhoto);
     removeProfilePhotoButton.addEventListener("click", removeProfilePhoto);
