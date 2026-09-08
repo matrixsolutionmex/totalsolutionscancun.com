@@ -24,7 +24,8 @@ from app.services.service_order_service import ensure_service_order
 from app.services.location_service import normalize_service_location
 from app.services.route_intelligence_service import calculate_route
 from app.services.tracking_health_service import tracking_health
-from app.services.tracking_state_service import is_tracking_session_active, tracking_session_state
+from app.services.tracking_state_service import is_tracking_session_active
+from app.services.public_tracking_state_service import resolve_public_tracking_state
 from app.services.pricing_engine_service import calculate_preliminary_pricing, pricing_snapshot
 from app.services.localization_service import normalize_language
 from app.services.service_order_financial_service import (
@@ -386,12 +387,14 @@ def create_customer_request_and_order(
 
 def service_request_public_status(request: ServiceRequest) -> dict[str, Any]:
     order = request.service_order
-    operational_status = _public_operational_status(request, order)
+    state = resolve_public_tracking_state(order, getattr(order, "tracking", None), language=normalize_language(request.public_language))
+    operational_status = state["label"]
     return {
         "tracking_token": request.tracking_token,
         "language": normalize_language(request.public_language),
         "status": operational_status,
         "operational_status": operational_status,
+        "public_tracking_state": state,
         "service_category": request.service_category,
         "urgency": request.urgency,
         "created_at": request.created_at,
@@ -411,36 +414,10 @@ def service_request_public_status(request: ServiceRequest) -> dict[str, Any]:
     }
 
 
-PUBLIC_OPERATIONAL_STATUS_LABELS = {
-    "SALES_QUEUE": "Solicitud recibida",
-    "ASSIGNED": "Técnico asignado",
-    "ACCEPTED": "Técnico asignado",
-    "EN_CAMINO": "Técnico en camino",
-    "ARRIVED": "El técnico llegó",
-    "EM_ATENDIMENTO": "Servicio en ejecución",
-    "IN_PROGRESS": "Servicio en ejecución",
-    "COMPLETED": "Servicio finalizado",
-    "CONCLUIDA": "Servicio finalizado",
-    "FINALIZADA": "Servicio finalizado",
-    "CANCELLED": "Servicio cancelado",
-    "CANCELADA": "Servicio cancelado",
-}
-
-
 def _public_operational_status(request: ServiceRequest, order) -> str:
-    internal_status = (getattr(order, "status", None) or request.status or "SALES_QUEUE").strip().upper()
-    language = normalize_language(request.public_language)
-    session_state = tracking_session_state(order, getattr(order, "tracking", None))
-    if session_state == "STOPPED":
-        return {"es": "Ruta finalizada", "en": "Route finished", "pt-BR": "Rota finalizada"}[language]
-    if session_state == "ORPHANED":
-        return {"es": "Ruta no disponible", "en": "Route unavailable", "pt-BR": "Rota indisponível"}[language]
-    labels = {
-        "es": PUBLIC_OPERATIONAL_STATUS_LABELS,
-        "en": {"SALES_QUEUE": "Request received", "ASSIGNED": "Technician assigned", "ACCEPTED": "Technician assigned", "EN_CAMINO": "Technician on the way", "ARRIVED": "Technician arrived", "EM_ATENDIMENTO": "Service in progress", "CONCLUIDA": "Service completed", "CANCELADA": "Cancelled"},
-        "pt-BR": {"SALES_QUEUE": "Solicitação recebida", "ASSIGNED": "Técnico atribuído", "ACCEPTED": "Técnico atribuído", "EN_CAMINO": "Técnico a caminho", "ARRIVED": "Técnico chegou", "EM_ATENDIMENTO": "Serviço em execução", "CONCLUIDA": "Serviço concluído", "CANCELADA": "Cancelada"},
-    }
-    return labels[language].get(internal_status, labels[language]["SALES_QUEUE"])
+    return resolve_public_tracking_state(
+        order, getattr(order, "tracking", None), language=normalize_language(request.public_language)
+    )["label"]
 
 
 def service_request_public_tracking(request: ServiceRequest, db: Session | None = None) -> dict[str, Any]:
@@ -483,6 +460,16 @@ def service_request_public_tracking(request: ServiceRequest, db: Session | None 
             cache_key=f"service-order:{order.id}",
             )
     commercial_projection = public_quote_projection(db, order) if db and order else None
+    diagnosis = commercial_projection.get("diagnosis") if commercial_projection else None
+    quote = commercial_projection.get("quote") if commercial_projection else None
+    public_state = resolve_public_tracking_state(
+        order,
+        tracking,
+        visit_payment,
+        diagnosis,
+        quote,
+        language=normalize_language(request.public_language),
+    )
     try:
         service_payment_plan = payment_plan_projection(db, order, include_release_capability=False) if db and order else None
     except OperationalError:
@@ -500,8 +487,9 @@ def service_request_public_tracking(request: ServiceRequest, db: Session | None 
         "service_category": request.service_category,
         "urgency": request.urgency,
         "tracking_active": tracking_active,
-        "operational_status": _public_operational_status(request, order),
-        "service_status": _public_operational_status(request, order),
+        "operational_status": public_state["label"],
+        "service_status": public_state["label"],
+        "public_tracking_state": public_state,
         "technician_display_name": technician_name,
         "route_started_at": tracking.started_at if tracking_active else None,
         "last_location_updated_at": tracking.updated_at if tracking_active else None,

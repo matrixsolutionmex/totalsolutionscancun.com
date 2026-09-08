@@ -12345,11 +12345,21 @@
       Object.assign(trackingTranslations.es, { serviceTotal: "Total del servicio", paid: "Pagado", outstanding: "Saldo restante", paymentTypeFull: "Pago total", paymentTypeDeposit: "Anticipo", paymentTypeProgress: "Pago intermedio", paymentTypeFinal: "Pago final", installmentWaiting: "Esperando liberación", installmentPending: "Pendiente", installmentPaymentPending: "Pago pendiente", installmentAvailable: "Disponible para pago" });
       Object.assign(trackingTranslations.en, { serviceTotal: "Service total", paid: "Paid", outstanding: "Remaining balance", paymentTypeFull: "Full payment", paymentTypeDeposit: "Deposit", paymentTypeProgress: "Progress payment", paymentTypeFinal: "Final payment", installmentWaiting: "Waiting for release", installmentPending: "Pending", installmentPaymentPending: "Payment pending", installmentAvailable: "Available for payment" });
       Object.assign(trackingTranslations["pt-BR"], { serviceTotal: "Total do serviço", paid: "Pago", outstanding: "Saldo restante", paymentTypeFull: "Pagamento integral", paymentTypeDeposit: "Entrada", paymentTypeProgress: "Parcela intermediária", paymentTypeFinal: "Parcela final", installmentWaiting: "Aguardando liberação", installmentPending: "Pendente", installmentPaymentPending: "Pagamento pendente", installmentAvailable: "Disponível para pagamento" });
+      Object.assign(trackingTranslations.es, { received: "Solicitud recibida", assigned: "Técnico asignado", arrived: "Técnico llegó", inProgress: "Servicio en ejecución", completed: "Servicio finalizado", routeFinished: "Ruta finalizada", cancelled: "Servicio cancelado" });
+      Object.assign(trackingTranslations.en, { received: "Request received", assigned: "Technician assigned", arrived: "Technician arrived", inProgress: "Service in progress", completed: "Service completed", routeFinished: "Route finished", cancelled: "Service cancelled" });
+      Object.assign(trackingTranslations["pt-BR"], { received: "Solicitação recebida", assigned: "Técnico atribuído", arrived: "Técnico chegou", inProgress: "Serviço em execução", completed: "Serviço finalizado", routeFinished: "Rota finalizada", cancelled: "Serviço cancelado" });
       Object.assign(trackingTranslations.es, { review: "Evalúa tu servicio", reviewSubmitted: "Evaluación enviada", reviewOverall: "Evaluación general", reviewQuality: "Calidad del servicio", reviewPunctuality: "Puntualidad", reviewCommunication: "Comunicación", reviewNps: "¿Recomendarías este servicio?", reviewComment: "Comentario (opcional)", reviewSubmit: "Enviar evaluación", reviewThanks: "Gracias por tu evaluación", reviewError: "No fue posible enviar la evaluación." });
       Object.assign(trackingTranslations.en, { review: "Rate your service", reviewSubmitted: "Review submitted", reviewOverall: "Overall rating", reviewQuality: "Service quality", reviewPunctuality: "Punctuality", reviewCommunication: "Communication", reviewNps: "Would you recommend this service?", reviewComment: "Comment (optional)", reviewSubmit: "Submit review", reviewThanks: "Thank you for your review", reviewError: "The review could not be submitted." });
       Object.assign(trackingTranslations["pt-BR"], { review: "Avalie seu atendimento", reviewSubmitted: "Avaliação enviada", reviewOverall: "Avaliação geral", reviewQuality: "Qualidade do serviço", reviewPunctuality: "Pontualidade", reviewCommunication: "Comunicação", reviewNps: "Você recomendaria este serviço?", reviewComment: "Comentário (opcional)", reviewSubmit: "Enviar avaliação", reviewThanks: "Obrigado pela sua avaliação", reviewError: "Não foi possível enviar a avaliação." });
       const trackingText = (key) => trackingTranslations[portalLanguage]?.[key] || trackingTranslations.es[key];
-      const localizedTrackingStatus = (value) => {
+      const localizedTrackingStatus = (value, state) => {
+        const canonicalCode = String(state?.code || "").toUpperCase();
+        const canonicalLabels = {
+          TECHNICIAN_EN_ROUTE: "onWay", TECHNICIAN_ASSIGNED: "assigned", TECHNICIAN_ARRIVED: "arrived",
+          SERVICE_IN_PROGRESS: "inProgress", SERVICE_COMPLETED: "completed", ROUTE_FINISHED: "routeFinished",
+          CANCELLED: "cancelled", REQUEST_RECEIVED: "received", VISIT_PAYMENT_PENDING: "visitPending", VISIT_PAID: "visitPaid"
+        };
+        if (canonicalLabels[canonicalCode]) return trackingText(canonicalLabels[canonicalCode]);
         const normalized = String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
         if (normalized.includes("camino") || normalized.includes("way") || normalized.includes("caminho")) return trackingText("onWay");
         if (normalized.includes("finaliz") || normalized.includes("finished") || normalized.includes("completed") || normalized.includes("conclu")) {
@@ -13311,7 +13321,7 @@
               ? trackingText("stale")
               : trackingText("onWay");
           const locationMessage = !active
-            ? localizedTrackingStatus(data.operational_status)
+            ? localizedTrackingStatus(data.operational_status, data.public_tracking_state)
             : (hasTechnician ? locationStatusText : trackingText("waiting"));
           const retainedRouteMessage = displayRouteAvailable && locationHealth !== "LIVE"
             ? (portalLanguage === "en" ? "Showing the last available route · " : portalLanguage === "pt-BR" ? "Exibindo a última rota disponível · " : "Mostrando la última ruta disponible · ")
@@ -13326,7 +13336,7 @@
                 <p>${pt("order")}</p>
                 <code>${escapeHtml(data.order_number || pt("preparing"))}</code>
                 <p>${pt("status")}</p>
-                <strong>${escapeHtml(localizedTrackingStatus(data.operational_status))}</strong>
+                <strong>${escapeHtml(localizedTrackingStatus(data.operational_status, data.public_tracking_state))}</strong>
                 <p id="publicTrackingTechnician">${pt("technician")}: <strong>${escapeHtml(data.technician_display_name || trackingText("waiting"))}</strong></p>
                 ${data.route_started_at ? `<p>${pt("departure")}: <strong>${escapeHtml(formatTrackingDate(data.route_started_at))}</strong></p>` : ""}
               </div>

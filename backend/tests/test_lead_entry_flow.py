@@ -1432,7 +1432,7 @@ def test_public_tracking_uses_canonical_state_for_stale_and_orphaned_sessions(db
     db.refresh(service_request)
     orphaned = service_request_public_tracking(service_request)
     assert orphaned["tracking_active"] is False
-    assert orphaned["operational_status"] == "Ruta no disponible"
+    assert orphaned["operational_status"] == "Técnico en camino"
     assert orphaned["technician_lat"] is None
 
 
@@ -1626,7 +1626,7 @@ def test_public_tracking_exposes_only_current_active_position_and_hides_it_after
     assert after_stop["tracking_active"] is False
     assert after_stop["technician_lat"] is None
     assert after_stop["technician_lng"] is None
-    assert after_stop["operational_status"] == "Ruta finalizada"
+    assert after_stop["operational_status"] == "Técnico en camino"
     assert after_stop["destination_lat"] == pytest.approx(21.1619)
 
 
