@@ -481,7 +481,7 @@ def service_request_public_tracking(request: ServiceRequest, db: Session | None 
             )
     commercial_projection = public_quote_projection(db, order) if db and order else None
     try:
-        service_payment_plan = payment_plan_projection(db, order) if db and order else None
+        service_payment_plan = payment_plan_projection(db, order, include_release_capability=False) if db and order else None
     except OperationalError:
         # Older installations are upgraded by startup before this projection is required.
         db.rollback()

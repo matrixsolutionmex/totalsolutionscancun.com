@@ -51,6 +51,24 @@ def _stripe_request(path: str, *, data: dict[str, str], idempotency_key: str) ->
     return payload
 
 
+def _stripe_retrieve_checkout_session(session_id: str) -> dict:
+    secret = os.getenv("STRIPE_SECRET_KEY", "").strip()
+    if not secret:
+        raise HTTPException(status_code=503, detail="Stripe sandbox nao configurado")
+    try:
+        response = httpx.get(
+            f"{STRIPE_API_URL}/checkout/sessions/{session_id}",
+            headers={"Authorization": f"Bearer {secret}"},
+            timeout=float(os.getenv("STRIPE_TIMEOUT_SECONDS", "10")),
+        )
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="Stripe indisponivel") from exc
+    if response.status_code >= 400:
+        raise HTTPException(status_code=502, detail="Stripe nao permitiu consultar a sessao")
+    return payload
+
+
 def create_payment(
     db: Session,
     *,
@@ -108,6 +126,10 @@ def create_stripe_checkout(
         "organization_id": str(payment.organization_id),
         "payment_type": payment.payment_type,
     }
+    if payment.service_order_id:
+        metadata["service_order_id"] = str(payment.service_order_id)
+    if payment.installment_id:
+        metadata["installment_id"] = str(payment.installment_id)
     data = {
         "mode": "subscription" if recurring else "payment",
         "success_url": success_url,
@@ -117,6 +139,9 @@ def create_stripe_checkout(
         "metadata[organization_id]": metadata["organization_id"],
         "metadata[payment_type]": metadata["payment_type"],
     }
+    for key in ("service_order_id", "installment_id"):
+        if key in metadata:
+            data[f"metadata[{key}]"] = metadata[key]
     if stripe_price_id:
         data["line_items[0][price]"] = stripe_price_id
         data["line_items[0][quantity]"] = "1"
@@ -233,6 +258,43 @@ def handle_stripe_event(db: Session, event: dict) -> Payment | None:
         payment.updated_at = datetime.utcnow()
         db.flush()
     return payment
+
+
+def reconcile_stripe_checkout_payment(db: Session, payment: Payment) -> Payment:
+    """Recover a paid Checkout session through the normal webhook accounting path."""
+    if payment.payment_method != "STRIPE_CARD" or not payment.stripe_checkout_session_id:
+        raise ValueError("payment has no Stripe Checkout session")
+    session = _stripe_retrieve_checkout_session(payment.stripe_checkout_session_id)
+    if session.get("id") != payment.stripe_checkout_session_id:
+        raise ValueError("Stripe session does not match the stored payment")
+    if session.get("livemode") is True:
+        raise ValueError("live Stripe session is not allowed in this environment")
+    if session.get("status") != "complete" or session.get("payment_status") != "paid":
+        raise ValueError("Stripe Checkout session is not paid")
+    amount_total = session.get("amount_total")
+    expected_amount = _amount_minor(Decimal(payment.gross_amount))
+    if amount_total is None or int(amount_total) != expected_amount:
+        raise ValueError("Stripe amount does not match the stored payment")
+    if str(session.get("currency") or "").lower() != str(payment.currency).lower():
+        raise ValueError("Stripe currency does not match the stored payment")
+    metadata = session.get("metadata") or {}
+    if str(metadata.get("payment_id") or "") != str(payment.id):
+        raise ValueError("Stripe payment metadata does not match the stored payment")
+    if str(metadata.get("organization_id") or "") != str(payment.organization_id):
+        raise ValueError("Stripe organization metadata does not match the stored payment")
+    if str(metadata.get("payment_type") or "") != str(payment.payment_type):
+        raise ValueError("Stripe payment type metadata does not match the stored payment")
+    if session.get("client_reference_id") not in (None, str(payment.id)):
+        raise ValueError("Stripe client reference does not match the stored payment")
+    if payment.service_order_id and metadata.get("service_order_id") not in (None, str(payment.service_order_id)):
+        raise ValueError("Stripe service order metadata does not match the stored payment")
+    if payment.installment_id and metadata.get("installment_id") not in (None, str(payment.installment_id)):
+        raise ValueError("Stripe installment metadata does not match the stored payment")
+    event = {"type": "checkout.session.completed", "data": {"object": session}}
+    reconciled = handle_stripe_event(db, event)
+    if reconciled is None:
+        raise ValueError("stored payment could not be resolved from Stripe session")
+    return reconciled
 
 
 def platform_fee_amount(amount: Decimal) -> Decimal:

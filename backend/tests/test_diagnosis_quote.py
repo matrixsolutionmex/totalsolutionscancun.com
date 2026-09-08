@@ -24,10 +24,13 @@ from app.services.service_order_quote_service import (
     scoped_order,
     upsert_diagnosis,
 )
-from app.services.service_order_payment_plan_service import payment_plan_projection, create_payment_plan_for_approved_quote, record_service_installment_payment, create_installment_checkout, PUBLIC_INSTALLMENT_TYPES
+from app.services.service_order_payment_plan_service import payment_plan_projection, create_payment_plan_for_approved_quote, record_service_installment_payment, create_installment_checkout, release_installment_for_payment, PUBLIC_INSTALLMENT_TYPES
+from app.services.payment_service import reconcile_stripe_checkout_payment
 from app.services.service_order_financial_service import ensure_financial_account, create_visit_pricing_snapshot, record_visit_payment
+from app.models.service_order_financial import ServiceOrderFinancial
 from app.models.payment import Payment
 from app.models.service_order_ledger_entry import ServiceOrderLedgerEntry
+from app.models.service_order_installment_release_event import ServiceOrderInstallmentReleaseEvent
 
 
 @pytest.fixture()
@@ -105,6 +108,7 @@ def test_public_approval_is_token_scoped_and_does_not_pay_or_change_order(db):
     assert len(plan["installments"]) == 1
     assert plan["installments"][0]["status"] == "AVAILABLE"
     assert plan["installments"][0]["type"] == "FULL"
+    assert plan["installments"][0]["can_release"] is False
     assert "SERVICE_FULL" not in str(plan)
     assert "id" not in plan["installments"][0]
     assert db.query(Payment).count() == 0
@@ -123,8 +127,27 @@ def test_approved_quote_payment_plan_uses_policy_snapshot_and_is_idempotent(db):
     assert [item["amount"] for item in projection["installments"]] == [Decimal("3000.00"), Decimal("7000.00")]
     assert projection["installments"][0]["status"] == "AVAILABLE"
     assert projection["installments"][1]["status"] == "PENDING"
+    assert [item["can_release"] for item in projection["installments"]] == [False, False]
     assert projection["service_outstanding_balance"] == Decimal("10000.00")
     assert len(db.query(service_order_payment_plan.ServiceOrderPaymentPlan).all()) == 1
+
+
+def test_public_payment_plan_omits_administrative_release_capability(db):
+    _, _, manager, _, _, _, order = scenario(db)
+    quote = create_quote(db, order, manager, {"items": [{"description": "Project", "quantity": 1, "unit_price": 30000}]})
+    quote.status = "APPROVED"
+    quote.approved_total = quote.total
+    db.flush()
+    plan = create_payment_plan_for_approved_quote(db, order, quote)
+    plan.installments[0].status = "PAID"
+    db.flush()
+
+    public_projection = payment_plan_projection(db, order, include_release_capability=False)
+    internal_projection = payment_plan_projection(db, order)
+
+    assert "can_release" not in public_projection["installments"][1]
+    assert internal_projection["installments"][1]["can_release"] is True
+    assert plan.id == db.query(service_order_payment_plan.ServiceOrderPaymentPlan).one().id
 
 
 def test_large_quote_plan_is_rounded_without_losing_total(db):
@@ -371,6 +394,77 @@ def test_pending_installment_cross_tenant_and_old_quote_are_blocked(db):
     assert one.id != two.id
 
 
+def _approved_plan(db, manager, order, amount):
+    quote = create_quote(db, order, manager, {"items": [{"description": "Service", "quantity": 1, "unit_price": Decimal(amount)}]})
+    quote.status = "APPROVED"
+    quote.approved_total = quote.total
+    db.flush()
+    return quote, create_payment_plan_for_approved_quote(db, order, quote)
+
+
+def test_future_final_release_requires_paid_deposit_and_is_idempotent(db):
+    _, _, manager, _, _, _, order = scenario(db)
+    _, plan = _approved_plan(db, manager, order, "10000")
+    final = plan.installments[1]
+    with pytest.raises(HTTPException) as exc:
+        release_installment_for_payment(db, order, 2, manager, trigger_type="SERVICE_READY_FOR_FINAL_PAYMENT")
+    assert exc.value.status_code == 409
+    plan.installments[0].status = "PAID"
+    projection = payment_plan_projection(db, order)
+    assert [item["can_release"] for item in projection["installments"]] == [False, True]
+    first = release_installment_for_payment(db, order, 2, manager, trigger_type="SERVICE_READY_FOR_FINAL_PAYMENT", observation="Final ready")
+    second = release_installment_for_payment(db, order, 2, manager, trigger_type="SERVICE_READY_FOR_FINAL_PAYMENT")
+    db.commit()
+    assert first == {"installment_id": final.id, "status": "AVAILABLE", "changed": True}
+    assert second == {"installment_id": final.id, "status": "AVAILABLE", "changed": False}
+    assert db.query(ServiceOrderInstallmentReleaseEvent).filter_by(installment_id=final.id).count() == 1
+    projection = payment_plan_projection(db, order)
+    assert projection["installments"][1]["status"] == "AVAILABLE"
+    assert projection["installments"][1]["checkout_available"] is True
+    assert projection["installments"][1]["can_release"] is False
+    assert projection["installments"][0]["status"] == "PAID"
+
+
+def test_large_plan_releases_progress_then_final_only_after_prior_payment(db):
+    _, _, manager, _, _, _, order = scenario(db)
+    _, plan = _approved_plan(db, manager, order, "30000")
+    progress, final = plan.installments[1:]
+    with pytest.raises(HTTPException) as exc:
+        release_installment_for_payment(db, order, 2, manager, trigger_type="PROGRESS_STAGE_COMPLETED")
+    assert exc.value.status_code == 409
+    plan.installments[0].status = "PAID"
+    projection = payment_plan_projection(db, order)
+    assert [item["can_release"] for item in projection["installments"]] == [False, True, False]
+    release_installment_for_payment(db, order, 2, manager, trigger_type="PROGRESS_STAGE_COMPLETED")
+    with pytest.raises(HTTPException) as exc:
+        release_installment_for_payment(db, order, 3, manager, trigger_type="SERVICE_READY_FOR_FINAL_PAYMENT")
+    assert exc.value.status_code == 409
+    progress.status = "PAID"
+    result = release_installment_for_payment(db, order, 3, manager, trigger_type="SERVICE_READY_FOR_FINAL_PAYMENT")
+    db.commit()
+    assert result["status"] == "AVAILABLE"
+    assert progress.status == "PAID"
+    assert final.status == "AVAILABLE"
+    projection = payment_plan_projection(db, order)
+    assert [item["status"] for item in projection["installments"]] == ["PAID", "PAID", "AVAILABLE"]
+    assert [item["checkout_available"] for item in projection["installments"]] == [False, False, True]
+    assert [item["can_release"] for item in projection["installments"]] == [False, False, False]
+
+
+def test_installment_release_rejects_invalid_trigger_and_unauthorized_tenant(db):
+    one, two, manager, other, _, _, order = scenario(db)
+    _, plan = _approved_plan(db, manager, order, "30000")
+    plan.installments[0].status = "PAID"
+    with pytest.raises(HTTPException) as exc:
+        release_installment_for_payment(db, order, 2, manager, trigger_type="ARBITRARY")
+    assert exc.value.status_code == 400
+    other.organization_id = two.id
+    with pytest.raises(HTTPException) as exc:
+        release_installment_for_payment(db, order, 2, other, trigger_type="PROGRESS_STAGE_COMPLETED")
+    assert exc.value.status_code == 403
+    assert one.id != two.id
+
+
 def test_visit_and_service_money_are_separate(db):
     _, _, manager, _, tech, _, order = scenario(db)
     account = ensure_financial_account(db, order, organization_id=order.organization_id)
@@ -397,3 +491,64 @@ def test_visit_and_service_money_are_separate(db):
     assert projection["approved_total"] == Decimal("10000.00")
     assert projection["service_paid_total"] == Decimal("3000.00")
     assert projection["service_outstanding_balance"] == Decimal("7000.00")
+
+
+def test_reconcile_paid_checkout_uses_webhook_accounting_path_and_is_idempotent(db, monkeypatch):
+    _, _, manager, _, tech, _, order = scenario(db)
+    ensure_financial_account(db, order, organization_id=order.organization_id)
+    _, plan = _approved_plan(db, manager, order, "30000")
+    installment = plan.installments[0]
+    payment = Payment(
+        organization_id=order.organization_id, service_order_id=order.id, technician_id=tech.id,
+        installment_id=installment.id, payment_type=installment.installment_type,
+        payment_method="STRIPE_CARD", currency="MXN", gross_amount=Decimal("9000"),
+        provider="STRIPE", idempotency_key="reconcile-service-1", status="CHECKOUT_CREATED",
+        stripe_checkout_session_id="cs_reconcile_1",
+    )
+    db.add(payment)
+    db.flush()
+    session = {
+        "id": "cs_reconcile_1", "livemode": False, "status": "complete", "payment_status": "paid",
+        "amount_total": 900000, "currency": "mxn", "client_reference_id": str(payment.id),
+        "payment_intent": "pi_reconcile_1", "metadata": {
+            "payment_id": str(payment.id), "organization_id": str(order.organization_id),
+            "payment_type": installment.installment_type, "service_order_id": str(order.id),
+            "installment_id": str(installment.id),
+        },
+    }
+    monkeypatch.setattr("app.services.payment_service._stripe_retrieve_checkout_session", lambda _: session)
+    assert reconcile_stripe_checkout_payment(db, payment).status == "PAID"
+    assert reconcile_stripe_checkout_payment(db, payment).status == "PAID"
+    db.commit()
+    assert payment.status == "PAID"
+    assert installment.status == "PAID"
+    assert db.query(ServiceOrderLedgerEntry).filter_by(service_order_id=order.id, entry_type="SERVICE_PAYMENT").count() == 1
+    financial = db.query(ServiceOrderFinancial).filter_by(service_order_id=order.id).one()
+    assert financial.service_paid_amount == Decimal("9000.00")
+    assert financial.service_outstanding_balance == Decimal("21000.00")
+
+
+def test_reconcile_rejects_unpaid_or_mismatched_checkout_without_financial_effect(db, monkeypatch):
+    _, _, manager, _, tech, _, order = scenario(db)
+    ensure_financial_account(db, order, organization_id=order.organization_id)
+    _, plan = _approved_plan(db, manager, order, "30000")
+    installment = plan.installments[0]
+    payment = Payment(
+        organization_id=order.organization_id, service_order_id=order.id, technician_id=tech.id,
+        installment_id=installment.id, payment_type=installment.installment_type,
+        payment_method="STRIPE_CARD", currency="MXN", gross_amount=Decimal("9000"),
+        provider="STRIPE", idempotency_key="reconcile-service-2", status="CHECKOUT_CREATED",
+        stripe_checkout_session_id="cs_reconcile_2",
+    )
+    db.add(payment)
+    db.flush()
+    monkeypatch.setattr("app.services.payment_service._stripe_retrieve_checkout_session", lambda _: {
+        "id": "cs_reconcile_2", "livemode": False, "status": "complete", "payment_status": "unpaid",
+        "amount_total": 900000, "currency": "mxn", "client_reference_id": str(payment.id),
+        "metadata": {"payment_id": str(payment.id), "organization_id": str(order.organization_id), "payment_type": installment.installment_type},
+    })
+    with pytest.raises(ValueError, match="not paid"):
+        reconcile_stripe_checkout_payment(db, payment)
+    assert payment.status == "CHECKOUT_CREATED"
+    assert installment.status == "AVAILABLE"
+    assert db.query(ServiceOrderLedgerEntry).filter_by(entry_type="SERVICE_PAYMENT").count() == 0

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.jwt_handler import get_current_user, get_db, require_admin_user
 from app.models.payment import Payment
+from app.models.service_order_payment_plan import ServiceOrderPaymentInstallment
 from app.models.service_order import ServiceOrder
 from app.models.service_request import ServiceRequest
 from app.models.service_order_financial import ServiceOrderFinancial
@@ -21,8 +22,13 @@ from app.services.payment_service import (
     record_cash_payment,
     verify_stripe_signature,
     create_stripe_checkout,
+    reconcile_stripe_checkout_payment,
 )
-from app.services.service_order_payment_plan_service import create_installment_checkout
+from app.services.service_order_payment_plan_service import (
+    create_installment_checkout,
+    payment_plan_projection,
+    release_installment_for_payment,
+)
 from app.services.service_order_quote_service import resolve_public_order
 
 
@@ -41,6 +47,14 @@ class PublicStripeCheckoutRequest(BaseModel):
 
     # The amount is deliberately absent: the server reads the accepted OS snapshot.
     pass
+
+
+class InstallmentReleaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    trigger_type: str
+    observation: str | None = None
+    evidence_reference: str | None = None
 
 
 def _public_base_url() -> str:
@@ -129,6 +143,78 @@ def create_public_installment_checkout(
     payment = create_installment_checkout(db, order, installment_sequence, tracking_token=tracking_token)
     db.commit()
     return {"status": payment.status, "checkout_url": payment.checkout_url, "installment_sequence": installment_sequence}
+
+
+@router.post("/service-orders/{order_id}/payment-plan/installments/{installment_sequence}/release")
+def release_service_order_installment(
+    order_id: int,
+    installment_sequence: int,
+    payload: InstallmentReleaseRequest,
+    db: Session = Depends(get_db),
+    actor=Depends(require_admin_user),
+):
+    query = db.query(ServiceOrder).filter(ServiceOrder.id == order_id)
+    if actor.role != "ROOT":
+        query = query.filter(ServiceOrder.organization_id == actor.organization_id)
+    order = query.first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Ordem de serviço não encontrada")
+    result = release_installment_for_payment(
+        db, order, installment_sequence, actor,
+        trigger_type=payload.trigger_type.strip().upper(),
+        observation=payload.observation,
+        evidence_reference=payload.evidence_reference,
+    )
+    db.commit()
+    return result
+
+
+@router.get("/service-orders/{order_id}/payment-plan")
+def get_service_order_payment_plan(
+    order_id: int,
+    db: Session = Depends(get_db),
+    actor=Depends(require_admin_user),
+):
+    query = db.query(ServiceOrder).filter(ServiceOrder.id == order_id)
+    if actor.role != "ROOT":
+        query = query.filter(ServiceOrder.organization_id == actor.organization_id)
+    order = query.first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Ordem de serviço não encontrada")
+    projection = payment_plan_projection(db, order)
+    if projection is None:
+        raise HTTPException(status_code=404, detail="Plano de pagamento não encontrado")
+    return projection
+
+
+@router.post("/service-orders/{order_id}/payment-plan/installments/{installment_sequence}/reconcile")
+def reconcile_service_order_installment(
+    order_id: int,
+    installment_sequence: int,
+    db: Session = Depends(get_db),
+    actor=Depends(require_admin_user),
+):
+    query = db.query(ServiceOrder).filter(ServiceOrder.id == order_id)
+    if actor.role != "ROOT":
+        query = query.filter(ServiceOrder.organization_id == actor.organization_id)
+    order = query.first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Ordem de serviço não encontrada")
+    installment = db.query(ServiceOrderPaymentInstallment).filter_by(
+        service_order_id=order.id, organization_id=order.organization_id, sequence=installment_sequence,
+    ).first()
+    payment = db.query(Payment).filter_by(
+        service_order_id=order.id, organization_id=order.organization_id,
+        installment_id=installment.id if installment else None,
+    ).first() if installment else None
+    if not payment:
+        raise HTTPException(status_code=404, detail="Pagamento da parcela não encontrado")
+    try:
+        payment = reconcile_stripe_checkout_payment(db, payment)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    db.commit()
+    return {"payment_id": payment.id, "status": payment.status, "installment_sequence": installment_sequence}
 
 
 @router.get("")

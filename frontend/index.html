@@ -1329,6 +1329,47 @@
       gap: 10px;
     }
 
+    .operational-payment-plan {
+      display: grid;
+      gap: 10px;
+    }
+
+    .operational-payment-installment {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      border-top: 1px solid #e2e8f0;
+      padding-top: 10px;
+    }
+
+    .operational-payment-installment:first-child {
+      border-top: 0;
+      padding-top: 0;
+    }
+
+    .operational-payment-meta {
+      display: grid;
+      gap: 2px;
+    }
+
+    .operational-payment-status {
+      color: #475569;
+      font-size: .9rem;
+    }
+
+    .operational-payment-installment button {
+      grid-column: 1 / -1;
+      justify-self: start;
+    }
+
+    @media (max-width: 640px) {
+      .operational-payment-installment button {
+        grid-column: 1 / -1;
+        width: 100%;
+      }
+    }
+
     .lead-action-groups {
       grid-column: 1 / -1;
       display: grid;
@@ -4202,6 +4243,12 @@
               <div class="lead-action-row">
                 <button class="warning" type="button" id="returnLeadBankButton">↩ Liberar solicitud</button>
                 <button class="danger" type="button" id="deleteLeadButton">🗑 Excluir solicitação</button>
+              </div>
+            </div>
+            <div class="lead-action-group">
+              <div class="lead-action-title">Plan de pagamento</div>
+              <div id="leadPaymentPlanPanel" class="operational-payment-plan">
+                <span class="operational-payment-status">Nenhum plano de pagamento disponível.</span>
               </div>
             </div>
             <div class="lead-action-group">
@@ -8480,6 +8527,78 @@
       await loadLeadTimeline(leadId);
     }
 
+    function operationalPaymentLabels() {
+      const labels = {
+        pt: { plan: "Plano de pagamento", total: "Total do serviço", paid: "Pago", balance: "Saldo restante", available: "Disponível", pending: "Aguardando liberação", paidStatus: "Pago", release: "Liberar cobrança", progress: "Liberar cobrança", final: "Liberar cobrança" },
+        en: { plan: "Payment plan", total: "Service total", paid: "Paid", balance: "Remaining balance", available: "Available", pending: "Waiting for release", paidStatus: "Paid", release: "Release charge", progress: "Release charge", final: "Release charge" },
+        es: { plan: "Plan de pago", total: "Total del servicio", paid: "Pagado", balance: "Saldo restante", available: "Disponible", pending: "Esperando liberación", paidStatus: "Pagado", release: "Liberar cobro", progress: "Liberar cobro", final: "Liberar cobro" }
+      };
+      return labels[currentLanguage] || labels.pt;
+    }
+
+    function operationalInstallmentType(type) {
+      const labels = {
+        pt: { FULL: "Pagamento integral", DEPOSIT: "Entrada", PROGRESS: "Parcela intermediária", FINAL: "Parcela final" },
+        en: { FULL: "Full payment", DEPOSIT: "Deposit", PROGRESS: "Progress payment", FINAL: "Final payment" },
+        es: { FULL: "Pago total", DEPOSIT: "Anticipo", PROGRESS: "Pago intermedio", FINAL: "Pago final" }
+      };
+      return (labels[currentLanguage] || labels.pt)[type] || (currentLanguage === "en" ? "Payment installment" : currentLanguage === "es" ? "Cuota de pago" : "Parcela de pagamento");
+    }
+
+    function operationalInstallmentStatus(status) {
+      const labels = operationalPaymentLabels();
+      return status === "PAID" ? labels.paidStatus : status === "AVAILABLE" ? labels.available : labels.pending;
+    }
+
+    function renderOperationalPaymentPlan(plan, orderId) {
+      const panel = document.getElementById("leadPaymentPlanPanel");
+      if (!panel) return;
+      if (!plan) {
+        panel.innerHTML = `<span class="operational-payment-status">${escapeHtml((operationalPaymentLabels()).pending)}</span>`;
+        return;
+      }
+      const labels = operationalPaymentLabels();
+      const formatAmount = (amount, currency) => new Intl.NumberFormat(translations[currentLanguage]?.locale || "pt-BR", { style: "currency", currency: currency || "MXN" }).format(Number(amount || 0));
+      panel.innerHTML = `
+        <div><strong>${escapeHtml(labels.total)}:</strong> ${escapeHtml(formatAmount(plan.approved_total, plan.currency))}</div>
+        <div><strong>${escapeHtml(labels.paid)}:</strong> ${escapeHtml(formatAmount(plan.service_paid_total, plan.currency))}</div>
+        <div><strong>${escapeHtml(labels.balance)}:</strong> ${escapeHtml(formatAmount(plan.service_outstanding_balance, plan.currency))}</div>
+        ${(plan.installments || []).map((item) => {
+          const releaseTrigger = item.type === "PROGRESS" ? "PROGRESS_STAGE_COMPLETED" : "SERVICE_READY_FOR_FINAL_PAYMENT";
+          const actionLabel = item.type === "PROGRESS" ? labels.progress : labels.final;
+          const canRelease = item.can_release === true;
+          return `<div class="operational-payment-installment">
+            <div class="operational-payment-meta"><strong>${escapeHtml(`Parcela ${item.sequence} · ${operationalInstallmentType(item.type)}`)}</strong><span>${escapeHtml(formatAmount(item.amount, item.currency))}</span></div>
+            <span class="operational-payment-status">${escapeHtml(operationalInstallmentStatus(item.status))}</span>
+            ${canRelease ? `<button class="small-btn" type="button" onclick="releaseOperationalInstallment(${orderId}, ${item.sequence}, '${releaseTrigger}')">${escapeHtml(actionLabel)}</button>` : ""}
+          </div>`;
+        }).join("")}
+      `;
+    }
+
+    async function loadOperationalPaymentPlan(orderId) {
+      if (!orderId || !["ROOT", "GERENTE"].includes(currentUser?.role)) {
+        renderOperationalPaymentPlan(null);
+        return;
+      }
+      const response = await apiFetch(`${API_BASE}/payments/service-orders/${encodeURIComponent(orderId)}/payment-plan`, { headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error("payment plan unavailable");
+      renderOperationalPaymentPlan(await response.json(), orderId);
+    }
+
+    async function releaseOperationalInstallment(orderId, sequence, triggerType) {
+      const response = await apiFetch(`${API_BASE}/payments/service-orders/${encodeURIComponent(orderId)}/payment-plan/installments/${encodeURIComponent(sequence)}/release`, {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ trigger_type: triggerType })
+      });
+      if (!response.ok) {
+        window.alert("No fue posible liberar la parcela.");
+        return;
+      }
+      await loadOperationalPaymentPlan(orderId);
+    }
+
     function openLeadModal(lead) {
       if (!lead) {
         return;
@@ -8522,6 +8641,9 @@
       document.getElementById("leadProximoContato").value = datetimeLocalValue(lead.proximo_contacto);
       document.getElementById("leadObservacoes").value = lead.observacoes || "";
       document.getElementById("leadBrokerTarget").value = lead.assigned_to_user_id || "";
+      loadOperationalPaymentPlan(lead.service_order?.id).catch(() => {
+        renderOperationalPaymentPlan(null);
+      });
       updateLeadResponsibleSummary();
       renderPropertyExtraFields(parsePropertyExtra(lead.property_extra_json));
       clearQueuedEvidence();
@@ -12024,9 +12146,9 @@
         en: { interrupted: "Location interrupted", stale: "Location has not updated recently", onWay: "Your technician is on the way", waiting: "Waiting for technician location", updatedNow: "Updated now", lastUpdate: "Last update", seconds: "seconds ago", recalculating: "Recalculating route...", approximateEta: "Approximate ETA", estimatedArrival: "Estimated arrival", distance: "Distance remaining", time: "Time", etaUnavailable: "ETA temporarily unavailable", accuracy: "Accuracy", map: "Service tracking map", technician: "Technician", destination: "Service destination", visitPayment: "Visit payment", visitPending: "We are confirming your payment.", visitPaid: "Visit paid ✓", checkoutUnavailable: "Visit payment unavailable.", diagnosis: "Diagnosis", problemFound: "Problem found", solution: "Recommended solution", observations: "Observations", quote: "Quote", quoteItems: "Items", itemDescription: "Description", quantity: "Quantity", unit: "Unit", unitPrice: "Price", subtotal: "Subtotal", discount: "Discount", tax: "Tax", total: "Total", validUntil: "Valid until", approveQuote: "Approve quote", rejectQuote: "Reject quote", approved: "Quote approved", rejected: "Quote rejected", quoteError: "The quote could not be updated.", paymentPlan: "Payment plan", installment: "Installment", payInstallment: "Pay", installmentPaid: "Paid", installmentPending: "Pending", installmentAvailable: "Available" },
         "pt-BR": { interrupted: "Localização interrompida", stale: "Localização sem atualização recente", onWay: "Seu técnico está a caminho", waiting: "Aguardando localização do técnico", updatedNow: "Atualizada agora", lastUpdate: "Última atualização há", seconds: "segundos", recalculating: "Recalculando rota...", approximateEta: "Chegada estimada aproximada", estimatedArrival: "Chegada estimada", distance: "Distância restante", time: "Hora", etaUnavailable: "ETA temporariamente indisponível", accuracy: "Precisão", map: "Mapa de acompanhamento do serviço", technician: "Técnico", destination: "Destino do serviço", visitPayment: "Pagamento da visita", visitPending: "Estamos confirmando seu pagamento.", visitPaid: "Visita paga ✓", checkoutUnavailable: "Pagamento da visita indisponível.", diagnosis: "Diagnóstico", problemFound: "Problema encontrado", solution: "Solução recomendada", observations: "Observações", quote: "Orçamento", quoteItems: "Itens", itemDescription: "Descrição", quantity: "Quantidade", unit: "Unidade", unitPrice: "Preço", subtotal: "Subtotal", discount: "Desconto", tax: "Impostos", total: "Total", validUntil: "Válido até", approveQuote: "Aprovar orçamento", rejectQuote: "Recusar orçamento", approved: "Orçamento aprovado", rejected: "Orçamento recusado", quoteError: "Não foi possível atualizar o orçamento.", paymentPlan: "Plano de pagamento", installment: "Parcela", payInstallment: "Pagar", installmentPaid: "Paga", installmentPending: "Pendente", installmentAvailable: "Disponível" }
       };
-      Object.assign(trackingTranslations.es, { serviceTotal: "Total del servicio", paid: "Pagado", outstanding: "Saldo restante", paymentTypeFull: "Pago total", paymentTypeDeposit: "Anticipo", paymentTypeProgress: "Pago intermedio", paymentTypeFinal: "Pago final", installmentWaiting: "Esperando liberación" });
-      Object.assign(trackingTranslations.en, { serviceTotal: "Service total", paid: "Paid", outstanding: "Remaining balance", paymentTypeFull: "Full payment", paymentTypeDeposit: "Deposit", paymentTypeProgress: "Progress payment", paymentTypeFinal: "Final payment", installmentWaiting: "Waiting for release" });
-      Object.assign(trackingTranslations["pt-BR"], { serviceTotal: "Total do serviço", paid: "Pago", outstanding: "Saldo restante", paymentTypeFull: "Pagamento integral", paymentTypeDeposit: "Entrada", paymentTypeProgress: "Parcela intermediária", paymentTypeFinal: "Parcela final", installmentWaiting: "Aguardando liberação" });
+      Object.assign(trackingTranslations.es, { serviceTotal: "Total del servicio", paid: "Pagado", outstanding: "Saldo restante", paymentTypeFull: "Pago total", paymentTypeDeposit: "Anticipo", paymentTypeProgress: "Pago intermedio", paymentTypeFinal: "Pago final", installmentWaiting: "Esperando liberación", installmentPending: "Pendiente", installmentPaymentPending: "Pago pendiente", installmentAvailable: "Disponible para pago" });
+      Object.assign(trackingTranslations.en, { serviceTotal: "Service total", paid: "Paid", outstanding: "Remaining balance", paymentTypeFull: "Full payment", paymentTypeDeposit: "Deposit", paymentTypeProgress: "Progress payment", paymentTypeFinal: "Final payment", installmentWaiting: "Waiting for release", installmentPending: "Pending", installmentPaymentPending: "Payment pending", installmentAvailable: "Available for payment" });
+      Object.assign(trackingTranslations["pt-BR"], { serviceTotal: "Total do serviço", paid: "Pago", outstanding: "Saldo restante", paymentTypeFull: "Pagamento integral", paymentTypeDeposit: "Entrada", paymentTypeProgress: "Parcela intermediária", paymentTypeFinal: "Parcela final", installmentWaiting: "Aguardando liberação", installmentPending: "Pendente", installmentPaymentPending: "Pagamento pendente", installmentAvailable: "Disponível para pagamento" });
       const trackingText = (key) => trackingTranslations[portalLanguage]?.[key] || trackingTranslations.es[key];
       const localizedTrackingStatus = (value) => {
         const normalized = String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -12832,7 +12954,7 @@
           }
         };
         const publicInstallmentType = (type) => ({ FULL: "paymentTypeFull", DEPOSIT: "paymentTypeDeposit", PROGRESS: "paymentTypeProgress", FINAL: "paymentTypeFinal", SERVICE_FULL: "paymentTypeFull", SERVICE_DEPOSIT: "paymentTypeDeposit", SERVICE_PROGRESS: "paymentTypeProgress", SERVICE_COMPLETION: "paymentTypeFinal", SERVICE_FINAL: "paymentTypeFinal", SERVICE_STAGE_1: "paymentTypeDeposit", SERVICE_STAGE_2: "paymentTypeProgress", SERVICE_STAGE_3: "paymentTypeFinal" }[String(type || "").toUpperCase()] || "installment");
-        const publicInstallmentStatus = (status) => ({ PAID: "installmentPaid", AVAILABLE: "installmentAvailable", PAYMENT_PENDING: "installmentPending", PENDING: "installmentPending", EXPLICIT_RELEASE: "installmentWaiting" }[String(status || "").toUpperCase()] || "installmentPending");
+        const publicInstallmentStatus = (status) => ({ PAID: "installmentPaid", AVAILABLE: "installmentAvailable", PAYMENT_PENDING: "installmentPaymentPending", PENDING: "installmentPending", EXPLICIT_RELEASE: "installmentWaiting" }[String(status || "").toUpperCase()] || "installmentPending");
         const renderServicePaymentPlan = (data) => {
           const element = document.getElementById("publicServicePaymentPlan");
           const plan = data.payment_plan;
