@@ -249,21 +249,43 @@ def claim_opportunity(db: Session, actor: User, public_id: str) -> dict:
     return _claim_for_user(db, actor, actor, public_id, audit_event="MARKETPLACE_CLAIMED_BY_TECHNICIAN")
 
 
-def _claim_for_user(db: Session, actor: User, target: User, public_id: str, *, audit_event: str) -> dict:
+def _resolve_assignment_opportunity(
+    db: Session, actor: User, target: User, identifier: str, *, allow_service_request_id: bool = False
+) -> ServiceOpportunity | None:
+    """Resolve the UI identity without allowing cross-tenant fallback lookups.
+
+    The canonical marketplace identity is the MKT public id. Numeric values are
+    accepted only as legacy service_request ids because older clients sent that
+    field for the same marketplace entity; a numeric value is never treated as
+    an opportunity primary key.
+    """
+    value = str(identifier or "").strip()
+    filters = [ServiceOpportunity.source == MARKETPLACE]
+    if value.upper().startswith("MKT-"):
+        filters.append(ServiceOpportunity.public_id == value)
+    elif allow_service_request_id and value.isdecimal():
+        filters.append(ServiceOpportunity.service_request_id == int(value))
+    else:
+        return None
+    if actor.role != "ROOT":
+        filters.append(ServiceOpportunity.organization_id == actor.organization_id)
+    opportunity = db.query(ServiceOpportunity).filter(*filters).first()
+    if opportunity and (target.role == "ROOT" or target.organization_id == opportunity.organization_id):
+        return opportunity
+    return None
+
+
+def _claim_for_user(
+    db: Session, actor: User, target: User, public_id: str, *, audit_event: str,
+    allow_service_request_id: bool = False,
+) -> dict:
     """Atomically claim an opportunity for a backend-validated target user."""
     if not target.is_active or target.status != "ACTIVE":
         raise HTTPException(status_code=403, detail="O usuário de destino não está ativo.")
-    opportunity = db.query(ServiceOpportunity).filter(
-        ServiceOpportunity.source == MARKETPLACE,
-        ServiceOpportunity.public_id == public_id,
-    ).first()
-    if actor.role != "ROOT":
-        opportunity = db.query(ServiceOpportunity).filter(
-            ServiceOpportunity.organization_id == actor.organization_id,
-            ServiceOpportunity.source == MARKETPLACE,
-            ServiceOpportunity.public_id == public_id,
-        ).first()
-    if not opportunity or (target.role != "ROOT" and target.organization_id != opportunity.organization_id):
+    opportunity = _resolve_assignment_opportunity(
+        db, actor, target, public_id, allow_service_request_id=allow_service_request_id,
+    )
+    if not opportunity:
         raise HTTPException(status_code=404, detail="Oportunidade não encontrada")
     if opportunity.status != AVAILABLE:
         raise HTTPException(status_code=409, detail="Esta oportunidade acabou de ser aceita por outro profissional.")
@@ -331,7 +353,9 @@ def assign_opportunity(db: Session, actor: User, public_id: str, target_user_id:
         if target.role not in {"BROKER", "GERENTE"}:
             raise HTTPException(status_code=403, detail="ROOT só pode atribuir a técnico ou supervisor ativo.")
         audit_event = "MARKETPLACE_ASSIGNED_BY_ROOT"
-    return _claim_for_user(db, actor, target, public_id, audit_event=audit_event)
+    return _claim_for_user(
+        db, actor, target, public_id, audit_event=audit_event, allow_service_request_id=True,
+    )
 
 
 def seed_demo_opportunities(db: Session, actor: User, count: int = 10) -> int:

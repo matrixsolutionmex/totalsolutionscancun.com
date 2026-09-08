@@ -655,11 +655,45 @@ Observação: Cliente solicitou diagnóstico de 12 aparelhos de ar-condicionado 
         result = assign_opportunity(self.db, supervisor, "MKT-SUPERVISOR", technician.id)
         self.assertEqual(result["opportunity"]["status"], "CLAIMED")
         self.assertEqual(self.db.query(ServiceOpportunity).filter_by(public_id="MKT-SUPERVISOR").one().claimed_by_user_id, technician.id)
-        self.assertEqual(self.db.query(LeadEvent).filter_by(event_type="MARKETPLACE_ASSIGNED_BY_SUPERVISOR").count(), 1)
+        self.assertEqual(
+            self.db.query(LeadEvent).filter_by(
+                event_type="MARKETPLACE_ASSIGNED_BY_SUPERVISOR", actor_id=supervisor.id,
+            ).count(),
+            1,
+        )
         self.db.add(ServiceOpportunity(public_id="MKT-SUPERVISOR-OUT", organization_id=self.org.id, source="MARKETPLACE", service_type="ELETRICA"))
         self.db.commit()
         with self.assertRaises(Exception):
             assign_opportunity(self.db, supervisor, "MKT-SUPERVISOR-OUT", outsider.id)
+
+    def test_marketplace_assignment_resolves_legacy_service_request_identifier(self):
+        self.org.plan = "PRO"
+        supervisor = User(
+            username=f"supervisor-legacy-{uuid4().hex[:8]}", full_name="Legacy Supervisor",
+            password_hash="hash", role="GERENTE", organization_id=self.org.id, status="ACTIVE", is_active=True,
+        )
+        technician = User(
+            username=f"legacy-tech-{uuid4().hex[:8]}", full_name="Legacy Tech",
+            password_hash="hash", role="BROKER", organization_id=self.org.id,
+            status="ACTIVE", is_active=True,
+        )
+        self.db.add(supervisor)
+        self.db.flush()
+        technician.manager_id = supervisor.id
+        opportunity = ServiceOpportunity(
+            public_id="MKT-LEGACY-IDENTIFIER", service_request_id=68,
+            organization_id=self.org.id, source="MARKETPLACE", service_type="ELETRICA",
+        )
+        self.db.add_all([technician, opportunity])
+        self.db.commit()
+
+        result = assign_opportunity(self.db, supervisor, "68", technician.id)
+
+        self.assertEqual(result["opportunity"]["status"], "CLAIMED")
+        self.assertEqual(
+            self.db.query(ServiceOpportunity).filter_by(public_id="MKT-LEGACY-IDENTIFIER").one().claimed_by_user_id,
+            technician.id,
+        )
 
     def test_free_supervisor_is_blocked_but_root_can_assign_cross_organization(self):
         supervisor = User(username=f"free-supervisor-{uuid4().hex[:8]}", full_name="Free Supervisor", password_hash="hash", role="GERENTE", organization_id=self.org.id, status="ACTIVE", is_active=True)
