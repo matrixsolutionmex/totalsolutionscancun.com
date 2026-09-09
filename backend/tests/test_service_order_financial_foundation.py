@@ -165,6 +165,26 @@ def test_dispatch_policy_and_payment_thresholds(db):
     assert can_dispatch_service_order(item, financial_account=account, policy=policy, balance=empty) is True
 
 
+def test_unavailable_pricing_is_not_treated_as_free_dispatch(db):
+    first, _ = orgs(db)
+    item = order(db, first.id)
+    account = ensure_financial_account(db, item, organization_id=first.id)
+    policy = resolve_payment_policy(db, organization_id=first.id)
+    item.pricing_snapshot_json = '{"unavailable_reason":"service_or_area_not_configured"}'
+    assert can_dispatch_service_order(item, financial_account=account, policy=policy,
+                                      balance=calculate_order_balance(db, item, organization_id=first.id)) is False
+
+
+def test_explicit_waived_pricing_allows_dispatch_without_payment(db):
+    first, _ = orgs(db)
+    item = order(db, first.id)
+    account = ensure_financial_account(db, item, organization_id=first.id)
+    policy = resolve_payment_policy(db, organization_id=first.id)
+    account.pricing_status = "WAIVED"
+    assert can_dispatch_service_order(item, financial_account=account, policy=policy,
+                                      balance=calculate_order_balance(db, item, organization_id=first.id)) is True
+
+
 def test_payment_schedule_uses_configured_small_medium_and_large_thresholds(db):
     first, _ = orgs(db)
     policy = resolve_payment_policy(db, organization_id=first.id)

@@ -559,6 +559,27 @@ def test_admin_visit_projection_does_not_mislabel_missing_service_plan(commercia
     assert projection["installments"] == []
 
 
+def test_unavailable_visit_pricing_is_explicit_in_admin_and_public_projection(commercial_db):
+    db, actor, _, _ = commercial_db
+    request, order, account = _visit_payment_fixture(db, actor.organization_id, token="unavailable-pricing-token")
+    snapshot = db.query(VisitPricingSnapshot).filter_by(service_order_id=order.id).one()
+    snapshot.total_amount = Decimal("0.00")
+    account.financial_status = "NO_CHARGE"
+    account.pricing_status = "UNAVAILABLE"
+    account.pricing_unavailable_reason = "service_or_area_not_configured"
+    db.commit()
+
+    admin_projection = visit_payment_projection(db, order)
+    public_projection = service_request_public_tracking(request, db)
+
+    assert admin_projection["pricing_unavailable"] is True
+    assert admin_projection["pricing_unavailable_reason"] == "service_or_area_not_configured"
+    assert public_projection["visit_pricing_unavailable"] is True
+    assert public_projection["visit_required"] is False
+    assert public_projection["payment_status"] == "NOT_STARTED"
+    assert public_projection["checkout_available"] is False
+
+
 def test_public_tracking_requires_financial_reconciliation_before_visit_paid(commercial_db):
     db, actor, _, _ = commercial_db
     request, order, account = _visit_payment_fixture(db, actor.organization_id, token="visit-reconciliation-token")

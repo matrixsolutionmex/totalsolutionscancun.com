@@ -341,6 +341,8 @@ def create_database_tables():
         add_column_if_missing(db, "payments", "installment_id", "INTEGER")
         add_column_if_missing(db, "service_order_financials", "service_paid_amount", "NUMERIC(12,2)")
         add_column_if_missing(db, "service_order_financials", "service_outstanding_balance", "NUMERIC(12,2)")
+        add_column_if_missing(db, "service_order_financials", "pricing_status", "VARCHAR(24) DEFAULT 'UNKNOWN'")
+        add_column_if_missing(db, "service_order_financials", "pricing_unavailable_reason", "VARCHAR(80)")
 
         normalized_upgrade_intents = normalize_existing_upgrade_intents(db)
         if normalized_upgrade_intents:

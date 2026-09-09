@@ -12,7 +12,7 @@ from app.models.service_order_payment_plan import ServiceOrderPaymentInstallment
 from app.models.service_order_quote import ServiceOrderQuote
 from app.models.service_order_installment_release_event import ServiceOrderInstallmentReleaseEvent
 from app.models.user import User
-from app.services.service_order_financial_service import append_ledger_entry, payment_schedule, resolve_payment_policy
+from app.services.service_order_financial_service import append_ledger_entry, is_pricing_unavailable, payment_schedule, resolve_payment_policy
 
 MONEY = Decimal("0.01")
 SERVICE_PAYMENT_TYPES = {"SERVICE_FULL", "SERVICE_DEPOSIT", "SERVICE_COMPLETION", "SERVICE_STAGE_1", "SERVICE_STAGE_2", "SERVICE_STAGE_3"}
@@ -131,7 +131,7 @@ def visit_payment_projection(db: Session, order) -> dict | None:
     snapshot = db.query(VisitPricingSnapshot).filter_by(
         service_order_id=order.id, organization_id=order.organization_id,
     ).first()
-    if not account or not snapshot or _money(snapshot.total_amount) <= 0:
+    if not account or not snapshot:
         return None
     payment = db.query(Payment).filter_by(
         service_order_id=order.id, organization_id=order.organization_id,
@@ -145,6 +145,9 @@ def visit_payment_projection(db: Session, order) -> dict | None:
         "visit_outstanding_balance": _money(account.outstanding_balance),
         "visit_payment_status": payment.status if payment else "NOT_STARTED",
         "financial_status": account.financial_status,
+        "pricing_status": getattr(account, "pricing_status", "UNKNOWN"),
+        "pricing_unavailable_reason": getattr(account, "pricing_unavailable_reason", None),
+        "pricing_unavailable": is_pricing_unavailable(order, account),
         "release_available": False,
         "installments": [],
     }

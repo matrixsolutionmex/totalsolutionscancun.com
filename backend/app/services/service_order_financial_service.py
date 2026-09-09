@@ -1,5 +1,6 @@
 """Domain foundation for service-order finance; no checkout or dispatch side effects."""
 
+import json
 from decimal import Decimal, ROUND_HALF_UP
 
 from sqlalchemy.orm import Session
@@ -18,6 +19,7 @@ FINANCIAL_STATUSES = frozenset({
 ORDER_ORIGINS = frozenset({"PRIVATE", "MARKETPLACE", "MARKETPLACE_ESCALATED"})
 CHARGE_TYPES = frozenset({"VISIT_CHARGE", "DEPOSIT"})
 PAYMENT_TYPES = frozenset({"VISIT_PAYMENT", "SERVICE_PAYMENT", "CASH_PAYMENT", "BANK_TRANSFER", "DISCOUNT"})
+PRICING_STATUSES = frozenset({"UNKNOWN", "CONFIGURED", "UNAVAILABLE", "WAIVED"})
 
 
 def _money(value) -> Decimal:
@@ -27,6 +29,18 @@ def _money(value) -> Decimal:
 def _require_order_scope(order, organization_id: int):
     if not order or order.organization_id != organization_id:
         raise ValueError("service order does not belong to organization")
+
+
+def is_pricing_unavailable(order, financial_account) -> bool:
+    if getattr(financial_account, "pricing_status", "UNKNOWN") == "UNAVAILABLE":
+        return True
+    if getattr(financial_account, "pricing_status", "UNKNOWN") != "UNKNOWN":
+        return False
+    try:
+        snapshot = json.loads(getattr(order, "pricing_snapshot_json", None) or "{}")
+    except (TypeError, ValueError):
+        return False
+    return bool(snapshot.get("unavailable_reason"))
 
 
 def ensure_financial_account(db: Session, order, *, organization_id: int, order_origin: str | None = None):
@@ -41,7 +55,7 @@ def ensure_financial_account(db: Session, order, *, organization_id: int, order_
         return account
     account = ServiceOrderFinancial(
         organization_id=organization_id, service_order_id=order.id, order_origin=origin,
-        currency="MXN", financial_status="NO_CHARGE",
+        currency="MXN", financial_status="NO_CHARGE", pricing_status="UNKNOWN",
     )
     db.add(account)
     db.flush()
@@ -225,6 +239,10 @@ def payment_schedule(amount, *, policy: OrganizationPaymentPolicy) -> list[dict]
 
 
 def can_dispatch_service_order(order, *, financial_account: ServiceOrderFinancial, policy: OrganizationPaymentPolicy, balance: dict) -> bool:
+    if is_pricing_unavailable(order, financial_account):
+        return False
+    if getattr(financial_account, "pricing_status", "UNKNOWN") == "WAIVED":
+        return True
     if financial_account.order_origin in {"MARKETPLACE", "MARKETPLACE_ESCALATED"} and policy.visit_payment_timing == "PREPAID":
         return any(value > 0 for key, value in balance.items() if key == "payments") and balance["outstanding_balance"] <= 0
     if policy.visit_payment_timing == "ON_ARRIVAL":

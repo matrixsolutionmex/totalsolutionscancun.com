@@ -27,5 +27,8 @@ class ServiceOrderFinancial(Base):
     provider_earning_amount = Column(Numeric(12, 2), nullable=False, default=Decimal("0.00"))
     processing_fee_amount = Column(Numeric(12, 2), nullable=False, default=Decimal("0.00"))
     financial_status = Column(String(32), nullable=False, default="NO_CHARGE", index=True)
+    # Distinguishes an authorized waiver from an unavailable pricing configuration.
+    pricing_status = Column(String(24), nullable=False, default="UNKNOWN", index=True)
+    pricing_unavailable_reason = Column(String(80), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

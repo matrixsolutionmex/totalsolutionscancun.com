@@ -32,6 +32,7 @@ from app.services.service_order_financial_service import (
     append_ledger_entry,
     create_visit_pricing_snapshot,
     ensure_financial_account,
+    is_pricing_unavailable,
     resolve_payment_policy,
 )
 from app.models.payment import Payment
@@ -364,6 +365,9 @@ def create_customer_request_and_order(
     )
     financial_account.visit_fee = visit_snapshot.total_amount
     financial_account.amount_due = visit_snapshot.total_amount if policy.visit_required else 0
+    pricing_unavailable = bool(pricing.get("unavailable_reason"))
+    financial_account.pricing_status = "UNAVAILABLE" if pricing_unavailable else ("WAIVED" if not policy.visit_required else "CONFIGURED")
+    financial_account.pricing_unavailable_reason = pricing.get("unavailable_reason") if pricing_unavailable else None
     financial_account.financial_status = "VISIT_PAYMENT_PENDING" if policy.visit_required and visit_snapshot.total_amount else "NO_CHARGE"
     if policy.visit_required and visit_snapshot.total_amount:
         append_ledger_entry(
@@ -456,6 +460,7 @@ def service_request_public_tracking(request: ServiceRequest, db: Session | None 
     if payment_status in {"PAID", "PAID_CASH"} and not financial_visit_paid:
         payment_status = "RECONCILIATION_PENDING"
     visit_required = bool(financial_account and visit_snapshot and visit_snapshot.total_amount and financial_account.financial_status != "NO_CHARGE")
+    pricing_unavailable = bool(financial_account and is_pricing_unavailable(order, financial_account))
     health = tracking_health(tracking) if tracking_active else tracking_health(None)
     route = {"available": False, "distance_m": None, "duration_s": None, "eta_at": None, "geometry": None}
     if tracking_active and tracking.current_lat is not None and tracking.current_lng is not None and destination_lat is not None and destination_lng is not None:
@@ -518,6 +523,9 @@ def service_request_public_tracking(request: ServiceRequest, db: Session | None 
         "route_geometry": route.get("geometry") if tracking_active else None,
         "visit_required": visit_required,
         "visit_amount": visit_snapshot.total_amount if visit_required else None,
+        "visit_pricing_status": getattr(financial_account, "pricing_status", "UNKNOWN") if financial_account else "UNKNOWN",
+        "visit_pricing_unavailable_reason": getattr(financial_account, "pricing_unavailable_reason", None) if financial_account else None,
+        "visit_pricing_unavailable": pricing_unavailable,
         "currency": visit_snapshot.currency if visit_snapshot else None,
         "payment_status": payment_status,
         "checkout_available": bool(visit_required and payment_status not in {"PAID", "PAID_CASH", "RECONCILIATION_PENDING"} and not getattr(order, "status", "").upper() in {"CANCELLED", "CANCELADA", "CONCLUIDA", "FINALIZADA"}),
