@@ -2,6 +2,7 @@ import os
 import re
 import secrets
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 

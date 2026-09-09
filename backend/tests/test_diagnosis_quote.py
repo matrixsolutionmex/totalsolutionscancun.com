@@ -366,11 +366,13 @@ def test_duplicate_installment_checkout_reuses_pending_payment_and_never_accepts
         return payment
 
     monkeypatch.setattr("app.services.payment_service.create_stripe_checkout", fake_checkout)
-    first = create_installment_checkout(db, order, 1, tracking_token=request.tracking_token)
-    second = create_installment_checkout(db, order, 1, tracking_token=request.tracking_token)
+    first = create_installment_checkout(db, order, 1, tracking_token="stale-token-with-wrong-case")
+    second = create_installment_checkout(db, order, 1, tracking_token="stale-token-with-wrong-case")
     assert first.id == second.id
     assert len(calls) == 1
     assert first.gross_amount == Decimal("3000.00")
+    assert calls[0]["success_url"] == "http://127.0.0.1:8010/seguimiento/token-071?payment=success"
+    assert calls[0]["cancel_url"] == "http://127.0.0.1:8010/seguimiento/token-071?payment=cancelled"
     assert db.query(Payment).filter_by(service_order_id=order.id).count() == 1
 
 

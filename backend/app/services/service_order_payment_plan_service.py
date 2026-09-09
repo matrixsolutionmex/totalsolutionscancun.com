@@ -13,6 +13,7 @@ from app.models.service_order_quote import ServiceOrderQuote
 from app.models.service_order_installment_release_event import ServiceOrderInstallmentReleaseEvent
 from app.models.user import User
 from app.services.service_order_financial_service import append_ledger_entry, is_pricing_unavailable, payment_schedule, resolve_payment_policy
+from app.services.service_order_quote_service import current_tracking_token_for_order
 
 MONEY = Decimal("0.01")
 SERVICE_PAYMENT_TYPES = {"SERVICE_FULL", "SERVICE_DEPOSIT", "SERVICE_COMPLETION", "SERVICE_STAGE_1", "SERVICE_STAGE_2", "SERVICE_STAGE_3"}
@@ -169,6 +170,7 @@ def create_installment_checkout(db: Session, order, installment_sequence: int, *
         raise HTTPException(status_code=409, detail="Parcela já paga")
     if installment.status not in {"AVAILABLE", "PAYMENT_PENDING"}:
         raise HTTPException(status_code=409, detail="Parcela ainda não está disponível")
+    canonical_token = current_tracking_token_for_order(db, order)
     payment = db.query(Payment).filter_by(installment_id=installment.id).order_by(Payment.id.desc()).first()
     if not payment:
         payment = Payment(organization_id=order.organization_id, service_request_id=order.service_request_id, service_order_id=order.id, lead_id=order.lead_id, technician_id=order.responsible_user_id, installment_id=installment.id, payment_type=installment.installment_type, payment_method="STRIPE_CARD", currency=installment.currency, gross_amount=installment.amount, provider="STRIPE", idempotency_key=f"service-installment:{installment.id}", status="PENDING")
@@ -180,7 +182,7 @@ def create_installment_checkout(db: Session, order, installment_sequence: int, *
     base_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
     if not base_url:
         raise HTTPException(status_code=503, detail="Checkout publico não configurado")
-    create_stripe_checkout(db, payment, success_url=f"{base_url}/seguimiento/{tracking_token}?payment=success", cancel_url=f"{base_url}/seguimiento/{tracking_token}?payment=cancelled", description=f"Total Solutions - parcela {installment.sequence}")
+    create_stripe_checkout(db, payment, success_url=f"{base_url}/seguimiento/{canonical_token}?payment=success", cancel_url=f"{base_url}/seguimiento/{canonical_token}?payment=cancelled", description=f"Total Solutions - parcela {installment.sequence}")
     installment.status = "PAYMENT_PENDING"
     db.flush()
     return payment

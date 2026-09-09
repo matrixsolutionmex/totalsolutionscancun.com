@@ -158,6 +158,20 @@ def resolve_public_order(db: Session, token: str) -> ServiceOrder:
     return request.service_order
 
 
+def current_tracking_token_for_order(db: Session, order: ServiceOrder) -> str:
+    """Return the persisted public token for an order's own service request."""
+    if not order or not order.service_request_id:
+        raise HTTPException(status_code=409, detail="A OS não possui uma solicitação pública válida")
+    request = db.query(ServiceRequest).filter(
+        ServiceRequest.id == order.service_request_id,
+        ServiceRequest.organization_id == order.organization_id,
+    ).first()
+    token = (request.tracking_token or "").strip() if request else ""
+    if not token:
+        raise HTTPException(status_code=409, detail="A OS não possui um token público válido")
+    return token
+
+
 def approve_public_quote(db: Session, order: ServiceOrder) -> ServiceOrderQuote:
     quote = latest_public_quote(db, order.id, order.organization_id)
     if not quote or quote.status != "SENT":

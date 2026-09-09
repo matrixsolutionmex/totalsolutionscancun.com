@@ -3,6 +3,7 @@ from pathlib import Path
 from decimal import Decimal
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
@@ -50,6 +51,7 @@ from app.services.customer_portal_service import service_request_public_tracking
 from app.services.service_order_financial_service import append_ledger_entry, can_dispatch_service_order, sync_financial_account_projection
 from app.services.service_order_financial_service import calculate_order_balance
 from app.services.service_order_payment_plan_service import visit_payment_projection
+from app.services.service_order_quote_service import current_tracking_token_for_order
 from app.services.notification_service import notification_push_payload
 from app.services.entitlement_service import account_snapshot, can_use_feature, current_plan, get_plan_limits, plan_catalog, resolve_plan
 from app.services.platform_admin_service import (
@@ -372,6 +374,45 @@ def test_public_visit_checkout_uses_order_amount_and_is_idempotent(commercial_db
     assert payment.status == "PENDING"
     assert payment.paid_at is None
     assert db.query(Payment).filter(Payment.service_order_id == order.id).count() == 1
+
+
+def test_visit_checkout_uses_persisted_tracking_token_for_return_urls(commercial_db, monkeypatch):
+    db, actor, _, _ = commercial_db
+    request, order, _ = _visit_payment_fixture(db, actor.organization_id, token="canonical-visit-token")
+    calls = []
+
+    def fake_stripe_request(*args, **kwargs):
+        calls.append(kwargs["data"])
+        return {"id": "cs_canonical_visit", "url": "https://checkout.stripe.test/cs_canonical_visit"}
+
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sandbox-test-secret")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.test")
+    monkeypatch.setattr("app.services.payment_service._stripe_request", fake_stripe_request)
+
+    create_public_visit_checkout(request.tracking_token, PublicStripeCheckoutRequest(), "canonical-key", db)
+
+    assert len(calls) == 1
+    assert calls[0]["success_url"] == "https://example.test/seguimiento/canonical-visit-token?payment=success"
+    assert calls[0]["cancel_url"] == "https://example.test/seguimiento/canonical-visit-token?payment=cancelled"
+    assert current_tracking_token_for_order(db, order) == request.tracking_token
+
+
+def test_checkout_link_requires_order_service_request_and_current_token(commercial_db):
+    db, actor, _, _ = commercial_db
+    _, order, _ = _visit_payment_fixture(db, actor.organization_id, token="missing-request-token")
+
+    order.service_request_id = None
+    with pytest.raises(HTTPException) as missing_request:
+        current_tracking_token_for_order(db, order)
+    assert missing_request.value.status_code == 409
+
+    order.service_request_id = db.query(ServiceRequest.id).filter(
+        ServiceRequest.tracking_token == "missing-request-token",
+    ).scalar()
+    db.query(ServiceRequest).filter(ServiceRequest.id == order.service_request_id).one().tracking_token = ""
+    with pytest.raises(HTTPException) as missing_token:
+        current_tracking_token_for_order(db, order)
+    assert missing_token.value.status_code == 409
 
 
 def test_checkout_url_keeps_fragment_and_missing_url_is_rejected(commercial_db, monkeypatch):

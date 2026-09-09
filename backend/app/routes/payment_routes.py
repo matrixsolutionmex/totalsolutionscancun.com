@@ -30,7 +30,7 @@ from app.services.service_order_payment_plan_service import (
     release_installment_for_payment,
     visit_payment_projection,
 )
-from app.services.service_order_quote_service import resolve_public_order
+from app.services.service_order_quote_service import current_tracking_token_for_order, resolve_public_order
 
 
 router = APIRouter(prefix="/payments", tags=["payments"])
@@ -97,6 +97,7 @@ def create_public_visit_checkout(
         raise HTTPException(status_code=409, detail="La visita aun no tiene un importe definido")
     if str(snapshot.currency).upper() != str(policy.currency).upper():
         raise HTTPException(status_code=409, detail="La moneda de la visita no coincide con la politica")
+    canonical_token = current_tracking_token_for_order(db, order)
     existing = db.query(Payment).filter(
         Payment.service_order_id == order.id,
         Payment.organization_id == order.organization_id,
@@ -125,8 +126,8 @@ def create_public_visit_checkout(
     create_stripe_checkout(
         db,
         payment,
-        success_url=f"{base_url}/seguimiento/{tracking_token}?payment=success",
-        cancel_url=f"{base_url}/seguimiento/{tracking_token}?payment=cancelled",
+        success_url=f"{base_url}/seguimiento/{canonical_token}?payment=success",
+        cancel_url=f"{base_url}/seguimiento/{canonical_token}?payment=cancelled",
         description="Total Solutions - visita tecnica",
     )
     payment.status = "PENDING"
