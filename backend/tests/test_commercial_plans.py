@@ -49,6 +49,7 @@ from app.services.payment_service import create_payment, create_stripe_checkout,
 from app.services.customer_portal_service import service_request_public_tracking
 from app.services.service_order_financial_service import append_ledger_entry, can_dispatch_service_order, sync_financial_account_projection
 from app.services.service_order_financial_service import calculate_order_balance
+from app.services.service_order_payment_plan_service import visit_payment_projection
 from app.services.notification_service import notification_push_payload
 from app.services.entitlement_service import account_snapshot, can_use_feature, current_plan, get_plan_limits, plan_catalog, resolve_plan
 from app.services.platform_admin_service import (
@@ -535,6 +536,46 @@ def test_public_tracking_exposes_only_visit_payment_projection(commercial_db):
             "actor_id",
         )
     )
+
+
+def test_admin_visit_projection_does_not_mislabel_missing_service_plan(commercial_db):
+    db, actor, _, _ = commercial_db
+    _, order, account = _visit_payment_fixture(db, actor.organization_id, token="admin-visit-projection-token")
+    payment = Payment(
+        organization_id=actor.organization_id, service_order_id=order.id,
+        payment_type="TECHNICAL_VISIT", payment_method="STRIPE_CARD",
+        currency="MXN", gross_amount=Decimal("450.00"), provider="STRIPE",
+        idempotency_key="admin-visit-projection", status="PENDING",
+    )
+    db.add(payment)
+    db.commit()
+
+    projection = visit_payment_projection(db, order)
+
+    assert projection["kind"] == "TECHNICAL_VISIT"
+    assert projection["visit_payment_status"] == "PENDING"
+    assert projection["financial_status"] == "VISIT_PAYMENT_PENDING"
+    assert projection["release_available"] is False
+    assert projection["installments"] == []
+
+
+def test_public_tracking_requires_financial_reconciliation_before_visit_paid(commercial_db):
+    db, actor, _, _ = commercial_db
+    request, order, account = _visit_payment_fixture(db, actor.organization_id, token="visit-reconciliation-token")
+    payment = Payment(
+        organization_id=actor.organization_id, service_order_id=order.id,
+        payment_type="TECHNICAL_VISIT", payment_method="STRIPE_CARD",
+        currency="MXN", gross_amount=Decimal("450.00"), provider="STRIPE",
+        idempotency_key="visit-reconciliation", status="PAID",
+    )
+    db.add(payment)
+    db.commit()
+
+    projection = service_request_public_tracking(request, db)
+
+    assert account.financial_status == "VISIT_PAYMENT_PENDING"
+    assert projection["payment_status"] == "RECONCILIATION_PENDING"
+    assert projection["checkout_available"] is False
 
 
 def test_dispatch_uses_financial_policy_for_marketplace_prepaid(commercial_db):

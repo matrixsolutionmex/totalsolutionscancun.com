@@ -28,6 +28,7 @@ from app.services.service_order_payment_plan_service import (
     create_installment_checkout,
     payment_plan_projection,
     release_installment_for_payment,
+    visit_payment_projection,
 )
 from app.services.service_order_quote_service import resolve_public_order
 
@@ -182,6 +183,8 @@ def get_service_order_payment_plan(
     if not order:
         raise HTTPException(status_code=404, detail="Ordem de serviço não encontrada")
     projection = payment_plan_projection(db, order)
+    if projection is None:
+        projection = visit_payment_projection(db, order)
     if projection is None:
         raise HTTPException(status_code=404, detail="Plano de pagamento não encontrado")
     return projection

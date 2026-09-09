@@ -448,6 +448,13 @@ def service_request_public_tracking(request: ServiceRequest, db: Session | None 
         Payment.payment_type == "TECHNICAL_VISIT",
     ).order_by(Payment.created_at.desc(), Payment.id.desc()).first() if db and order else None
     payment_status = visit_payment.status if visit_payment else "NOT_STARTED"
+    financial_visit_paid = bool(
+        financial_account
+        and financial_account.financial_status == "VISIT_PAID"
+        and Decimal(str(financial_account.outstanding_balance or 0)) <= 0
+    )
+    if payment_status in {"PAID", "PAID_CASH"} and not financial_visit_paid:
+        payment_status = "RECONCILIATION_PENDING"
     visit_required = bool(financial_account and visit_snapshot and visit_snapshot.total_amount and financial_account.financial_status != "NO_CHARGE")
     health = tracking_health(tracking) if tracking_active else tracking_health(None)
     route = {"available": False, "distance_m": None, "duration_s": None, "eta_at": None, "geometry": None}
@@ -513,7 +520,7 @@ def service_request_public_tracking(request: ServiceRequest, db: Session | None 
         "visit_amount": visit_snapshot.total_amount if visit_required else None,
         "currency": visit_snapshot.currency if visit_snapshot else None,
         "payment_status": payment_status,
-        "checkout_available": bool(visit_required and payment_status not in {"PAID", "PAID_CASH"} and not getattr(order, "status", "").upper() in {"CANCELLED", "CANCELADA", "CONCLUIDA", "FINALIZADA"}),
+        "checkout_available": bool(visit_required and payment_status not in {"PAID", "PAID_CASH", "RECONCILIATION_PENDING"} and not getattr(order, "status", "").upper() in {"CANCELLED", "CANCELADA", "CONCLUIDA", "FINALIZADA"}),
         "diagnosis": commercial_projection.get("diagnosis") if commercial_projection else None,
         "quote": commercial_projection.get("quote") if commercial_projection else None,
         "payment_plan": service_payment_plan,

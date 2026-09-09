@@ -8630,9 +8630,9 @@
 
     function operationalPaymentLabels() {
       const labels = {
-        pt: { plan: "Plano de pagamento", total: "Total do serviço", paid: "Pago", balance: "Saldo restante", available: "Disponível", pending: "Aguardando liberação", paidStatus: "Pago", release: "Liberar cobrança", progress: "Liberar cobrança", final: "Liberar cobrança" },
-        en: { plan: "Payment plan", total: "Service total", paid: "Paid", balance: "Remaining balance", available: "Available", pending: "Waiting for release", paidStatus: "Paid", release: "Release charge", progress: "Release charge", final: "Release charge" },
-        es: { plan: "Plan de pago", total: "Total del servicio", paid: "Pagado", balance: "Saldo restante", available: "Disponible", pending: "Esperando liberación", paidStatus: "Pagado", release: "Liberar cobro", progress: "Liberar cobro", final: "Liberar cobro" }
+        pt: { plan: "Plano de pagamento", total: "Total do serviço", paid: "Pago", balance: "Saldo restante", available: "Disponível", pending: "Aguardando liberação", paidStatus: "Pago", release: "Liberar cobrança", progress: "Liberar cobrança", final: "Liberar cobrança", visitPayment: "Pagamento da visita", visitPending: "Pagamento da visita pendente", visitPaid: "Visita paga", reconciliationPending: "Pagamento confirmado — reconciliação pendente", noServicePlan: "Sem plano de pagamento do serviço", noPlan: "Sem plano de pagamento do serviço" },
+        en: { plan: "Payment plan", total: "Service total", paid: "Paid", balance: "Remaining balance", available: "Available", pending: "Waiting for release", paidStatus: "Paid", release: "Release charge", progress: "Release charge", final: "Release charge", visitPayment: "Visit payment", visitPending: "Visit payment pending", visitPaid: "Visit paid", reconciliationPending: "Payment confirmed — reconciliation pending", noServicePlan: "No service payment plan", noPlan: "No service payment plan" },
+        es: { plan: "Plan de pago", total: "Total del servicio", paid: "Pagado", balance: "Saldo restante", available: "Disponible", pending: "Esperando liberación", paidStatus: "Pagado", release: "Liberar cobro", progress: "Liberar cobro", final: "Liberar cobro", visitPayment: "Pago de la visita", visitPending: "Pago de visita pendiente", visitPaid: "Visita pagada", reconciliationPending: "Pago confirmado — reconciliación pendiente", noServicePlan: "Sin plan de pago del servicio", noPlan: "Sin plan de pago del servicio" }
       };
       return labels[currentLanguage] || labels.pt;
     }
@@ -8655,11 +8655,22 @@
       const panel = document.getElementById("leadPaymentPlanPanel");
       if (!panel) return;
       if (!plan) {
-        panel.innerHTML = `<span class="operational-payment-status">${escapeHtml((operationalPaymentLabels()).pending)}</span>`;
+        panel.innerHTML = `<span class="operational-payment-status">${escapeHtml((operationalPaymentLabels()).noPlan || "Sem plano de pagamento do serviço")}</span>`;
         return;
       }
       const labels = operationalPaymentLabels();
       const formatAmount = (amount, currency) => new Intl.NumberFormat(translations[currentLanguage]?.locale || "pt-BR", { style: "currency", currency: currency || "MXN" }).format(Number(amount || 0));
+      if (plan.kind === "TECHNICAL_VISIT") {
+        const visitStatus = plan.visit_payment_status === "PAID" || plan.visit_payment_status === "PAID_CASH"
+          ? (plan.financial_status === "VISIT_PAID" ? labels.visitPaid : labels.reconciliationPending)
+          : plan.visit_payment_status === "RECONCILIATION_PENDING" ? labels.reconciliationPending : labels.visitPending;
+        panel.innerHTML = `
+          <div><strong>${escapeHtml(labels.visitPayment)}:</strong> ${escapeHtml(formatAmount(plan.approved_total, plan.currency))}</div>
+          <div class="operational-payment-status">${escapeHtml(visitStatus)}</div>
+          <div class="operational-payment-status">${escapeHtml(labels.noServicePlan)}</div>
+        `;
+        return;
+      }
       panel.innerHTML = `
         <div><strong>${escapeHtml(labels.total)}:</strong> ${escapeHtml(formatAmount(plan.approved_total, plan.currency))}</div>
         <div><strong>${escapeHtml(labels.paid)}:</strong> ${escapeHtml(formatAmount(plan.service_paid_total, plan.currency))}</div>

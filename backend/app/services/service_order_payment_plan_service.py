@@ -120,6 +120,36 @@ def payment_plan_projection(db: Session, order, *, include_release_capability: b
     }
 
 
+def visit_payment_projection(db: Session, order) -> dict | None:
+    """Expose the canonical visit-payment state when no service quote exists."""
+    from app.models.service_order_financial import ServiceOrderFinancial
+    from app.models.visit_pricing_snapshot import VisitPricingSnapshot
+
+    account = db.query(ServiceOrderFinancial).filter_by(
+        service_order_id=order.id, organization_id=order.organization_id,
+    ).first()
+    snapshot = db.query(VisitPricingSnapshot).filter_by(
+        service_order_id=order.id, organization_id=order.organization_id,
+    ).first()
+    if not account or not snapshot or _money(snapshot.total_amount) <= 0:
+        return None
+    payment = db.query(Payment).filter_by(
+        service_order_id=order.id, organization_id=order.organization_id,
+        payment_type="TECHNICAL_VISIT",
+    ).order_by(Payment.created_at.desc(), Payment.id.desc()).first()
+    return {
+        "kind": "TECHNICAL_VISIT",
+        "currency": snapshot.currency,
+        "approved_total": _money(snapshot.total_amount),
+        "visit_paid_total": _money(account.amount_paid),
+        "visit_outstanding_balance": _money(account.outstanding_balance),
+        "visit_payment_status": payment.status if payment else "NOT_STARTED",
+        "financial_status": account.financial_status,
+        "release_available": False,
+        "installments": [],
+    }
+
+
 def create_installment_checkout(db: Session, order, installment_sequence: int, *, tracking_token: str) -> Payment:
     plan = db.query(ServiceOrderPaymentPlan).filter_by(
         service_order_id=order.id, organization_id=order.organization_id, status="ACTIVE",
