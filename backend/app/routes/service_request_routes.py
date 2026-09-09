@@ -13,6 +13,7 @@ from app.services.customer_portal_service import service_request_sales_summary
 from app.services.technician_recommendation_service import validate_recommended_assignment
 from app.services.service_order_tracking_service import (
     get_tracking_for_actor,
+    get_current_tracking_link_for_actor,
     list_active_tracking_for_actor,
     admin_stop_all_tracking,
     admin_stop_tracking,
@@ -215,6 +216,15 @@ def list_active_service_order_tracking(
     actor: User = Depends(require_admin_user),
 ):
     return {"routes": list_active_tracking_for_actor(db, actor)}
+
+
+@router.get("/service-orders/{order_id}/tracking-link")
+def current_tracking_link(
+    order_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_user),
+):
+    return get_current_tracking_link_for_actor(db, order_id, actor)
 
 
 @router.get("/admin/tracking/diagnostic/{service_order_id}")

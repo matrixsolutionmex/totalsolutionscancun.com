@@ -6589,7 +6589,7 @@
           <span>${escapeHtml(route.tracking_state || trackingOperationsStatus(route))} · Inicio: ${escapeHtml(trackingOperationsDate(tracking.started_at))}</span>
           <span>${t("uiLastUpdate")}: ${escapeHtml(trackingOperationsDate(tracking.updated_at))} · ${t("uiPrecision")}: <span title="${tracking.accuracy_m == null ? "" : `${escapeHtml(tracking.accuracy_m)} m`}">${escapeHtml(trackingOperationsPrecision(tracking.accuracy_m))}</span></span>
           ${route.route?.available ? `<div class="tracking-route-metrics"><div class="tracking-route-metric"><small>${t("uiRemainingDistance")}</small><strong>${escapeHtml(formatRouteDistance(route.route.distance_m))}</strong></div><div class="tracking-route-metric"><small>${t("uiEstimatedTime")}</small><strong>${escapeHtml(formatRouteDuration(route.route.duration_s))}</strong></div><div class="tracking-route-metric"><small>${t("uiEstimatedArrival")}</small><strong>${escapeHtml(formatRouteEta(route.route.eta_at))}</strong></div></div>` : `<span>${t("uiRouteWaiting")}</span>`}
-          ${trackingUrl ? `<div class="tracking-route-actions"><a class="small-btn" href="${escapeHtml(trackingUrl)}" target="_blank" rel="noopener noreferrer">${t("uiViewTracking")}</a><button class="small-btn ghost" type="button" data-tracking-copy="${escapeHtml(trackingUrl)}">${t("uiCopyLink")}</button></div>` : ""}
+          <div class="tracking-route-actions"><button class="small-btn" type="button" data-tracking-open="${escapeHtml(route.service_order_id)}">${t("uiViewTracking")}</button><button class="small-btn ghost" type="button" data-tracking-copy-order="${escapeHtml(route.service_order_id)}">${t("uiCopyLink")}</button></div>
           <div class="tracking-route-actions"><button class="small-btn ghost root-only" type="button" data-admin-tracking-diagnostic="${escapeHtml(route.service_order_id)}">Diagnóstico de ruta</button><button class="small-btn ghost" type="button" data-admin-stop-tracking="${escapeHtml(route.service_order_id)}">Encerrar rota</button></div>
         </article>`;
       }).join("");
@@ -6715,7 +6715,13 @@
     }
 
     async function copyTrackingPublicLink(button) {
-      const url = button?.dataset.trackingCopy;
+      let url = button?.dataset.trackingCopy;
+      if (button?.dataset.trackingCopyOrder) {
+        const response = await apiFetch(`${API_BASE}/service-orders/${encodeURIComponent(button.dataset.trackingCopyOrder)}/tracking-link`);
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || "Esta OS no possui um link público disponível.");
+        url = data.tracking_url;
+      }
       if (!url) return;
       let copied = false;
       if (navigator.clipboard?.writeText) {
@@ -8630,9 +8636,9 @@
 
     function operationalPaymentLabels() {
       const labels = {
-        pt: { plan: "Plano de pagamento", total: "Total do serviço", paid: "Pago", balance: "Saldo restante", available: "Disponível", pending: "Aguardando liberação", paidStatus: "Pago", release: "Liberar cobrança", progress: "Liberar cobrança", final: "Liberar cobrança", visitPayment: "Pagamento da visita", visitPending: "Pagamento da visita pendente", visitPaid: "Visita paga", reconciliationPending: "Pagamento confirmado — reconciliação pendente", noServicePlan: "Sem plano de pagamento do serviço", noPlan: "Sem plano de pagamento do serviço" },
-        en: { plan: "Payment plan", total: "Service total", paid: "Paid", balance: "Remaining balance", available: "Available", pending: "Waiting for release", paidStatus: "Paid", release: "Release charge", progress: "Release charge", final: "Release charge", visitPayment: "Visit payment", visitPending: "Visit payment pending", visitPaid: "Visit paid", reconciliationPending: "Payment confirmed — reconciliation pending", noServicePlan: "No service payment plan", noPlan: "No service payment plan" },
-        es: { plan: "Plan de pago", total: "Total del servicio", paid: "Pagado", balance: "Saldo restante", available: "Disponible", pending: "Esperando liberación", paidStatus: "Pagado", release: "Liberar cobro", progress: "Liberar cobro", final: "Liberar cobro", visitPayment: "Pago de la visita", visitPending: "Pago de visita pendiente", visitPaid: "Visita pagada", reconciliationPending: "Pago confirmado — reconciliación pendiente", noServicePlan: "Sin plan de pago del servicio", noPlan: "Sin plan de pago del servicio" }
+        pt: { plan: "Plano de pagamento", total: "Total do serviço", paid: "Pago", balance: "Saldo restante", available: "Disponível", pending: "Aguardando liberação", paidStatus: "Pago", release: "Liberar cobrança", progress: "Liberar cobrança", final: "Liberar cobrança", visitPayment: "Pagamento da visita", visitPending: "Pagamento da visita pendente", visitPaid: "Visita paga", visitWaived: "Visita isenta", reconciliationPending: "Pagamento confirmado — reconciliação pendente", pricingUnavailable: "Preço da visita não configurado", pricingReason: "Serviço/área sem configuração de preço", noServicePlan: "Sem plano de pagamento do serviço", noPlan: "Sem plano de pagamento do serviço" },
+        en: { plan: "Payment plan", total: "Service total", paid: "Paid", balance: "Remaining balance", available: "Available", pending: "Waiting for release", paidStatus: "Paid", release: "Release charge", progress: "Release charge", final: "Release charge", visitPayment: "Visit payment", visitPending: "Visit payment pending", visitPaid: "Visit paid", visitWaived: "Visit waived", reconciliationPending: "Payment confirmed — reconciliation pending", pricingUnavailable: "Visit price not configured", pricingReason: "Service/area has no price configuration", noServicePlan: "No service payment plan", noPlan: "No service payment plan" },
+        es: { plan: "Plan de pago", total: "Total del servicio", paid: "Pagado", balance: "Saldo restante", available: "Disponible", pending: "Esperando liberación", paidStatus: "Pagado", release: "Liberar cobro", progress: "Liberar cobro", final: "Liberar cobro", visitPayment: "Pago de la visita", visitPending: "Pago de visita pendiente", visitPaid: "Visita pagada", visitWaived: "Visita exenta", reconciliationPending: "Pago confirmado — reconciliación pendiente", pricingUnavailable: "Precio de la visita no configurado", pricingReason: "Servicio/área sin configuración de precio", noServicePlan: "Sin plan de pago del servicio", noPlan: "Sin plan de pago del servicio" }
       };
       return labels[currentLanguage] || labels.pt;
     }
@@ -8661,6 +8667,14 @@
       const labels = operationalPaymentLabels();
       const formatAmount = (amount, currency) => new Intl.NumberFormat(translations[currentLanguage]?.locale || "pt-BR", { style: "currency", currency: currency || "MXN" }).format(Number(amount || 0));
       if (plan.kind === "TECHNICAL_VISIT") {
+        if (plan.pricing_unavailable === true) {
+          panel.innerHTML = `<div><strong>${escapeHtml(labels.visitPayment)}:</strong> ${escapeHtml(labels.pricingUnavailable)}</div><div class="operational-payment-status">${escapeHtml(labels.pricingReason)}</div>`;
+          return;
+        }
+        if (plan.pricing_status === "WAIVED") {
+          panel.innerHTML = `<div><strong>${escapeHtml(labels.visitPayment)}:</strong></div><div class="operational-payment-status">${escapeHtml(labels.visitWaived)}</div>`;
+          return;
+        }
         const visitStatus = plan.visit_payment_status === "PAID" || plan.visit_payment_status === "PAID_CASH"
           ? (plan.financial_status === "VISIT_PAID" ? labels.visitPaid : labels.reconciliationPending)
           : plan.visit_payment_status === "RECONCILIATION_PENDING" ? labels.reconciliationPending : labels.visitPending;
@@ -11972,6 +11986,30 @@
         target.textContent = "No fue posible copiar";
       });
     });
+    document.getElementById("trackingOperationsRoutes")?.addEventListener("click", async (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || !target.matches("[data-tracking-copy-order]")) return;
+      try {
+        await copyTrackingPublicLink(target);
+      } catch (error) {
+        addPabloV2Message(error.message || "No fue posible copiar el enlace.", "ai");
+      }
+    });
+    document.getElementById("trackingOperationsRoutes")?.addEventListener("click", async (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || !target.matches("[data-tracking-open]")) return;
+      const popup = window.open("about:blank", "_blank");
+      try {
+        const response = await apiFetch(`${API_BASE}/service-orders/${encodeURIComponent(target.dataset.trackingOpen)}/tracking-link`);
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || "Esta OS no possui um link público disponível.");
+        if (popup) popup.location.href = data.tracking_url;
+        else window.open(data.tracking_url, "_blank", "noopener,noreferrer");
+      } catch (error) {
+        if (popup) popup.close();
+        addPabloV2Message(error.message || "No fue posible abrir o acompanhamento.", "ai");
+      }
+    });
     document.getElementById("trackingOperationsRoutes")?.addEventListener("click", (event) => {
       const target = event.target;
       if (!(target instanceof HTMLElement) || !target.matches("[data-admin-stop-tracking]")) return;
@@ -13150,7 +13188,12 @@
         };
         const renderVisitPayment = (data) => {
           const paymentElement = document.getElementById("publicVisitPayment");
-          if (!paymentElement || !data.visit_required) {
+          if (!paymentElement) return;
+          if (data.visit_pricing_unavailable === true) {
+            paymentElement.innerHTML = `<strong>${escapeHtml(portalLanguage === "en" ? "Visit price" : portalLanguage === "pt-BR" ? "Preço da visita" : "Precio de la visita")}: ${escapeHtml(portalLanguage === "en" ? "Not configured" : portalLanguage === "pt-BR" ? "Não configurado" : "No configurado")}</strong><span>${escapeHtml(portalLanguage === "en" ? "Service/area has no price configuration" : portalLanguage === "pt-BR" ? "Serviço/área sem configuração de preço" : "Servicio/área sin configuración de precio")}</span>`;
+            return;
+          }
+          if (!data.visit_required) {
             if (paymentElement) paymentElement.innerHTML = "";
             return;
           }

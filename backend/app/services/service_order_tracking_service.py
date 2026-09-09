@@ -15,7 +15,7 @@ from app.services.route_intelligence_service import calculate_route
 from app.services.tracking_state_service import is_tracking_session_active, tracking_session_state
 from app.services.tracking_health_service import tracking_health
 from app.models.service_order_financial import ServiceOrderFinancial
-from app.services.service_order_financial_service import can_dispatch_service_order, calculate_order_balance, resolve_payment_policy
+from app.services.service_order_financial_service import can_dispatch_service_order, calculate_order_balance, is_pricing_unavailable, resolve_payment_policy
 
 
 STARTABLE_ORDER_STATUSES = TRACKING_STARTABLE_ORDER_STATUSES
@@ -165,6 +165,25 @@ def get_tracking_for_actor(db: Session, order_id: int, actor: User) -> dict:
     }
 
 
+def get_current_tracking_link_for_actor(db: Session, order_id: int, actor: User) -> dict:
+    """Return the current persisted public link without regenerating its token."""
+    order = _order_for_actor(db, order_id, actor)
+    if not _is_visible_to_actor(db, order, actor):
+        raise HTTPException(status_code=403, detail="Tracking fora da sua estrutura")
+    service_request = order.service_request
+    token = (service_request.tracking_token or "").strip() if service_request else ""
+    if not token:
+        raise HTTPException(
+            status_code=409,
+            detail="Esta OS não possui link público de acompanhamento disponível",
+        )
+    return {
+        "service_order_id": order.id,
+        "order_number": order.order_number,
+        "tracking_url": public_tracking_url(token),
+    }
+
+
 def list_active_tracking_for_actor(db: Session, actor: User) -> list[dict]:
     """Return only active routes visible in the actor's operational scope."""
     if actor.role not in {"ROOT", "GERENTE"} or actor.organization_id is None:
@@ -232,6 +251,8 @@ def start_tracking(db: Session, order_id: int, actor: User, consent_granted: boo
         policy = resolve_payment_policy(db, organization_id=order.organization_id)
         balance = calculate_order_balance(db, order, organization_id=order.organization_id)
         if not can_dispatch_service_order(order, financial_account=financial_account, policy=policy, balance=balance):
+            if is_pricing_unavailable(order, financial_account):
+                raise HTTPException(status_code=409, detail="Preço da visita não configurado para este serviço/área")
             raise HTTPException(status_code=409, detail="Pagamento da visita pendente")
     if (order.status or "").upper() in TERMINAL_ORDER_STATUSES:
         raise HTTPException(status_code=409, detail="A OS ja foi encerrada")

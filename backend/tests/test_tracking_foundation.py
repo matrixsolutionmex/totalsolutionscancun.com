@@ -29,6 +29,7 @@ from app.services.service_order_tracking_service import (
     diagnose_tracking_for_root,
     diagnose_tracking_for_root_by_number,
     get_tracking_for_actor,
+    get_current_tracking_link_for_actor,
     heartbeat_tracking,
     record_tracking_diagnostic,
     list_active_tracking_for_actor,
@@ -139,6 +140,35 @@ def test_assigned_technician_starts_with_consent_and_no_automatic_gps(db):
     assert result["tracking"]["consent_granted_at"] is not None
     assert db.query(ServiceOrderTracking).count() == 1
     assert db.query(LeadEvent).filter(LeadEvent.event_type == "TRACKING_STARTED").count() == 1
+
+
+def test_admin_tracking_link_uses_current_request_token_and_never_regenerates(db):
+    org = make_org(db, "tracking-link-current")
+    root = make_user(db, "root-current-link", "ROOT", org)
+    order = make_order(db, org, None)
+    service_request = ServiceRequest(
+        organization_id=org.id,
+        lead_id=order.lead_id,
+        tracking_token="current-token-071",
+        service_category="Plumbing",
+        requester_name="Cliente Tracking",
+        public_language="es-MX",
+        consent_privacy=True,
+        consent_images=False,
+    )
+    order.service_request = service_request
+    db.commit()
+    db.refresh(order)
+
+    result = get_current_tracking_link_for_actor(db, order.id, root)
+    assert result["tracking_url"].endswith("/seguimiento/current-token-071")
+    assert db.query(ServiceRequest).filter_by(id=service_request.id).one().tracking_token == "current-token-071"
+
+    order.service_request = None
+    db.commit()
+    with pytest.raises(HTTPException) as missing:
+        get_current_tracking_link_for_actor(db, order.id, root)
+    assert missing.value.status_code == 409
 
 
 def test_tracking_state_is_canonical_and_restart_clears_stopped_at(db):
