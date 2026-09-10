@@ -980,6 +980,52 @@
       background: #eef3f7;
     }
 
+    .tracking-operations-panel {
+      border-top: 3px solid #0ea5e9;
+    }
+
+    .tracking-operations-heading {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+
+    .tracking-operations-heading .panel-title {
+      margin-bottom: 4px;
+    }
+
+    .tracking-operations-heading .line {
+      color: var(--muted);
+    }
+
+    .tracking-map-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .tracking-map-legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .tracking-map-legend i {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .tracking-map-legend .technician-dot { background: #2563eb; }
+    .tracking-map-legend .destination-dot { background: #16a34a; }
+
     .tracking-route-list {
       display: grid;
       gap: 10px;
@@ -1011,15 +1057,59 @@
 
     .tracking-route-row {
       display: grid;
-      gap: 4px;
-      padding: 12px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
+      gap: 8px;
+      padding: 16px;
+      border: 1px solid #d6e0ea;
+      border-left: 4px solid #2563eb;
+      border-radius: 8px;
       background: #fff;
+      box-shadow: 0 6px 18px rgba(15, 35, 55, 0.06);
     }
 
     .tracking-route-row strong {
       color: var(--text);
+    }
+
+    .tracking-route-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .tracking-route-avatar {
+      display: inline-grid;
+      flex: 0 0 36px;
+      width: 36px;
+      height: 36px;
+      place-items: center;
+      border-radius: 50%;
+      color: #fff;
+      background: #102032;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .tracking-route-identity {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .tracking-route-identity span,
+    .tracking-route-meta {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .tracking-route-health {
+      width: fit-content;
+      padding: 4px 8px;
+      border-radius: 999px;
+      color: #166534;
+      background: #dcfce7;
+      font-size: 11px;
+      font-weight: 900;
+      text-transform: uppercase;
     }
 
     @media (max-width: 720px) {
@@ -3827,14 +3917,17 @@
 
   <section class="view" id="view-atendimento">
     <div class="view-grid">
-      <div class="panel-box manager-only" style="grid-column: 1 / -1;">
-        <div class="panel-title">Técnicos en ruta</div>
-        <div class="line" id="trackingOperationsStatus">Esperando ubicación...</div>
+      <div class="panel-box manager-only tracking-operations-panel" style="grid-column: 1 / -1;">
+        <div class="tracking-operations-heading">
+          <div><div class="panel-title">Técnicos en ruta</div><div class="line" id="trackingOperationsStatus">Esperando ubicación...</div></div>
+          <span class="tracking-route-health">Live operations</span>
+        </div>
         <div class="pablo-action-card-actions" style="margin: 10px 0;">
           <button type="button" class="root-only" id="adminStopAllTrackingButton">Encerrar todas las rutas activas</button>
           <button type="button" class="root-only" id="adminTrackingDiagnostic51Button">Diagnóstico de ruta · OS 51</button>
         </div>
         <div id="trackingOperationsMap" class="tracking-operations-map" aria-label="Mapa de técnicos en ruta"></div>
+        <div class="tracking-map-legend" aria-label="Leyenda del mapa"><span><i class="technician-dot"></i>Técnico</span><span><i class="destination-dot"></i>Destino del servicio</span></div>
         <div id="trackingOperationsRoutes" class="tracking-route-list"></div>
       </div>
       <div class="panel-box" style="grid-column: 1 / -1;">
@@ -6583,11 +6676,12 @@
       list.innerHTML = routes.map((route) => {
         const tracking = route.tracking || {};
         const trackingUrl = route.tracking_public_url || "";
+        const technicianName = route.technician?.name || t("uiTechnician");
+        const technicianInitials = technicianName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "TS";
         return `<article class="tracking-route-row">
-          <strong>${escapeHtml(route.order_number || `OS ${route.service_order_id}`)} · ${escapeHtml(route.technician?.name || t("uiTechnician"))}</strong>
-          <span>Cliente: ${escapeHtml(route.client_name || "-")}</span>
-          <span>${escapeHtml(route.tracking_state || trackingOperationsStatus(route))} · Inicio: ${escapeHtml(trackingOperationsDate(tracking.started_at))}</span>
-          <span>${t("uiLastUpdate")}: ${escapeHtml(trackingOperationsDate(tracking.updated_at))} · ${t("uiPrecision")}: <span title="${tracking.accuracy_m == null ? "" : `${escapeHtml(tracking.accuracy_m)} m`}">${escapeHtml(trackingOperationsPrecision(tracking.accuracy_m))}</span></span>
+          <div class="tracking-route-header"><span class="tracking-route-avatar" aria-hidden="true">${escapeHtml(technicianInitials)}</span><div class="tracking-route-identity"><strong>${escapeHtml(route.order_number || `OS ${route.service_order_id}`)}</strong><span>${escapeHtml(technicianName)}</span></div><span class="tracking-route-health">${escapeHtml(route.tracking_state || trackingOperationsStatus(route))}</span></div>
+          <span class="tracking-route-meta">Cliente: ${escapeHtml(route.client_name || "-")} · Inicio: ${escapeHtml(trackingOperationsDate(tracking.started_at))}</span>
+          <span class="tracking-route-meta">${t("uiLastUpdate")}: ${escapeHtml(trackingOperationsDate(tracking.updated_at))} · ${t("uiPrecision")}: <span title="${tracking.accuracy_m == null ? "" : `${escapeHtml(tracking.accuracy_m)} m`}">${escapeHtml(trackingOperationsPrecision(tracking.accuracy_m))}</span></span>
           ${route.route?.available ? `<div class="tracking-route-metrics"><div class="tracking-route-metric"><small>${t("uiRemainingDistance")}</small><strong>${escapeHtml(formatRouteDistance(route.route.distance_m))}</strong></div><div class="tracking-route-metric"><small>${t("uiEstimatedTime")}</small><strong>${escapeHtml(formatRouteDuration(route.route.duration_s))}</strong></div><div class="tracking-route-metric"><small>${t("uiEstimatedArrival")}</small><strong>${escapeHtml(formatRouteEta(route.route.eta_at))}</strong></div></div>` : `<span>${t("uiRouteWaiting")}</span>`}
           <div class="tracking-route-actions"><button class="small-btn" type="button" data-tracking-open="${escapeHtml(route.service_order_id)}">${t("uiViewTracking")}</button><button class="small-btn ghost" type="button" data-tracking-copy-order="${escapeHtml(route.service_order_id)}">${t("uiCopyLink")}</button></div>
           <div class="tracking-route-actions"><button class="small-btn ghost root-only" type="button" data-admin-tracking-diagnostic="${escapeHtml(route.service_order_id)}">Diagnóstico de ruta</button><button class="small-btn ghost" type="button" data-admin-stop-tracking="${escapeHtml(route.service_order_id)}">Encerrar rota</button></div>
@@ -12391,6 +12485,9 @@
         en: { interrupted: "Location interrupted", stale: "Location has not updated recently", onWay: "Your technician is on the way", waiting: "Waiting for technician location", updatedNow: "Updated now", lastUpdate: "Last update", seconds: "seconds ago", recalculating: "Recalculating route...", approximateEta: "Approximate ETA", estimatedArrival: "Estimated arrival", distance: "Distance remaining", time: "Time", etaUnavailable: "ETA temporarily unavailable", accuracy: "Accuracy", map: "Service tracking map", technician: "Technician", destination: "Service destination", visitPayment: "Visit payment", visitPending: "We are confirming your payment.", visitPaid: "Visit paid ✓", checkoutUnavailable: "Visit payment unavailable.", diagnosis: "Diagnosis", problemFound: "Problem found", solution: "Recommended solution", observations: "Observations", quote: "Quote", quoteItems: "Items", itemDescription: "Description", quantity: "Quantity", unit: "Unit", unitPrice: "Price", subtotal: "Subtotal", discount: "Discount", tax: "Tax", total: "Total", validUntil: "Valid until", approveQuote: "Approve quote", rejectQuote: "Reject quote", approved: "Quote approved", rejected: "Quote rejected", quoteError: "The quote could not be updated.", paymentPlan: "Payment plan", installment: "Installment", payInstallment: "Pay", installmentPaid: "Paid", installmentPending: "Pending", installmentAvailable: "Available" },
         "pt-BR": { interrupted: "Localização interrompida", stale: "Localização sem atualização recente", onWay: "Seu técnico está a caminho", waiting: "Aguardando localização do técnico", updatedNow: "Atualizada agora", lastUpdate: "Última atualização há", seconds: "segundos", recalculating: "Recalculando rota...", approximateEta: "Chegada estimada aproximada", estimatedArrival: "Chegada estimada", distance: "Distância restante", time: "Hora", etaUnavailable: "ETA temporariamente indisponível", accuracy: "Precisão", map: "Mapa de acompanhamento do serviço", technician: "Técnico", destination: "Destino do serviço", visitPayment: "Pagamento da visita", visitPending: "Estamos confirmando seu pagamento.", visitPaid: "Visita paga ✓", checkoutUnavailable: "Pagamento da visita indisponível.", diagnosis: "Diagnóstico", problemFound: "Problema encontrado", solution: "Solução recomendada", observations: "Observações", quote: "Orçamento", quoteItems: "Itens", itemDescription: "Descrição", quantity: "Quantidade", unit: "Unidade", unitPrice: "Preço", subtotal: "Subtotal", discount: "Desconto", tax: "Impostos", total: "Total", validUntil: "Válido até", approveQuote: "Aprovar orçamento", rejectQuote: "Recusar orçamento", approved: "Orçamento aprovado", rejected: "Orçamento recusado", quoteError: "Não foi possível atualizar o orçamento.", paymentPlan: "Plano de pagamento", installment: "Parcela", payInstallment: "Pagar", installmentPaid: "Paga", installmentPending: "Pendente", installmentAvailable: "Disponível" }
       };
+      Object.assign(trackingTranslations.es, { staleLocation: "Ubicación del técnico temporalmente desactualizada.", showingLastKnown: "Mostrando la última ubicación conocida." });
+      Object.assign(trackingTranslations.en, { staleLocation: "Technician location is temporarily out of date.", showingLastKnown: "Showing the last known location." });
+      Object.assign(trackingTranslations["pt-BR"], { staleLocation: "Localização do técnico temporariamente desatualizada.", showingLastKnown: "Exibindo a última localização conhecida." });
       Object.assign(trackingTranslations.es, { serviceTotal: "Total del servicio", paid: "Pagado", outstanding: "Saldo restante", paymentTypeFull: "Pago total", paymentTypeDeposit: "Anticipo", paymentTypeProgress: "Pago intermedio", paymentTypeFinal: "Pago final", installmentWaiting: "Esperando liberación", installmentPending: "Pendiente", installmentPaymentPending: "Pago pendiente", installmentAvailable: "Disponible para pago" });
       Object.assign(trackingTranslations.en, { serviceTotal: "Service total", paid: "Paid", outstanding: "Remaining balance", paymentTypeFull: "Full payment", paymentTypeDeposit: "Deposit", paymentTypeProgress: "Progress payment", paymentTypeFinal: "Final payment", installmentWaiting: "Waiting for release", installmentPending: "Pending", installmentPaymentPending: "Payment pending", installmentAvailable: "Available for payment" });
       Object.assign(trackingTranslations["pt-BR"], { serviceTotal: "Total do serviço", paid: "Pago", outstanding: "Saldo restante", paymentTypeFull: "Pagamento integral", paymentTypeDeposit: "Entrada", paymentTypeProgress: "Parcela intermediária", paymentTypeFinal: "Parcela final", installmentWaiting: "Aguardando liberação", installmentPending: "Pendente", installmentPaymentPending: "Pagamento pendente", installmentAvailable: "Disponível para pagamento" });
@@ -12789,18 +12886,49 @@
           overflow: hidden;
           background: #eef3f7;
         }
-        .public-tracking-status {
-          display: grid;
-          gap: 8px;
-          margin-top: 16px;
-          color: var(--portal-ink);
-        }
+    .public-tracking-status {
+      display: grid;
+      gap: 8px;
+      margin-top: 16px;
+      padding: 16px;
+      border: 1px solid var(--portal-line);
+      border-left: 4px solid var(--portal-green);
+      border-radius: 8px;
+      background: #f8fffb;
+      color: var(--portal-ink);
+    }
         .public-tracking-status strong {
           color: #15803d;
         }
-        .public-tracking-eta-card {
-          margin-top: 16px;
-        }
+    .public-tracking-eta-card {
+      margin-top: 16px;
+    }
+
+    .public-tracking-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 10px;
+      color: var(--portal-muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .public-tracking-legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .public-tracking-legend i {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .public-tracking-legend .technician-dot { background: #2563eb; }
+    .public-tracking-legend .destination-dot { background: #16a34a; }
         .public-tracking-eta-card > div {
           background: #f8fafc;
         }
@@ -12875,6 +13003,9 @@
           .portal-actions { flex-direction: column; }
           .portal-button { width: 100%; }
           .public-quote-block { padding: 14px; }
+          .tracking-operations-heading { flex-direction: column; }
+          .tracking-route-metrics, .public-tracking-eta-card { grid-template-columns: 1fr; }
+          .tracking-map-legend, .public-tracking-legend { gap: 8px 12px; }
           .public-quote-header { display: none; }
           .public-quote-row { display: block; }
           .public-quote-row > * { display: block; margin-top: 8px; }
@@ -13369,11 +13500,15 @@
             ? (ageMs > 120000 ? "OFFLINE" : ageMs > 30000 ? "STALE" : "LIVE")
             : null;
           const locationHealth = timestampHealth || data.location_health || data.tracking_health || "OFFLINE";
-          const locationStatusText = locationHealth === "OFFLINE"
+          const hasStaleLocation = hasTechnician && (locationHealth === "STALE" || locationHealth === "OFFLINE");
+          const locationStatusText = hasStaleLocation
+            ? trackingText("staleLocation")
+            : locationHealth === "OFFLINE"
             ? trackingText("interrupted")
             : locationHealth === "STALE"
               ? trackingText("stale")
               : trackingText("onWay");
+          const lastKnownLocationText = hasStaleLocation ? trackingText("showingLastKnown") : "";
           const locationMessage = !active
             ? localizedTrackingStatus(data.operational_status, data.public_tracking_state)
             : (hasTechnician ? locationStatusText : trackingText("waiting"));
@@ -13394,7 +13529,7 @@
                 <p id="publicTrackingTechnician">${pt("technician")}: <strong>${escapeHtml(data.technician_display_name || trackingText("waiting"))}</strong></p>
                 ${data.route_started_at ? `<p>${pt("departure")}: <strong>${escapeHtml(formatTrackingDate(data.route_started_at))}</strong></p>` : ""}
               </div>
-              <div class="public-tracking-status" id="publicTrackingLiveStatus"><strong>${escapeHtml(locationMessage)}</strong><span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at, data.technician_display_name))}</span>${data.accuracy_m == null ? "" : `<span>${trackingText("accuracy")}: ${escapeHtml(data.accuracy_m)} m</span>`}</div>
+              <div class="public-tracking-status" id="publicTrackingLiveStatus"><strong>${escapeHtml(locationMessage)}</strong>${lastKnownLocationText ? `<span>${escapeHtml(lastKnownLocationText)}</span>` : ""}<span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at, data.technician_display_name))}</span>${data.accuracy_m == null ? "" : `<span>${trackingText("accuracy")}: ${escapeHtml(data.accuracy_m)} m</span>`}</div>
               ${displayRouteAvailable ? `<div class="public-tracking-eta-card"><div><small>${portalLanguage === "en" ? "Estimated arrival" : portalLanguage === "pt-BR" ? "Chegada estimada" : "Llegada estimada"}</small><strong>${escapeHtml(formatRouteDuration(displayRoute.route_duration_s))}</strong></div><div><small>${portalLanguage === "en" ? "Distance remaining" : portalLanguage === "pt-BR" ? "Distância restante" : "Distancia restante"}</small><strong>${escapeHtml(formatRouteDistance(displayRoute.route_distance_m))}</strong></div><div><small>${portalLanguage === "en" ? "Estimated time" : portalLanguage === "pt-BR" ? "Hora estimada" : "Hora estimada"}</small><strong>${escapeHtml(formatRouteEta(displayRoute.route_eta_at))}</strong></div></div>` : ""}
               <p id="publicTrackingProximity" class="portal-message">${escapeHtml(displayRouteAvailable ? trackingProximityMessage(displayRoute.route_distance_m) : locationMessage)}</p>
               <div id="publicVisitPayment" class="public-tracking-status"></div>
@@ -13402,7 +13537,7 @@
               <div id="publicServicePaymentPlan"></div>
               <div id="publicCompletion"></div>
               <div id="publicReviewSection"></div>
-              ${(active || hasDestination) ? `<div id="publicTrackingMap" class="public-tracking-map" aria-label="${trackingText("map")}"></div>` : ""}
+              ${(active || hasDestination) ? `<div id="publicTrackingMap" class="public-tracking-map" aria-label="${trackingText("map")}"></div><div class="public-tracking-legend" aria-label="${portalLanguage === "en" ? "Map legend" : portalLanguage === "pt-BR" ? "Legenda do mapa" : "Leyenda del mapa"}><span><i class="technician-dot"></i>${portalLanguage === "en" ? "Technician" : portalLanguage === "pt-BR" ? "Técnico" : "Técnico"}</span><span><i class="destination-dot"></i>${portalLanguage === "en" ? "Destination" : portalLanguage === "pt-BR" ? "Destino" : "Destino"}</span></div>` : ""}
               <p id="publicTrackingMapHint" class="portal-message">${active ? pt("mapHint") : pt("preparingShort")}</p>
             `;
           }
@@ -13412,7 +13547,7 @@
             technicianElement.innerHTML = `${pt("technician")}: <strong>${escapeHtml(data.technician_display_name || pt("loading"))}</strong>`;
           }
           if (liveStatus) {
-            liveStatus.innerHTML = `<strong>${escapeHtml(locationMessage)}</strong><span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at, data.technician_display_name))}</span>${data.accuracy_m == null ? "" : `<span>${trackingText("accuracy")}: ${escapeHtml(data.accuracy_m)} m</span>`}`;
+            liveStatus.innerHTML = `<strong>${escapeHtml(locationMessage)}</strong>${lastKnownLocationText ? `<span>${escapeHtml(lastKnownLocationText)}</span>` : ""}<span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at, data.technician_display_name))}</span>${data.accuracy_m == null ? "" : `<span>${trackingText("accuracy")}: ${escapeHtml(data.accuracy_m)} m</span>`}`;
             const existingEtaCard = document.querySelector(".public-tracking-eta-card");
             if (displayRouteAvailable) {
               const etaMarkup = `<div class="public-tracking-eta-card"><div><small>${portalLanguage === "en" ? "Estimated arrival" : portalLanguage === "pt-BR" ? "Chegada estimada" : "Llegada estimada"}</small><strong>${escapeHtml(formatRouteDuration(displayRoute.route_duration_s))}</strong></div><div><small>${portalLanguage === "en" ? "Distance remaining" : portalLanguage === "pt-BR" ? "Distância restante" : "Distancia restante"}</small><strong>${escapeHtml(formatRouteDistance(displayRoute.route_distance_m))}</strong></div><div><small>${portalLanguage === "en" ? "Estimated time" : portalLanguage === "pt-BR" ? "Hora estimada" : "Hora estimada"}</small><strong>${escapeHtml(formatRouteEta(displayRoute.route_eta_at))}</strong></div></div>`;
