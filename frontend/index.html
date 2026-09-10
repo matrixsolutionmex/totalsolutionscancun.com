@@ -1026,6 +1026,77 @@
     .tracking-map-legend .technician-dot { background: #2563eb; }
     .tracking-map-legend .destination-dot { background: #16a34a; }
 
+    .tracking-map-legend .route-line,
+    .public-tracking-legend .route-line {
+      width: 20px;
+      height: 0;
+      border-top: 3px dashed #64748b;
+      border-radius: 0;
+    }
+
+    .tracking-map-marker-shell {
+      background: transparent;
+      border: 0;
+    }
+
+    .tracking-map-marker {
+      position: relative;
+      display: grid;
+      width: 38px;
+      height: 38px;
+      place-items: center;
+      border: 3px solid #fff;
+      border-radius: 50%;
+      box-shadow: 0 3px 12px rgba(15, 35, 55, 0.28);
+      color: #fff;
+      background: #2563eb;
+      font-size: 17px;
+      font-weight: 900;
+    }
+
+    .tracking-map-marker::after {
+      position: absolute;
+      content: "";
+      inset: -5px;
+      border: 2px solid currentColor;
+      border-radius: inherit;
+      opacity: 0.35;
+    }
+
+    .tracking-map-marker.live { color: #2563eb; background: #2563eb; }
+    .tracking-map-marker.stale { color: #ca8a04; background: #eab308; }
+    .tracking-map-marker.offline { color: #64748b; background: #64748b; }
+
+    .tracking-map-marker.live::before {
+      position: absolute;
+      content: "";
+      inset: -8px;
+      border: 2px solid currentColor;
+      border-radius: 50%;
+      opacity: 0;
+      animation: tracking-marker-pulse 2.4s ease-out infinite;
+    }
+
+    .tracking-map-destination {
+      width: 34px;
+      height: 34px;
+      border-radius: 12px 12px 12px 4px;
+      color: #fff;
+      background: #16a34a;
+      transform: rotate(-45deg);
+    }
+
+    .tracking-map-destination span { transform: rotate(45deg); }
+
+    @keyframes tracking-marker-pulse {
+      0% { transform: scale(0.7); opacity: 0.45; }
+      70%, 100% { transform: scale(1.25); opacity: 0; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .tracking-map-marker.live::before { animation: none; }
+    }
+
     .tracking-route-list {
       display: grid;
       gap: 10px;
@@ -2294,6 +2365,61 @@
       padding: 13px 14px;
       cursor: pointer;
       animation: notificationFade 260ms ease both;
+    }
+
+    .notification-toast.new-lead-alert {
+      border-left-width: 5px;
+      padding: 14px 15px;
+    }
+
+    .notification-toast.new-lead-alert.priority-high,
+    .notification-toast.new-lead-alert.priority-urgente,
+    .notification-toast.new-lead-alert.priority-critical {
+      border-left-color: #dc2626;
+    }
+
+    .notification-toast.new-lead-alert.priority-critical {
+      background: #fff7f7;
+      box-shadow: 0 20px 52px rgba(127, 29, 29, 0.24);
+    }
+
+    .notification-toast-lead-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 10px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .notification-toast-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 12px;
+    }
+
+    .notification-toast-actions button {
+      min-height: 30px;
+      border: 1px solid var(--green);
+      border-radius: 4px;
+      padding: 0 10px;
+      color: #fff;
+      background: var(--green);
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .notification-toast-actions button.ghost {
+      color: var(--text);
+      background: transparent;
+    }
+
+    @media (max-width: 640px) {
+      .notification-toast-stack { right: 14px; top: 72px; width: min(380px, calc(100vw - 28px)); }
+      .notification-toast-actions button { flex: 1 1 120px; }
     }
 
     body.theme-premium .notification-bell {
@@ -3927,7 +4053,7 @@
           <button type="button" class="root-only" id="adminTrackingDiagnostic51Button">Diagnóstico de ruta · OS 51</button>
         </div>
         <div id="trackingOperationsMap" class="tracking-operations-map" aria-label="Mapa de técnicos en ruta"></div>
-        <div class="tracking-map-legend" aria-label="Leyenda del mapa"><span><i class="technician-dot"></i>Técnico</span><span><i class="destination-dot"></i>Destino del servicio</span></div>
+        <div class="tracking-map-legend" aria-label="Leyenda del mapa"><span><i class="technician-dot"></i>Técnico</span><span><i class="destination-dot"></i>Destino del servicio</span><span><i class="route-line"></i>Última ruta disponible</span></div>
         <div id="trackingOperationsRoutes" class="tracking-route-list"></div>
       </div>
       <div class="panel-box" style="grid-column: 1 / -1;">
@@ -5729,6 +5855,7 @@
     let notificationTimer = null;
     let notificationInitialized = false;
     let seenNotificationIds = new Set();
+    let announcedLeadIds = new Set();
     let notificationHighWaterMark = 0;
     let serviceWorkerRegistration = null;
     let webPushState = {
@@ -6627,6 +6754,30 @@
       return "Ubicación en vivo";
     }
 
+    function trackingMapHealth(value) {
+      return ["LIVE", "STALE", "OFFLINE"].includes(value) ? value.toLowerCase() : "offline";
+    }
+
+    function trackingMapTechnicianIcon(health, initials) {
+      return L.divIcon({
+        className: "tracking-map-marker-shell",
+        html: `<span class="tracking-map-marker ${trackingMapHealth(health)}" aria-hidden="true">${escapeHtml(initials || "TS")}</span>`,
+        iconSize: [38, 38],
+        iconAnchor: [19, 19],
+        popupAnchor: [0, -19],
+      });
+    }
+
+    function trackingMapDestinationIcon() {
+      return L.divIcon({
+        className: "tracking-map-marker-shell",
+        html: '<span class="tracking-map-marker tracking-map-destination" aria-hidden="true"><span>⌂</span></span>',
+        iconSize: [34, 34],
+        iconAnchor: [17, 17],
+        popupAnchor: [0, -17],
+      });
+    }
+
     function trackingOperationsPrecision(value) {
       const numeric = Number(value);
       return Number.isFinite(numeric) ? `~${Math.max(0, Math.round(numeric))} m` : "-";
@@ -6693,6 +6844,7 @@
       trackingOperationsMarkers.forEach((markers) => {
         markers.technician.remove();
         markers.destination.remove();
+        if (markers.route) markers.route.remove();
       });
       trackingOperationsMarkers.clear();
     }
@@ -6722,15 +6874,31 @@
         const hasDestination = Number.isFinite(destinationLat) && Number.isFinite(destinationLng);
         const routeId = String(route.service_order_id);
         activeIds.add(routeId);
+        const technicianName = route.technician?.name || t("uiTechnician");
+        const technicianInitials = technicianName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "TS";
+        const health = trackingMapHealth(tracking.location_health || tracking.tracking_health);
+        const geometry = Array.isArray(route.route?.geometry) ? route.route.geometry : [];
         let markers = trackingOperationsMarkers.get(routeId);
         if (!markers) {
           markers = {
-            technician: L.circleMarker([0, 0], { radius: 9, color: "#2563eb", fillColor: "#2563eb", fillOpacity: 0.95 }),
-            destination: L.circleMarker([0, 0], { radius: 8, color: "#16a34a", fillColor: "#16a34a", fillOpacity: 0.9 }),
+            technician: L.marker([0, 0], { icon: trackingMapTechnicianIcon(health, technicianInitials) }),
+            destination: L.marker([0, 0], { icon: trackingMapDestinationIcon() }),
+            route: L.polyline([], { color: "#2563eb", weight: 5, opacity: 0.72, lineCap: "round", lineJoin: "round" }),
           };
           markers.technician.bindTooltip("Técnico");
           markers.destination.bindTooltip("Destino del servicio");
           trackingOperationsMarkers.set(routeId, markers);
+        }
+        markers.technician.setIcon(trackingMapTechnicianIcon(health, technicianInitials));
+        if (geometry.length >= 2) {
+          markers.route.setStyle({
+            color: health === "live" ? "#2563eb" : "#64748b",
+            dashArray: health === "live" && route.route?.available ? null : "8 10",
+            opacity: health === "live" && route.route?.available ? 0.82 : 0.5,
+          }).setLatLngs(geometry).addTo(trackingOperationsMap);
+          geometry.forEach((point) => bounds.push(point));
+        } else {
+          markers.route.remove();
         }
         if (hasTechnician) {
           markers.technician.setLatLng([technicianLat, technicianLng]).addTo(trackingOperationsMap);
@@ -6756,6 +6924,7 @@
         if (!activeIds.has(routeId)) {
           markers.technician.remove();
           markers.destination.remove();
+          if (markers.route) markers.route.remove();
           trackingOperationsMarkers.delete(routeId);
         }
       });
@@ -7964,9 +8133,69 @@
       }
     }
 
+    function isNewLeadNotification(notification) {
+      return Boolean(notification?.lead_id) && [
+        "sales_service_request_created",
+        "client_created",
+        "marketplace_service_created"
+      ].includes(String(notification.type || "").toLowerCase());
+    }
+
+    function playLeadAlertSound(notification) {
+      if (!notificationPreferences.sound_enabled) return;
+      const volume = Math.max(0, Math.min(1, Number(notificationPreferences.sound_volume ?? 55) / 100));
+      const urgent = ["HIGH", "URGENTE", "CRITICAL"].includes(String(notification.priority || "").toUpperCase());
+      try {
+        audioContext = audioContext || new (window.AudioContext || window.webkitAudioContext)();
+        const start = audioContext.currentTime;
+        const tones = urgent ? [[740, 0], [988, 0.2]] : [[660, 0], [880, 0.2]];
+        tones.forEach(([frequency, offset]) => {
+          const oscillator = audioContext.createOscillator();
+          const gain = audioContext.createGain();
+          oscillator.type = "sine";
+          oscillator.frequency.setValueAtTime(frequency, start + offset);
+          gain.gain.setValueAtTime(0.0001, start + offset);
+          gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, volume * (urgent ? 0.2 : 0.16)), start + offset + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + 0.16);
+          oscillator.connect(gain);
+          gain.connect(audioContext.destination);
+          oscillator.start(start + offset);
+          oscillator.stop(start + offset + 0.18);
+        });
+      } catch (_error) {
+        // Browser audio can require a prior user interaction.
+      }
+    }
+
+    function notificationLeadDetails(notification) {
+      let metadata = notification?.metadata;
+      if (typeof metadata === "string") {
+        try { metadata = JSON.parse(metadata); } catch (_error) { metadata = {}; }
+      }
+      return metadata && typeof metadata === "object" ? metadata : {};
+    }
+
     function showNotificationToast(notification) {
       const stack = document.getElementById("notificationToastStack");
       if (!stack || !notificationPreferences.in_app_enabled) return;
+      if (isNewLeadNotification(notification)) {
+        const details = notificationLeadDetails(notification);
+        const service = details.service_type || details.service || "Servicio";
+        const city = details.city || "Zona no informada";
+        const urgency = details.urgency || notification.priority || "NORMAL";
+        const createdAt = notification.created_at ? new Date(notification.created_at).toLocaleString(translations[currentLanguage].locale) : "";
+        const toast = document.createElement("div");
+        toast.className = `notification-toast new-lead-alert ${notificationPriorityClass(notification)}`;
+        toast.innerHTML = `<div class="notification-title">${escapeHtml(notification.title || "Nueva solicitud recibida")}</div><div class="notification-message">${escapeHtml(notification.message || "")}</div><div class="notification-toast-lead-meta"><span>${escapeHtml(service)}</span><span>${escapeHtml(city)}</span><span>${escapeHtml(notificationPriorityLabel({ priority: urgency }))}</span><span>${escapeHtml(createdAt)}</span></div><div class="notification-toast-actions"><button type="button" data-lead-toast-action="view">${currentLanguage === "en" ? "View request" : currentLanguage === "pt" ? "Ver solicitação" : "Ver solicitud"}</button><button type="button" class="ghost" data-lead-toast-action="assign">${currentLanguage === "en" ? "Assign" : currentLanguage === "pt" ? "Atribuir" : "Asignar"}</button></div>`;
+        toast.querySelectorAll("[data-lead-toast-action]").forEach((button) => button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          openNotificationAction(notification.id);
+          toast.remove();
+        }));
+        stack.prepend(toast);
+        setTimeout(() => toast.remove(), 9000);
+        return;
+      }
       const toast = document.createElement("div");
       toast.className = `notification-toast ${notificationPriorityClass(notification)}`;
       toast.innerHTML = `
@@ -8019,13 +8248,21 @@
       renderNotifications();
 
       if (announce && notificationInitialized && incoming.length) {
+        let announcedLead = false;
         incoming.forEach((notification) => {
           if (!notification.read_at) {
+            if (isNewLeadNotification(notification)) {
+              const leadKey = String(notification.lead_id);
+              if (announcedLeadIds.has(leadKey)) return;
+              announcedLeadIds.add(leadKey);
+              announcedLead = true;
+            }
             showNotificationToast(notification);
             maybeNotifyBrowser(notification);
+            if (isNewLeadNotification(notification)) playLeadAlertSound(notification);
           }
         });
-        if (incoming.some((notification) => !notification.read_at)) {
+        if (incoming.some((notification) => !notification.read_at) && !announcedLead) {
           playNotificationSound();
         }
       }
@@ -13570,7 +13807,7 @@
               <div id="publicServicePaymentPlan"></div>
               <div id="publicCompletion"></div>
               <div id="publicReviewSection"></div>
-              ${(active || hasDestination) ? `<div id="publicTrackingMap" class="public-tracking-map" aria-label="${trackingText("map")}"></div><div class="public-tracking-legend" aria-label="${portalLanguage === "en" ? "Map legend" : portalLanguage === "pt-BR" ? "Legenda do mapa" : "Leyenda del mapa"}><span><i class="technician-dot"></i>${portalLanguage === "en" ? "Technician" : portalLanguage === "pt-BR" ? "Técnico" : "Técnico"}</span><span><i class="destination-dot"></i>${portalLanguage === "en" ? "Destination" : portalLanguage === "pt-BR" ? "Destino" : "Destino"}</span></div>` : ""}
+              ${(active || hasDestination) ? `<div id="publicTrackingMap" class="public-tracking-map" aria-label="${trackingText("map")}"></div><div class="public-tracking-legend" aria-label="${portalLanguage === "en" ? "Map legend" : portalLanguage === "pt-BR" ? "Legenda do mapa" : "Leyenda del mapa"}"><span><i class="technician-dot"></i>${portalLanguage === "en" ? "Technician" : portalLanguage === "pt-BR" ? "Técnico" : "Técnico"}</span><span><i class="destination-dot"></i>${portalLanguage === "en" ? "Destination" : portalLanguage === "pt-BR" ? "Destino" : "Destino"}</span><span><i class="route-line"></i>${escapeHtml(trackingText("lastKnownRoute"))}</span></div>` : ""}
               <p id="publicTrackingMapHint" class="portal-message">${active ? pt("mapHint") : pt("preparingShort")}</p>
             `;
           }
@@ -13607,21 +13844,30 @@
           }
           const routeGeometry = displayRoute ? (Array.isArray(displayRoute.route_geometry) ? displayRoute.route_geometry : []) : [];
           if (routeGeometry.length >= 2 && displayRouteAvailable) {
-            if (!routePolyline) routePolyline = L.polyline(routeGeometry, { color: "#2563eb", weight: 5, opacity: 0.72 }).addTo(trackingMap);
-            else routePolyline.setLatLngs(routeGeometry);
+            const routeStyle = { color: isLiveRoute ? "#2563eb" : "#64748b", weight: isLiveRoute ? 5 : 4, opacity: isLiveRoute ? 0.82 : 0.5, dashArray: isLiveRoute ? null : "8 10", lineCap: "round", lineJoin: "round" };
+            if (!routePolyline) routePolyline = L.polyline(routeGeometry, routeStyle).addTo(trackingMap);
+            else routePolyline.setStyle(routeStyle).setLatLngs(routeGeometry);
           } else if (!active && routePolyline) {
+            routePolyline.remove();
+            routePolyline = null;
+          } else if (active && !displayRouteAvailable && routePolyline) {
             routePolyline.remove();
             routePolyline = null;
           }
           const bounds = [];
           if (hasDestination) {
-            if (!destinationMarker) destinationMarker = L.circleMarker([destinationLat, destinationLng], { radius: 8, color: "#16a34a", fillColor: "#16a34a", fillOpacity: 0.9 }).addTo(trackingMap).bindTooltip(trackingText("destination"));
+            if (!destinationMarker) destinationMarker = L.marker([destinationLat, destinationLng], { icon: trackingMapDestinationIcon() }).addTo(trackingMap).bindTooltip(trackingText("destination"));
             destinationMarker.setLatLng([destinationLat, destinationLng]);
+            destinationMarker.bindPopup(`<strong>${escapeHtml(trackingText("destination"))}</strong><br>${escapeHtml(data.order_number || "")}`);
             bounds.push([destinationLat, destinationLng]);
           }
           if (hasTechnician) {
-            if (!technicianMarker) technicianMarker = L.circleMarker([technicianLat, technicianLng], { radius: 9, color: "#2563eb", fillColor: "#2563eb", fillOpacity: 0.95 }).addTo(trackingMap).bindTooltip(trackingText("technician"));
+            const technicianName = data.technician_display_name || trackingText("technician");
+            const technicianInitials = technicianName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "TS";
+            if (!technicianMarker) technicianMarker = L.marker([technicianLat, technicianLng], { icon: trackingMapTechnicianIcon(locationHealth, technicianInitials) }).addTo(trackingMap).bindTooltip(trackingText("technician"));
+            technicianMarker.setIcon(trackingMapTechnicianIcon(locationHealth, technicianInitials));
             technicianMarker.setLatLng([technicianLat, technicianLng]);
+            technicianMarker.bindPopup(`<strong>${escapeHtml(trackingText("technician"))}: ${escapeHtml(technicianName)}</strong><br>${escapeHtml(locationStatusText)}<br>${escapeHtml(trackingAgeLabel(data.last_location_updated_at, technicianName))}<br>${escapeHtml(data.order_number || "")}`);
             bounds.push([technicianLat, technicianLng]);
           } else if (technicianMarker) {
             technicianMarker.remove();
