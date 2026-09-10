@@ -6758,7 +6758,8 @@
     }
 
     function trackingMapHealth(value) {
-      return ["LIVE", "STALE", "OFFLINE"].includes(value) ? value.toLowerCase() : "offline";
+      const normalized = String(value || "").toUpperCase();
+      return ["LIVE", "STALE", "OFFLINE"].includes(normalized) ? normalized.toLowerCase() : "offline";
     }
 
     function trackingMapTechnicianIcon(health, initials) {
@@ -13761,11 +13762,8 @@
             ? data
             : active && lastValidRouteSessionKey === sessionKey ? lastValidRouteData : null;
           const displayRouteAvailable = Boolean(displayRoute);
-          const ageMs = data.last_location_updated_at ? Date.now() - new Date(data.last_location_updated_at).getTime() : Infinity;
-          const timestampHealth = Number.isFinite(ageMs) && ageMs >= 0
-            ? (ageMs > 120000 ? "OFFLINE" : ageMs > 30000 ? "STALE" : "LIVE")
-            : null;
-          const locationHealth = timestampHealth || data.location_health || data.tracking_health || "OFFLINE";
+          const timestampHealth = null;
+          const locationHealth = String(data.location_health || data.tracking_health || "OFFLINE").toUpperCase();
           const isLiveRoute = displayRouteAvailable && data.route_available === true && locationHealth === "LIVE";
           const routeCardClass = isLiveRoute ? "" : " is-last-known";
           const routeCardTitle = isLiveRoute ? trackingText("liveRoute") : trackingText("lastKnownRoute");
