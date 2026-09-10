@@ -1042,17 +1042,20 @@
     .tracking-map-marker {
       position: relative;
       display: grid;
-      width: 38px;
-      height: 38px;
+      width: 40px;
+      height: 40px;
       place-items: center;
       border: 3px solid #fff;
-      border-radius: 50%;
+      border-radius: 50% 50% 50% 9px;
       box-shadow: 0 3px 12px rgba(15, 35, 55, 0.28);
       color: #fff;
       background: #2563eb;
       font-size: 17px;
       font-weight: 900;
+      transform: rotate(-45deg);
     }
+
+    .tracking-map-marker > span { transform: rotate(45deg); }
 
     .tracking-map-marker::after {
       position: absolute;
@@ -1064,7 +1067,7 @@
     }
 
     .tracking-map-marker.live { color: #2563eb; background: #2563eb; }
-    .tracking-map-marker.stale { color: #ca8a04; background: #eab308; }
+    .tracking-map-marker.stale { color: #64748b; background: #60a5fa; opacity: 0.82; }
     .tracking-map-marker.offline { color: #64748b; background: #64748b; }
 
     .tracking-map-marker.live::before {
@@ -1078,8 +1081,8 @@
     }
 
     .tracking-map-destination {
-      width: 34px;
-      height: 34px;
+      width: 30px;
+      height: 30px;
       border-radius: 12px 12px 12px 4px;
       color: #fff;
       background: #16a34a;
@@ -6761,10 +6764,10 @@
     function trackingMapTechnicianIcon(health, initials) {
       return L.divIcon({
         className: "tracking-map-marker-shell",
-        html: `<span class="tracking-map-marker ${trackingMapHealth(health)}" aria-hidden="true">${escapeHtml(initials || "TS")}</span>`,
-        iconSize: [38, 38],
-        iconAnchor: [19, 19],
-        popupAnchor: [0, -19],
+        html: `<span class="tracking-map-marker ${trackingMapHealth(health)}" aria-hidden="true"><span>${escapeHtml(initials || "TS")}</span></span>`,
+        iconSize: [40, 40],
+        iconAnchor: [20, 20],
+        popupAnchor: [0, -20],
       });
     }
 
@@ -6772,9 +6775,9 @@
       return L.divIcon({
         className: "tracking-map-marker-shell",
         html: '<span class="tracking-map-marker tracking-map-destination" aria-hidden="true"><span>⌂</span></span>',
-        iconSize: [34, 34],
-        iconAnchor: [17, 17],
-        popupAnchor: [0, -17],
+        iconSize: [30, 30],
+        iconAnchor: [15, 15],
+        popupAnchor: [0, -15],
       });
     }
 
