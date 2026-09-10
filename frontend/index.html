@@ -12488,6 +12488,9 @@
       Object.assign(trackingTranslations.es, { staleLocation: "Ubicación del técnico temporalmente desactualizada.", showingLastKnown: "Mostrando la última ubicación conocida." });
       Object.assign(trackingTranslations.en, { staleLocation: "Technician location is temporarily out of date.", showingLastKnown: "Showing the last known location." });
       Object.assign(trackingTranslations["pt-BR"], { staleLocation: "Localização do técnico temporariamente desatualizada.", showingLastKnown: "Exibindo a última localização conhecida." });
+      Object.assign(trackingTranslations.es, { liveRoute: "En vivo", lastKnownRoute: "Última ruta disponible", recordedDistance: "Distancia registrada", recordedEta: "ETA registrada", recordedArrival: "Llegada estimada", routeDataNote: "Datos basados en la última ubicación recibida." });
+      Object.assign(trackingTranslations.en, { liveRoute: "Live", lastKnownRoute: "Last available route", recordedDistance: "Recorded distance", recordedEta: "Recorded ETA", recordedArrival: "Estimated arrival", routeDataNote: "Data based on the last received location." });
+      Object.assign(trackingTranslations["pt-BR"], { liveRoute: "Ao vivo", lastKnownRoute: "Última rota disponível", recordedDistance: "Distância registrada", recordedEta: "ETA registrada", recordedArrival: "Chegada estimada", routeDataNote: "Dados baseados na última localização recebida." });
       Object.assign(trackingTranslations.es, { serviceTotal: "Total del servicio", paid: "Pagado", outstanding: "Saldo restante", paymentTypeFull: "Pago total", paymentTypeDeposit: "Anticipo", paymentTypeProgress: "Pago intermedio", paymentTypeFinal: "Pago final", installmentWaiting: "Esperando liberación", installmentPending: "Pendiente", installmentPaymentPending: "Pago pendiente", installmentAvailable: "Disponible para pago" });
       Object.assign(trackingTranslations.en, { serviceTotal: "Service total", paid: "Paid", outstanding: "Remaining balance", paymentTypeFull: "Full payment", paymentTypeDeposit: "Deposit", paymentTypeProgress: "Progress payment", paymentTypeFinal: "Final payment", installmentWaiting: "Waiting for release", installmentPending: "Pending", installmentPaymentPending: "Payment pending", installmentAvailable: "Available for payment" });
       Object.assign(trackingTranslations["pt-BR"], { serviceTotal: "Total do serviço", paid: "Pago", outstanding: "Saldo restante", paymentTypeFull: "Pagamento integral", paymentTypeDeposit: "Entrada", paymentTypeProgress: "Parcela intermediária", paymentTypeFinal: "Parcela final", installmentWaiting: "Aguardando liberação", installmentPending: "Pendente", installmentPaymentPending: "Pagamento pendente", installmentAvailable: "Disponível para pagamento" });
@@ -12902,6 +12905,29 @@
         }
     .public-tracking-eta-card {
       margin-top: 16px;
+    }
+
+    .public-tracking-eta-card.is-last-known {
+      border: 1px solid #f1d49a;
+      border-radius: 8px;
+      padding: 12px;
+      background: #fffaf0;
+    }
+
+    .public-tracking-eta-title {
+      grid-column: 1 / -1;
+      color: var(--portal-ink);
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .public-tracking-eta-note {
+      grid-column: 1 / -1;
+      color: #8a5a12;
+      font-size: 12px;
+      font-weight: 800;
     }
 
     .public-tracking-legend {
@@ -13500,6 +13526,13 @@
             ? (ageMs > 120000 ? "OFFLINE" : ageMs > 30000 ? "STALE" : "LIVE")
             : null;
           const locationHealth = timestampHealth || data.location_health || data.tracking_health || "OFFLINE";
+          const isLiveRoute = displayRouteAvailable && data.route_available === true && locationHealth === "LIVE";
+          const routeCardClass = isLiveRoute ? "" : " is-last-known";
+          const routeCardTitle = isLiveRoute ? trackingText("liveRoute") : trackingText("lastKnownRoute");
+          const routeCardDistanceLabel = isLiveRoute ? trackingText("distance") : trackingText("recordedDistance");
+          const routeCardEtaLabel = isLiveRoute ? trackingText("estimatedTime") : trackingText("recordedEta");
+          const routeCardArrivalLabel = isLiveRoute ? trackingText("estimatedArrival") : trackingText("recordedArrival");
+          const routeCardNote = isLiveRoute ? "" : trackingText("routeDataNote");
           const hasStaleLocation = hasTechnician && (locationHealth === "STALE" || locationHealth === "OFFLINE");
           const locationStatusText = hasStaleLocation
             ? trackingText("staleLocation")
@@ -13530,7 +13563,7 @@
                 ${data.route_started_at ? `<p>${pt("departure")}: <strong>${escapeHtml(formatTrackingDate(data.route_started_at))}</strong></p>` : ""}
               </div>
               <div class="public-tracking-status" id="publicTrackingLiveStatus"><strong>${escapeHtml(locationMessage)}</strong>${lastKnownLocationText ? `<span>${escapeHtml(lastKnownLocationText)}</span>` : ""}<span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at, data.technician_display_name))}</span>${data.accuracy_m == null ? "" : `<span>${trackingText("accuracy")}: ${escapeHtml(data.accuracy_m)} m</span>`}</div>
-              ${displayRouteAvailable ? `<div class="public-tracking-eta-card"><div><small>${portalLanguage === "en" ? "Estimated arrival" : portalLanguage === "pt-BR" ? "Chegada estimada" : "Llegada estimada"}</small><strong>${escapeHtml(formatRouteDuration(displayRoute.route_duration_s))}</strong></div><div><small>${portalLanguage === "en" ? "Distance remaining" : portalLanguage === "pt-BR" ? "Distância restante" : "Distancia restante"}</small><strong>${escapeHtml(formatRouteDistance(displayRoute.route_distance_m))}</strong></div><div><small>${portalLanguage === "en" ? "Estimated time" : portalLanguage === "pt-BR" ? "Hora estimada" : "Hora estimada"}</small><strong>${escapeHtml(formatRouteEta(displayRoute.route_eta_at))}</strong></div></div>` : ""}
+              ${displayRouteAvailable ? `<div class="public-tracking-eta-card${routeCardClass}"><div class="public-tracking-eta-title">${escapeHtml(routeCardTitle)}</div><div><small>${escapeHtml(routeCardArrivalLabel)}</small><strong>${escapeHtml(formatRouteDuration(displayRoute.route_duration_s))}</strong></div><div><small>${escapeHtml(routeCardDistanceLabel)}</small><strong>${escapeHtml(formatRouteDistance(displayRoute.route_distance_m))}</strong></div><div><small>${escapeHtml(routeCardEtaLabel)}</small><strong>${escapeHtml(formatRouteEta(displayRoute.route_eta_at))}</strong></div>${routeCardNote ? `<div class="public-tracking-eta-note">${escapeHtml(routeCardNote)}</div>` : ""}</div>` : ""}
               <p id="publicTrackingProximity" class="portal-message">${escapeHtml(displayRouteAvailable ? trackingProximityMessage(displayRoute.route_distance_m) : locationMessage)}</p>
               <div id="publicVisitPayment" class="public-tracking-status"></div>
               <div id="publicQuoteSection"></div>
@@ -13550,7 +13583,7 @@
             liveStatus.innerHTML = `<strong>${escapeHtml(locationMessage)}</strong>${lastKnownLocationText ? `<span>${escapeHtml(lastKnownLocationText)}</span>` : ""}<span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at, data.technician_display_name))}</span>${data.accuracy_m == null ? "" : `<span>${trackingText("accuracy")}: ${escapeHtml(data.accuracy_m)} m</span>`}`;
             const existingEtaCard = document.querySelector(".public-tracking-eta-card");
             if (displayRouteAvailable) {
-              const etaMarkup = `<div class="public-tracking-eta-card"><div><small>${portalLanguage === "en" ? "Estimated arrival" : portalLanguage === "pt-BR" ? "Chegada estimada" : "Llegada estimada"}</small><strong>${escapeHtml(formatRouteDuration(displayRoute.route_duration_s))}</strong></div><div><small>${portalLanguage === "en" ? "Distance remaining" : portalLanguage === "pt-BR" ? "Distância restante" : "Distancia restante"}</small><strong>${escapeHtml(formatRouteDistance(displayRoute.route_distance_m))}</strong></div><div><small>${portalLanguage === "en" ? "Estimated time" : portalLanguage === "pt-BR" ? "Hora estimada" : "Hora estimada"}</small><strong>${escapeHtml(formatRouteEta(displayRoute.route_eta_at))}</strong></div></div>`;
+              const etaMarkup = `<div class="public-tracking-eta-card${routeCardClass}"><div class="public-tracking-eta-title">${escapeHtml(routeCardTitle)}</div><div><small>${escapeHtml(routeCardArrivalLabel)}</small><strong>${escapeHtml(formatRouteDuration(displayRoute.route_duration_s))}</strong></div><div><small>${escapeHtml(routeCardDistanceLabel)}</small><strong>${escapeHtml(formatRouteDistance(displayRoute.route_distance_m))}</strong></div><div><small>${escapeHtml(routeCardEtaLabel)}</small><strong>${escapeHtml(formatRouteEta(displayRoute.route_eta_at))}</strong></div>${routeCardNote ? `<div class="public-tracking-eta-note">${escapeHtml(routeCardNote)}</div>` : ""}</div>`;
               if (existingEtaCard) existingEtaCard.outerHTML = etaMarkup;
               else liveStatus.insertAdjacentHTML("afterend", etaMarkup);
             } else if (existingEtaCard) existingEtaCard.remove();
