@@ -692,6 +692,28 @@ def service_portal():
     return {"status": "portal-not-found"}
 
 
+def public_information_page(filename: str):
+    page = frontend_dir / filename
+    if page.exists():
+        return FileResponse(page, media_type="text/html")
+    return {"status": "public-page-not-found"}
+
+
+@app.get("/quienes-somos", include_in_schema=False)
+def public_about_page():
+    return public_information_page("quienes-somos.html")
+
+
+@app.get("/como-funciona", include_in_schema=False)
+def public_how_it_works_page():
+    return public_information_page("como-funciona.html")
+
+
+@app.get("/preguntas-frecuentes", include_in_schema=False)
+def public_faq_page():
+    return public_information_page("preguntas-frecuentes.html")
+
+
 @app.get("/invite/{token}", include_in_schema=False)
 def organization_invitation_page(token: str):
     frontend_index = frontend_dir / "index.html"
