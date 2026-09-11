@@ -29,8 +29,8 @@ def test_public_information_pages_are_indexable_and_reachable():
         assert response.headers["content-type"].startswith("text/html")
         assert title_fragment in body
         assert f"<link rel=\"canonical\" href=\"https://totalsolutionscancun.com{canonical}\">" in body
-        assert "/assets/public-site.css" in body
-        assert "/assets/public-site.js" in body
+        assert "/assets/public-site.css?v=ae96141" in body
+        assert "/assets/public-site.js?v=ae96141" in body
 
 
 def test_public_faq_shell_loads_shared_renderer():
