@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /api/
+Disallow: /docs
+Disallow: /health
+Disallow: /seguimiento/
+Disallow: /public/service-requests/
+Disallow: /invite/
+
+Sitemap: https://totalsolutionscancun.com/sitemap.xml

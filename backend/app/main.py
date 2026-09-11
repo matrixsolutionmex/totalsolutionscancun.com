@@ -714,6 +714,16 @@ def public_faq_page():
     return public_information_page("preguntas-frecuentes.html")
 
 
+@app.get("/robots.txt", include_in_schema=False)
+def public_robots():
+    return FileResponse(frontend_dir / "robots.txt", media_type="text/plain")
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+def public_sitemap():
+    return FileResponse(frontend_dir / "sitemap.xml", media_type="application/xml")
+
+
 @app.get("/invite/{token}", include_in_schema=False)
 def organization_invitation_page(token: str):
     frontend_index = frontend_dir / "index.html"

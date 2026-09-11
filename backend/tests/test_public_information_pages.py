@@ -48,3 +48,25 @@ def test_how_page_exposes_the_five_operational_journeys():
         assert anchor in body
     for actor in ("Cliente", "Técnico", "Supervisor", "Organización", "Admin / ROOT"):
         assert actor in body
+
+
+def test_public_seo_files_and_schema_are_reachable():
+    robots = get_page("/robots.txt")
+    sitemap = get_page("/sitemap.xml")
+    home = get_page("/").text
+
+    assert robots.status_code == 200
+    assert robots.headers["content-type"].startswith("text/plain")
+    assert "Sitemap: https://totalsolutionscancun.com/sitemap.xml" in robots.text
+    assert sitemap.status_code == 200
+    assert sitemap.headers["content-type"].startswith("application/xml")
+    assert "https://totalsolutionscancun.com/como-funciona" in sitemap.text
+    assert "/docs" not in sitemap.text
+    assert 'application/ld+json' in home
+
+
+def test_how_page_does_not_advertise_howto_schema():
+    body = get_page("/como-funciona").text
+
+    assert "HowTo" not in body
+    assert "application/ld+json" in get_page("/").text
