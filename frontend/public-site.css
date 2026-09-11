@@ -50,6 +50,32 @@ body.public-site { margin: 0; color: var(--public-ink); background: #f8fbfa; fon
 .public-callout a { flex: 0 0 auto; padding: 13px 18px; color: #062313; background: var(--public-green); border-radius: 7px; text-decoration: none; font-weight: 850; }
 .public-footer { display: flex; justify-content: space-between; gap: 24px; padding: 26px clamp(18px, 7vw, 104px); color: #d8e5df; background: #07140f; font-size: 14px; }
 .public-footer a { color: #78f497; }
+.journey-overview { padding-top: 18px; }
+.journey-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 24px 0; }
+.journey-nav a { padding: 9px 12px; color: var(--public-ink); background: var(--public-wash); border: 1px solid #cfe8da; border-radius: 6px; text-decoration: none; font-size: 14px; font-weight: 800; }
+.journey-nav a:hover, .journey-nav a:focus-visible { color: #fff; background: var(--public-green-dark); }
+.journey-map { position: relative; overflow: hidden; margin-top: 28px; padding: 30px; background: #fff; border: 1px solid var(--public-line); border-radius: 8px; box-shadow: 0 14px 32px rgba(16,32,50,.07); }
+.journey-map::before { content: ""; position: absolute; top: 50%; right: 12%; left: 12%; height: 1px; background: #b7d7c4; }
+.journey-map-core { position: relative; z-index: 1; display: grid; place-items: center; width: min(220px, 100%); min-height: 74px; margin: 0 auto; padding: 16px; color: #fff; background: var(--public-navy); border: 4px solid var(--public-green); border-radius: 8px; text-align: center; font-size: 22px; font-weight: 850; }
+.journey-map-nodes { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 28px; }
+.journey-map-node { display: grid; place-items: center; min-height: 48px; padding: 9px; color: var(--public-ink); background: var(--public-wash); border: 1px solid #cfe8da; border-radius: 6px; text-align: center; font-size: 13px; font-weight: 800; }
+.journey-map-governance { position: relative; z-index: 1; margin-top: 18px !important; max-width: none !important; color: var(--public-green-dark) !important; text-align: center; font-size: 14px !important; font-weight: 800; }
+.journey-section { scroll-margin-top: 86px; }
+.journey-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.journey-heading .public-kicker { margin: 0 0 8px; color: var(--public-green-dark); }
+.journey-badge { flex: 0 0 auto; padding: 7px 10px; border-radius: 5px; font-size: 12px; font-weight: 850; text-transform: uppercase; }
+.journey-badge.implemented { color: #075c2b; background: #d9f8e4; }
+.journey-badge.partial { color: #775000; background: #fff1c7; }
+.journey-badge.future { color: #39495b; background: #e8edf2; }
+.journey-step-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 22px 0 0; padding: 0; list-style: none; counter-reset: journey-step; }
+.journey-step { display: flex; align-items: flex-start; gap: 12px; min-width: 0; padding: 15px; background: var(--public-wash); border-left: 3px solid var(--public-green); border-radius: 4px; color: var(--public-ink); line-height: 1.45; }
+.journey-step span { flex: 0 0 auto; display: grid; place-items: center; width: 28px; height: 28px; color: #fff; background: var(--public-navy); border-radius: 50%; font-size: 12px; font-weight: 850; }
+.journey-step span::after { counter-increment: journey-step; content: counter(journey-step); }
+.journey-reuse { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 24px; }
+.journey-reuse-card { min-width: 0; padding: 20px; background: #fff; border: 1px solid var(--public-line); border-radius: 8px; }
+.journey-reuse-card h3 { color: var(--public-ink); }
+.journey-reuse-card p { font-size: 14px; line-height: 1.5; }
+.journey-note { margin-top: 18px !important; color: var(--public-muted); font-size: 13px !important; font-style: italic; }
 @media (max-width: 760px) {
   .public-nav { align-items: flex-start; flex-wrap: wrap; }
   .public-brand img { width: 150px; }
@@ -60,4 +86,9 @@ body.public-site { margin: 0; color: var(--public-ink); background: #f8fbfa; fon
   .public-language { align-self: flex-start; }
   .public-grid, .public-list { grid-template-columns: 1fr; }
   .public-callout, .public-footer { flex-direction: column; align-items: flex-start; }
+  .journey-map { padding: 20px 14px; }
+  .journey-map::before { top: 24%; right: auto; bottom: 24%; left: 50%; width: 1px; height: auto; }
+  .journey-map-nodes, .journey-step-list, .journey-reuse { grid-template-columns: 1fr; }
+  .journey-heading { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .journey-badge { order: -1; }
 }

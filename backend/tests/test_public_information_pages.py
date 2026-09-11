@@ -39,3 +39,12 @@ def test_public_faq_shell_loads_shared_renderer():
     assert 'data-page="faq"' in body
     assert "Preguntas frecuentes" in body
     assert "Información sencilla" in body
+
+
+def test_how_page_exposes_the_five_operational_journeys():
+    body = get_page("/como-funciona").text
+
+    for anchor in ("#cliente", "#tecnico", "#supervisor", "#organizacion", "#admin"):
+        assert anchor in body
+    for actor in ("Cliente", "Técnico", "Supervisor", "Organización", "Admin / ROOT"):
+        assert actor in body
