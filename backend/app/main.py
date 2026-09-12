@@ -4,7 +4,7 @@ import threading
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -712,6 +712,23 @@ def public_how_it_works_page():
 @app.get("/preguntas-frecuentes", include_in_schema=False)
 def public_faq_page():
     return public_information_page("preguntas-frecuentes.html")
+
+
+@app.get("/blog", include_in_schema=False)
+def public_blog_page():
+    return public_information_page("blog.html")
+
+
+@app.get("/blog/{slug}", include_in_schema=False)
+def public_blog_post_page(slug: str):
+    valid_slugs = {
+        "quien-cuida-propiedad-despues-de-la-venta",
+        "cuidar-propiedad-cancun-desde-el-extranjero",
+        "mantenimiento-preventivo-airbnb-cancun",
+    }
+    if slug not in valid_slugs:
+        raise HTTPException(status_code=404, detail="Artículo no encontrado")
+    return public_information_page("blog-post.html")
 
 
 @app.get("/robots.txt", include_in_schema=False)

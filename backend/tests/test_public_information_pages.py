@@ -70,3 +70,29 @@ def test_how_page_does_not_advertise_howto_schema():
 
     assert "HowTo" not in body
     assert "application/ld+json" in get_page("/").text
+
+
+def test_blog_foundation_exposes_index_and_supported_post_shells():
+    index = get_page("/blog")
+    post = get_page("/blog/cuidar-propiedad-cancun-desde-el-extranjero")
+
+    assert index.status_code == 200
+    assert 'data-blog-page="index"' in index.text
+    assert "/assets/blog.js?v=085e" in index.text
+    assert "/assets/blog.css?v=085e" in index.text
+    assert "Blog" in index.text
+    assert post.status_code == 200
+    assert 'data-blog-page="post"' in post.text
+    assert get_page("/blog/artigo-que-nao-existe").status_code == 404
+
+
+def test_blog_sitemap_contains_foundation_routes():
+    sitemap = get_page("/sitemap.xml").text
+
+    for path in (
+        "/blog",
+        "/blog/quien-cuida-propiedad-despues-de-la-venta",
+        "/blog/cuidar-propiedad-cancun-desde-el-extranjero",
+        "/blog/mantenimiento-preventivo-airbnb-cancun",
+    ):
+        assert f"https://totalsolutionscancun.com{path}" in sitemap
