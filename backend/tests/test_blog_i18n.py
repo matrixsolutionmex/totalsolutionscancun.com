@@ -86,8 +86,38 @@ def test_editorial_batch_b1_contains_six_localized_articles_and_safe_claims():
         "5 sinais de que seu ar-condicionado precisa de manutenção",
     ):
         assert title in blog_js
-    assert blog_js.count("image_pending: \"PENDING CUSTOM IMAGE\"") == 0
     assert "24/7" not in blog_js
+    assert "24/7" not in blog_js
+
+
+def test_editorial_batch_b2_contains_four_pending_localized_articles():
+    from pathlib import Path
+
+    blog_js = (Path(__file__).resolve().parents[2] / "frontend" / "blog.js").read_text()
+
+    for slug in (
+        "pequenas-fugas-agua-propiedad-cancun",
+        "mantenimiento-hoteles-organizar-incidencias",
+        "documentar-mantenimiento-fotos-evidencias",
+        "como-elegir-tecnicos-confiables-mantenimiento-propiedad",
+    ):
+        assert slug in blog_js
+    for title in (
+        "Pequeñas fugas de agua: señales que no conviene ignorar en una propiedad",
+        "Small water leaks: signs you should not ignore in a property",
+        "Pequenos vazamentos de água: sinais que não convém ignorar em um imóvel",
+        "Mantenimiento para hoteles: cómo organizar incidencias sin perder el control",
+        "Hotel maintenance: how to organize incidents without losing control",
+        "Manutenção para hotéis: como organizar ocorrências sem perder o controle",
+        "Fotos, evidencias y seguimiento: por qué documentar cada servicio de mantenimiento",
+        "Photos, evidence and follow-up: why document every maintenance service",
+        "Fotos, evidências e acompanhamento: por que documentar cada serviço de manutenção",
+        "Cómo elegir técnicos confiables para el mantenimiento de una propiedad",
+        "How to choose reliable technicians for property maintenance",
+        "Como escolher técnicos confiáveis para a manutenção de um imóvel",
+    ):
+        assert title in blog_js
+    assert blog_js.count("image_pending: \"PENDING CUSTOM IMAGE\"") == 0
     assert "24/7" not in blog_js
 
 
@@ -104,7 +134,7 @@ def test_blog_routes_and_i18n_asset_cache_bust_remain_reachable():
     missing = asyncio.run(request("/blog/artigo-que-nao-existe"))
 
     assert index.status_code == 200
-    assert "/assets/blog-085f-b1.js" in index.text
+    assert "/assets/blog-085f-b2.js" in index.text
     assert "/assets/blog.css?v=085f-i18n-fix" in index.text
     assert post.status_code == 200
     assert missing.status_code == 404

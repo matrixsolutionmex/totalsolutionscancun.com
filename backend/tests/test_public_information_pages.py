@@ -78,7 +78,7 @@ def test_blog_foundation_exposes_index_and_supported_post_shells():
 
     assert index.status_code == 200
     assert 'data-blog-page="index"' in index.text
-    assert "/assets/blog-085f-b1.js" in index.text
+    assert "/assets/blog-085f-b2.js" in index.text
     assert "/assets/blog.css?v=085f-i18n-fix" in index.text
     assert "Blog" in index.text
     assert post.status_code == 200
@@ -109,6 +109,18 @@ def test_blog_sitemap_contains_editorial_batch_b1_routes():
         assert f"https://totalsolutionscancun.com{path}" in sitemap
 
 
+def test_blog_sitemap_contains_editorial_batch_b2_routes():
+    sitemap = get_page("/sitemap.xml").text
+
+    for path in (
+        "/blog/pequenas-fugas-agua-propiedad-cancun",
+        "/blog/mantenimiento-hoteles-organizar-incidencias",
+        "/blog/documentar-mantenimiento-fotos-evidencias",
+        "/blog/como-elegir-tecnicos-confiables-mantenimiento-propiedad",
+    ):
+        assert f"https://totalsolutionscancun.com{path}" in sitemap
+
+
 def test_blog_editorial_batch_b1_routes_are_public_and_unknown_slug_is_404():
     valid_paths = (
         "/blog/quien-cuida-propiedad-despues-de-la-venta",
@@ -117,6 +129,10 @@ def test_blog_editorial_batch_b1_routes_are_public_and_unknown_slug_is_404():
         "/blog/como-inmobiliaria-mejorar-servicio-posventa",
         "/blog/despues-comprar-propiedad-inversion-cancun",
         "/blog/senales-aire-acondicionado-necesita-mantenimiento",
+        "/blog/pequenas-fugas-agua-propiedad-cancun",
+        "/blog/mantenimiento-hoteles-organizar-incidencias",
+        "/blog/documentar-mantenimiento-fotos-evidencias",
+        "/blog/como-elegir-tecnicos-confiables-mantenimiento-propiedad",
     )
 
     for path in valid_paths:
@@ -128,7 +144,7 @@ def test_blog_editorial_batch_b1_routes_are_public_and_unknown_slug_is_404():
 
 def test_brokers_article_uses_its_dedicated_public_hero_image():
     asset = get_page("/assets/blog/images/quien-cuida-propiedad-despues-de-la-venta.jpg")
-    blog_js = get_page("/assets/blog-085f-b1.js").text
+    blog_js = get_page("/assets/blog-085f-b2.js").text
 
     assert asset.status_code == 200
     assert asset.headers["content-type"].startswith("image/jpeg")
@@ -139,7 +155,7 @@ def test_brokers_article_uses_its_dedicated_public_hero_image():
 
 def test_remote_owner_article_uses_its_dedicated_public_hero_image():
     asset = get_page("/assets/blog/images/cuidar-propiedad-cancun-desde-el-extranjero.jpg")
-    blog_js = get_page("/assets/blog-085f-b1.js").text
+    blog_js = get_page("/assets/blog-085f-b2.js").text
 
     assert asset.status_code == 200
     assert asset.headers["content-type"].startswith("image/jpeg")
@@ -148,16 +164,52 @@ def test_remote_owner_article_uses_its_dedicated_public_hero_image():
 
 def test_airbnb_article_uses_its_dedicated_public_hero_image():
     asset = get_page("/assets/blog/images/mantenimiento-preventivo-airbnb-cancun.jpg")
-    blog_js = get_page("/assets/blog-085f-b1.js").text
+    blog_js = get_page("/assets/blog-085f-b2.js").text
 
     assert asset.status_code == 200
     assert asset.headers["content-type"].startswith("image/jpeg")
     assert 'hero_image: "/assets/blog/images/mantenimiento-preventivo-airbnb-cancun.jpg"' in blog_js
 
 
+def test_hotel_maintenance_article_uses_its_dedicated_public_hero_image():
+    asset = get_page("/assets/blog/images/mantenimiento-hoteles-organizar-incidencias.jpg")
+    blog_js = get_page("/assets/blog-085f-b2.js").text
+
+    assert asset.status_code == 200
+    assert asset.headers["content-type"].startswith("image/jpeg")
+    assert 'hero_image: "/assets/blog/images/mantenimiento-hoteles-organizar-incidencias.jpg"' in blog_js
+    assert "Gerente de hotel supervisa incidencias de mantenimiento" in blog_js
+    assert "Hotel manager monitors maintenance incidents" in blog_js
+    assert "Gerente de hotel acompanha ocorrências de manutenção" in blog_js
+
+
+def test_evidence_article_uses_its_dedicated_public_hero_image():
+    asset = get_page("/assets/blog/images/documentar-mantenimiento-fotos-evidencias.jpg")
+    blog_js = get_page("/assets/blog-085f-b2.js").text
+
+    assert asset.status_code == 200
+    assert asset.headers["content-type"].startswith("image/jpeg")
+    assert 'hero_image: "/assets/blog/images/documentar-mantenimiento-fotos-evidencias.jpg"' in blog_js
+    assert "Técnico documenta con fotografías un servicio de mantenimiento" in blog_js
+    assert "Technician documents a maintenance service with photos" in blog_js
+    assert "Técnico documenta com fotos um serviço de manutenção" in blog_js
+
+
+def test_trusted_technicians_article_uses_its_dedicated_public_hero_image():
+    asset = get_page("/assets/blog/images/como-elegir-tecnicos-confiables-mantenimiento-propiedad.jpg")
+    blog_js = get_page("/assets/blog-085f-b2.js").text
+
+    assert asset.status_code == 200
+    assert asset.headers["content-type"].startswith("image/jpeg")
+    assert 'hero_image: "/assets/blog/images/como-elegir-tecnicos-confiables-mantenimiento-propiedad.jpg"' in blog_js
+    assert "Propietarios revisan con un técnico de mantenimiento" in blog_js
+    assert "Property owners review technician experience" in blog_js
+    assert "Proprietários revisam com um técnico de manutenção" in blog_js
+
+
 def test_real_estate_after_sales_article_uses_its_dedicated_public_hero_image():
     asset = get_page("/assets/blog/images/como-inmobiliaria-mejorar-servicio-posventa.jpg")
-    blog_js = get_page("/assets/blog.js").text
+    blog_js = get_page("/assets/blog-085f-b2.js").text
 
     assert asset.status_code == 200
     assert asset.headers["content-type"].startswith("image/jpeg")
@@ -169,7 +221,7 @@ def test_real_estate_after_sales_article_uses_its_dedicated_public_hero_image():
 
 def test_investment_property_article_uses_its_dedicated_public_hero_image():
     asset = get_page("/assets/blog/images/despues-comprar-propiedad-inversion-cancun.jpg")
-    blog_js = get_page("/assets/blog.js").text
+    blog_js = get_page("/assets/blog-085f-b2.js").text
 
     assert asset.status_code == 200
     assert asset.headers["content-type"].startswith("image/jpeg")
@@ -181,7 +233,7 @@ def test_investment_property_article_uses_its_dedicated_public_hero_image():
 
 def test_air_conditioning_article_uses_its_dedicated_public_hero_image():
     asset = get_page("/assets/blog/images/senales-aire-acondicionado-necesita-mantenimiento.jpg")
-    blog_js = get_page("/assets/blog.js").text
+    blog_js = get_page("/assets/blog-085f-b2.js").text
 
     assert asset.status_code == 200
     assert asset.headers["content-type"].startswith("image/jpeg")

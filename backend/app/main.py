@@ -728,6 +728,10 @@ def public_blog_post_page(slug: str):
         "como-inmobiliaria-mejorar-servicio-posventa",
         "despues-comprar-propiedad-inversion-cancun",
         "senales-aire-acondicionado-necesita-mantenimiento",
+        "pequenas-fugas-agua-propiedad-cancun",
+        "mantenimiento-hoteles-organizar-incidencias",
+        "documentar-mantenimiento-fotos-evidencias",
+        "como-elegir-tecnicos-confiables-mantenimiento-propiedad",
     }
     if slug not in valid_slugs:
         raise HTTPException(status_code=404, detail="Artículo no encontrado")
