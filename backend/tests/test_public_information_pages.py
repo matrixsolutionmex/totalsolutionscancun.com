@@ -29,8 +29,8 @@ def test_public_information_pages_are_indexable_and_reachable():
         assert response.headers["content-type"].startswith("text/html")
         assert title_fragment in body
         assert f"<link rel=\"canonical\" href=\"https://totalsolutionscancun.com{canonical}\">" in body
-        assert "/assets/public-site.css?v=ae96141" in body
-        assert "/assets/public-site.js?v=ae96141" in body
+        assert "/assets/public-site.css?v=9728e26" in body
+        assert "/assets/public-site.js?v=9728e26" in body
 
 
 def test_public_faq_shell_loads_shared_renderer():
@@ -78,8 +78,8 @@ def test_blog_foundation_exposes_index_and_supported_post_shells():
 
     assert index.status_code == 200
     assert 'data-blog-page="index"' in index.text
-    assert "/assets/blog.js?v=085e" in index.text
-    assert "/assets/blog.css?v=085e" in index.text
+    assert "/assets/blog.js?v=9728e26" in index.text
+    assert "/assets/blog.css?v=9728e26" in index.text
     assert "Blog" in index.text
     assert post.status_code == 200
     assert 'data-blog-page="post"' in post.text
