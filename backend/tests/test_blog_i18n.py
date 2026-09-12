@@ -12,6 +12,12 @@ def test_blog_reuses_global_language_state_and_translates_all_locales():
     assert 'localStorage.setItem(languageKey, lang)' in blog_js
     assert 'const setLanguage = value =>' in blog_js
     assert 'document.addEventListener("click"' in blog_js
+    assert 'event.target.closest("[data-lang]")' in blog_js
+    assert 'setLanguage(button.dataset.lang)' in blog_js
+    assert 'const render = () =>' in blog_js
+    assert 'updateDocumentLanguage(); render();' in blog_js
+    assert 'renderPost(index)' in blog_js
+    assert 'renderNotFound()' in blog_js
     for text in ("Contenido por contexto", "Content by context", "Conteúdo por contexto"):
         assert text in blog_js
     for text in ("Leer artículo", "Read article", "Ler artigo"):
@@ -47,7 +53,7 @@ def test_blog_routes_and_i18n_asset_cache_bust_remain_reachable():
     missing = asyncio.run(request("/blog/artigo-que-nao-existe"))
 
     assert index.status_code == 200
-    assert "/assets/blog-3f5f73f.js" in index.text
+    assert "/assets/blog-i18n-runtime-fix.js" in index.text
     assert "/assets/blog.css?v=085f-i18n-fix" in index.text
     assert post.status_code == 200
     assert missing.status_code == 404
