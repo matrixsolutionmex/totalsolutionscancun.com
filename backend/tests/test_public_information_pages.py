@@ -78,7 +78,7 @@ def test_blog_foundation_exposes_index_and_supported_post_shells():
 
     assert index.status_code == 200
     assert 'data-blog-page="index"' in index.text
-    assert "/assets/blog-i18n-runtime-fix.js" in index.text
+    assert "/assets/blog-a87af64.js" in index.text
     assert "/assets/blog.css?v=085f-i18n-fix" in index.text
     assert "Blog" in index.text
     assert post.status_code == 200
@@ -100,7 +100,7 @@ def test_blog_sitemap_contains_foundation_routes():
 
 def test_brokers_article_uses_its_dedicated_public_hero_image():
     asset = get_page("/assets/blog/images/quien-cuida-propiedad-despues-de-la-venta.jpg")
-    blog_js = get_page("/assets/blog-i18n-runtime-fix.js").text
+    blog_js = get_page("/assets/blog-a87af64.js").text
 
     assert asset.status_code == 200
     assert asset.headers["content-type"].startswith("image/jpeg")
@@ -111,7 +111,7 @@ def test_brokers_article_uses_its_dedicated_public_hero_image():
 
 def test_remote_owner_article_uses_its_dedicated_public_hero_image():
     asset = get_page("/assets/blog/images/cuidar-propiedad-cancun-desde-el-extranjero.jpg")
-    blog_js = get_page("/assets/blog-i18n-runtime-fix.js").text
+    blog_js = get_page("/assets/blog-a87af64.js").text
 
     assert asset.status_code == 200
     assert asset.headers["content-type"].startswith("image/jpeg")
@@ -120,7 +120,7 @@ def test_remote_owner_article_uses_its_dedicated_public_hero_image():
 
 def test_airbnb_article_uses_its_dedicated_public_hero_image():
     asset = get_page("/assets/blog/images/mantenimiento-preventivo-airbnb-cancun.jpg")
-    blog_js = get_page("/assets/blog-i18n-runtime-fix.js").text
+    blog_js = get_page("/assets/blog-a87af64.js").text
 
     assert asset.status_code == 200
     assert asset.headers["content-type"].startswith("image/jpeg")
