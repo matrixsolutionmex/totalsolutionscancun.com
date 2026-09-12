@@ -725,6 +725,9 @@ def public_blog_post_page(slug: str):
         "quien-cuida-propiedad-despues-de-la-venta",
         "cuidar-propiedad-cancun-desde-el-extranjero",
         "mantenimiento-preventivo-airbnb-cancun",
+        "como-inmobiliaria-mejorar-servicio-posventa",
+        "despues-comprar-propiedad-inversion-cancun",
+        "senales-aire-acondicionado-necesita-mantenimiento",
     }
     if slug not in valid_slugs:
         raise HTTPException(status_code=404, detail="Artículo no encontrado")

@@ -78,7 +78,7 @@ def test_blog_foundation_exposes_index_and_supported_post_shells():
 
     assert index.status_code == 200
     assert 'data-blog-page="index"' in index.text
-    assert "/assets/blog-title-fix.js" in index.text
+    assert "/assets/blog-085f-b1.js" in index.text
     assert "/assets/blog.css?v=085f-i18n-fix" in index.text
     assert "Blog" in index.text
     assert post.status_code == 200
@@ -98,9 +98,37 @@ def test_blog_sitemap_contains_foundation_routes():
         assert f"https://totalsolutionscancun.com{path}" in sitemap
 
 
+def test_blog_sitemap_contains_editorial_batch_b1_routes():
+    sitemap = get_page("/sitemap.xml").text
+
+    for path in (
+        "/blog/como-inmobiliaria-mejorar-servicio-posventa",
+        "/blog/despues-comprar-propiedad-inversion-cancun",
+        "/blog/senales-aire-acondicionado-necesita-mantenimiento",
+    ):
+        assert f"https://totalsolutionscancun.com{path}" in sitemap
+
+
+def test_blog_editorial_batch_b1_routes_are_public_and_unknown_slug_is_404():
+    valid_paths = (
+        "/blog/quien-cuida-propiedad-despues-de-la-venta",
+        "/blog/cuidar-propiedad-cancun-desde-el-extranjero",
+        "/blog/mantenimiento-preventivo-airbnb-cancun",
+        "/blog/como-inmobiliaria-mejorar-servicio-posventa",
+        "/blog/despues-comprar-propiedad-inversion-cancun",
+        "/blog/senales-aire-acondicionado-necesita-mantenimiento",
+    )
+
+    for path in valid_paths:
+        response = get_page(path)
+        assert response.status_code == 200
+        assert 'data-blog-page="post"' in response.text
+    assert get_page("/blog/artigo-que-nao-existe").status_code == 404
+
+
 def test_brokers_article_uses_its_dedicated_public_hero_image():
     asset = get_page("/assets/blog/images/quien-cuida-propiedad-despues-de-la-venta.jpg")
-    blog_js = get_page("/assets/blog-title-fix.js").text
+    blog_js = get_page("/assets/blog-085f-b1.js").text
 
     assert asset.status_code == 200
     assert asset.headers["content-type"].startswith("image/jpeg")
@@ -111,7 +139,7 @@ def test_brokers_article_uses_its_dedicated_public_hero_image():
 
 def test_remote_owner_article_uses_its_dedicated_public_hero_image():
     asset = get_page("/assets/blog/images/cuidar-propiedad-cancun-desde-el-extranjero.jpg")
-    blog_js = get_page("/assets/blog-title-fix.js").text
+    blog_js = get_page("/assets/blog-085f-b1.js").text
 
     assert asset.status_code == 200
     assert asset.headers["content-type"].startswith("image/jpeg")
@@ -120,8 +148,44 @@ def test_remote_owner_article_uses_its_dedicated_public_hero_image():
 
 def test_airbnb_article_uses_its_dedicated_public_hero_image():
     asset = get_page("/assets/blog/images/mantenimiento-preventivo-airbnb-cancun.jpg")
-    blog_js = get_page("/assets/blog-title-fix.js").text
+    blog_js = get_page("/assets/blog-085f-b1.js").text
 
     assert asset.status_code == 200
     assert asset.headers["content-type"].startswith("image/jpeg")
     assert 'hero_image: "/assets/blog/images/mantenimiento-preventivo-airbnb-cancun.jpg"' in blog_js
+
+
+def test_real_estate_after_sales_article_uses_its_dedicated_public_hero_image():
+    asset = get_page("/assets/blog/images/como-inmobiliaria-mejorar-servicio-posventa.jpg")
+    blog_js = get_page("/assets/blog.js").text
+
+    assert asset.status_code == 200
+    assert asset.headers["content-type"].startswith("image/jpeg")
+    assert 'hero_image: "/assets/blog/images/como-inmobiliaria-mejorar-servicio-posventa.jpg"' in blog_js
+    assert "Corredor inmobiliario entrega las llaves" in blog_js
+    assert "Real estate agent hands over property keys" in blog_js
+    assert "Corretor entrega as chaves" in blog_js
+
+
+def test_investment_property_article_uses_its_dedicated_public_hero_image():
+    asset = get_page("/assets/blog/images/despues-comprar-propiedad-inversion-cancun.jpg")
+    blog_js = get_page("/assets/blog.js").text
+
+    assert asset.status_code == 200
+    assert asset.headers["content-type"].startswith("image/jpeg")
+    assert 'hero_image: "/assets/blog/images/despues-comprar-propiedad-inversion-cancun.jpg"' in blog_js
+    assert "Propietario revisa con un técnico" in blog_js
+    assert "Property owner reviews the condition" in blog_js
+    assert "Proprietário revisa com um técnico" in blog_js
+
+
+def test_air_conditioning_article_uses_its_dedicated_public_hero_image():
+    asset = get_page("/assets/blog/images/senales-aire-acondicionado-necesita-mantenimiento.jpg")
+    blog_js = get_page("/assets/blog.js").text
+
+    assert asset.status_code == 200
+    assert asset.headers["content-type"].startswith("image/jpeg")
+    assert 'hero_image: "/assets/blog/images/senales-aire-acondicionado-necesita-mantenimiento.jpg"' in blog_js
+    assert "Técnico inspecciona un aire acondicionado" in blog_js
+    assert "Technician inspects an air conditioner" in blog_js
+    assert "Técnico inspeciona um ar-condicionado" in blog_js

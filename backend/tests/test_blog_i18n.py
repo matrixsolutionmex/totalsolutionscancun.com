@@ -63,6 +63,34 @@ def test_expanded_editorial_merge_preserves_base_article_contract_for_all_locale
     assert "hero_image:" in blog_js
 
 
+def test_editorial_batch_b1_contains_six_localized_articles_and_safe_claims():
+    from pathlib import Path
+
+    blog_js = (Path(__file__).resolve().parents[2] / "frontend" / "blog.js").read_text()
+
+    for slug in (
+        "como-inmobiliaria-mejorar-servicio-posventa",
+        "despues-comprar-propiedad-inversion-cancun",
+        "senales-aire-acondicionado-necesita-mantenimiento",
+    ):
+        assert slug in blog_js
+    for title in (
+        "Cómo una inmobiliaria puede mejorar su servicio posventa",
+        "How a real estate agency can improve its after-sales service",
+        "Como uma imobiliária pode melhorar seu pós-venda",
+        "Qué hacer después de comprar una propiedad de inversión en Cancún",
+        "What to do after buying an investment property in Cancún",
+        "O que fazer depois de comprar um imóvel de investimento em Cancún",
+        "5 señales de que tu aire acondicionado necesita mantenimiento",
+        "5 signs your air conditioner needs maintenance",
+        "5 sinais de que seu ar-condicionado precisa de manutenção",
+    ):
+        assert title in blog_js
+    assert blog_js.count("image_pending: \"PENDING CUSTOM IMAGE\"") == 0
+    assert "24/7" not in blog_js
+    assert "24/7" not in blog_js
+
+
 def test_blog_routes_and_i18n_asset_cache_bust_remain_reachable():
     from httpx import ASGITransport, AsyncClient
     import asyncio
@@ -76,7 +104,7 @@ def test_blog_routes_and_i18n_asset_cache_bust_remain_reachable():
     missing = asyncio.run(request("/blog/artigo-que-nao-existe"))
 
     assert index.status_code == 200
-    assert "/assets/blog-title-fix.js" in index.text
+    assert "/assets/blog-085f-b1.js" in index.text
     assert "/assets/blog.css?v=085f-i18n-fix" in index.text
     assert post.status_code == 200
     assert missing.status_code == 404
