@@ -47,7 +47,7 @@ def test_blog_routes_and_i18n_asset_cache_bust_remain_reachable():
     missing = asyncio.run(request("/blog/artigo-que-nao-existe"))
 
     assert index.status_code == 200
-    assert "/assets/blog.js?v=085f-i18n-fix" in index.text
+    assert "/assets/blog-3f5f73f.js" in index.text
     assert "/assets/blog.css?v=085f-i18n-fix" in index.text
     assert post.status_code == 200
     assert missing.status_code == 404
