@@ -3629,6 +3629,12 @@
         </div>
         <h1 id="loginTitle" data-i18n="login_panel_title">Ingresar al sistema</h1>
         <div class="subtitle" id="loginSubtitle" data-i18n="login_panel_subtitle">Acceso exclusivo para personal autorizado.</div>
+        <button class="auth-switch identity-provider-button" id="googleLoginLoginButton" type="button" disabled>
+          <span class="identity-provider-icon" aria-hidden="true">G</span>
+          <span id="googleLoginLoginLabel">Continuar con Google</span>
+          <span class="identity-provider-status hidden" id="googleLoginLoginStatus"></span>
+        </button>
+        <div class="auth-divider">ou</div>
         <div class="login-form">
           <select id="loginLanguage" title="Idioma">
             <option value="es">Español - México</option>
@@ -4802,6 +4808,9 @@
     let resendVerificationSeconds = 0;
     let pendingMfaChallenge = "";
     let pendingMfaSetupRequired = false;
+    let googleInitialized = false;
+    let googleInitializationPromise = null;
+    let googleLoginIntent = "signup";
     const pendingInviteToken = window.location.pathname.startsWith("/invite/")
       ? decodeURIComponent(window.location.pathname.slice("/invite/".length).split("/")[0] || "")
       : "";
@@ -4844,16 +4853,20 @@
     }
 
     function updateGoogleProviderButton() {
-      const button = document.getElementById("googleLoginButton");
-      const label = document.getElementById("googleLoginLabel");
-      const status = document.getElementById("googleLoginStatus");
       const configured = Boolean(authPublicConfig.google_client_id);
-      button.disabled = !configured;
-      label.textContent = configured ? "Registrarse con Google" : "Google pendiente de configuración";
-      status.textContent = configured ? "activo" : "pendiente";
-      button.title = configured
-        ? "Solicitar acceso con Google"
-        : "Configure GOOGLE_CLIENT_ID no Railway para ativar o cadastro com Google.";
+      [
+        ["googleLoginButton", "googleLoginLabel", "googleLoginStatus"],
+        ["googleLoginLoginButton", "googleLoginLoginLabel", "googleLoginLoginStatus"]
+      ].forEach(([buttonId, labelId, statusId]) => {
+        const button = document.getElementById(buttonId);
+        const label = document.getElementById(labelId);
+        const status = document.getElementById(statusId);
+        if (!button || !label || !status) return;
+        button.disabled = !configured;
+        label.textContent = configured ? t("googleContinue") : t("googlePending");
+        status.textContent = "";
+        button.title = configured ? t("googleContinue") : "Configure GOOGLE_CLIENT_ID para ativar o cadastro com Google.";
+      });
     }
 
     function updateAppleProviderButton() {
@@ -4861,8 +4874,8 @@
       const label = document.getElementById("appleLoginLabel");
       const status = document.getElementById("appleLoginStatus");
       button.disabled = true;
-      label.textContent = "Apple pendiente de configuración";
-      status.textContent = "pendiente";
+      label.textContent = t("applePending");
+      status.textContent = t("providerPending");
       button.title = "Cadastro com Apple exige Apple Developer, Services ID e chave privada Apple.";
     }
 
@@ -5230,6 +5243,12 @@
         login_submit: "Entrar",
         login_create_account: "Criar conta",
         login_authorized_only: "Acesso permitido somente para pessoal autorizado.",
+        googleContinue: "Continuar com Google",
+        googlePending: "Google pendente de configuração",
+        googlePendingApproval: "Seu e-mail foi confirmado. Seu acesso está aguardando aprovação.",
+        applePending: "Apple pendente de configuração",
+        providerActive: "ativo",
+        providerPending: "pendente",
         registerTitle: "Crear cuenta",
         registerSubtitle: "Regístrate para solicitar acceso a la operación.",
         fullNamePlaceholder: "Nombre completo",
@@ -5417,6 +5436,12 @@
         login_submit: "Sign in",
         login_create_account: "Create account",
         login_authorized_only: "Access permitted only to authorized personnel.",
+        googleContinue: "Continue with Google",
+        googlePending: "Google pending configuration",
+        googlePendingApproval: "Your email has been verified. Your access is awaiting approval.",
+        applePending: "Apple pending configuration",
+        providerActive: "active",
+        providerPending: "pending",
         registerTitle: "Create account",
         registerSubtitle: "Register to request access to the operation.",
         fullNamePlaceholder: "Full name",
@@ -5612,6 +5637,12 @@
         login_submit: "Ingresar",
         login_create_account: "Crear cuenta",
         login_authorized_only: "Acceso permitido solo para personal autorizado.",
+        googleContinue: "Continuar con Google",
+        googlePending: "Google pendiente de configuración",
+        googlePendingApproval: "Tu correo fue confirmado. Tu acceso está pendiente de aprobación.",
+        applePending: "Apple pendiente de configuración",
+        providerActive: "activo",
+        providerPending: "pendiente",
         registerTitle: "Crear cuenta",
         registerSubtitle: "Regístrate para solicitar acceso a la operación.",
         fullNamePlaceholder: "Nombre completo",
@@ -7277,6 +7308,8 @@
       renderThemeSelects();
 
       applyTranslations();
+      updateGoogleProviderButton();
+      updateAppleProviderButton();
       setText("#registerTitle", t("registerTitle"));
       setText("#registerSubtitle", t("registerSubtitle"));
       setText("#registerButton", t("registerButton"));
@@ -10007,7 +10040,8 @@
       await enterDashboard(data.user);
     }
 
-    async function googleLogin() {
+    async function googleLogin(intent = "signup") {
+      googleLoginIntent = intent;
       if (!authPublicConfig.google_client_id) {
         setAuthStatus("loginStatus", "Google Sign-In no está configurado.", "error");
         return;
@@ -10017,41 +10051,67 @@
         script.src = "https://accounts.google.com/gsi/client";
         script.async = true;
         script.defer = true;
-        script.onload = googleLogin;
+        script.onload = () => googleLogin(intent);
         document.head.appendChild(script);
         return;
       }
-      window.google.accounts.id.initialize({
-        client_id: authPublicConfig.google_client_id,
-        callback: async (credentialResponse) => {
-          const response = await fetch(`${API_BASE}/auth/google`, {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id_token: credentialResponse.credential, turnstile_token: turnstileToken("login") })
-          });
-          if (!response.ok) {
-            setAuthStatus("loginStatus", await responseMessage(response, "No fue posible entrar con Google."), "error");
-            return;
-          }
-          const data = await response.json();
-          if (data.mfa_required) {
-            showMfaForm({
-              challengeToken: data.mfa_challenge_token,
-              setupRequired: data.mfa_setup_required,
-              message: data.message
+      if (!googleInitialized) {
+        if (!googleInitializationPromise) {
+          googleInitializationPromise = (async () => {
+            const nonceParams = new URLSearchParams({ intent, ...(intent === "signup" && pendingInviteToken ? { invite_token: pendingInviteToken } : {}) });
+            const nonceResponse = await fetch(`${API_BASE}/auth/google/nonce?${nonceParams}`, { credentials: "include" });
+            if (!nonceResponse.ok) throw new Error("google_nonce_unavailable");
+            const { nonce } = await nonceResponse.json();
+            window.google.accounts.id.initialize({
+              client_id: authPublicConfig.google_client_id,
+              nonce,
+              callback: async (credentialResponse) => {
+                const response = await fetch(`${API_BASE}/auth/google`, {
+                  method: "POST",
+                  credentials: "include",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ id_token: credentialResponse.credential, intent: googleLoginIntent, invite_token: googleLoginIntent === "signup" ? (pendingInviteToken || null) : null, turnstile_token: turnstileToken("login") })
+                });
+                if (!response.ok) {
+                  const errorMessage = await responseMessage(response, "No fue posible entrar con Google.");
+                  if (googleLoginIntent === "login" && response.status === 403 && errorMessage.toLowerCase().includes("aprob")) {
+                    setAuthStatus("loginStatus", t("googlePendingApproval"), "error");
+                  } else {
+                    setAuthStatus("loginStatus", errorMessage, "error");
+                  }
+                  return;
+                }
+                const data = await response.json();
+                if (data.mfa_required) {
+                  showMfaForm({
+                    challengeToken: data.mfa_challenge_token,
+                    setupRequired: data.mfa_setup_required,
+                    message: data.message
+                  });
+                  return;
+                }
+                if (!data.access_token) {
+                  setAuthStatus("loginStatus", data.message || "Registro recibido y pendiente de aprobación.", "success");
+                  return;
+                }
+                accessToken = data.access_token;
+                localStorage.setItem("totalsolutions_access_token", accessToken);
+                await enterDashboard(data.user);
+              }
             });
-            return;
-          }
-          if (!data.access_token) {
-            setAuthStatus("loginStatus", data.message || "Registro recibido y pendiente de aprobación.", "success");
-            return;
-          }
-          accessToken = data.access_token;
-          localStorage.setItem("totalsolutions_access_token", accessToken);
-          await enterDashboard(data.user);
+            googleInitialized = true;
+          })().catch((error) => {
+            googleInitializationPromise = null;
+            throw error;
+          });
         }
-      });
+        try {
+          await googleInitializationPromise;
+        } catch (_error) {
+          setAuthStatus("loginStatus", "No fue posible iniciar el acceso con Google.", "error");
+          return;
+        }
+      }
       window.google.accounts.id.prompt();
     }
 
@@ -12036,7 +12096,8 @@
     document.getElementById("registerForm").addEventListener("submit", register);
     document.getElementById("reactivationForm").addEventListener("submit", requestReactivation);
     document.getElementById("recoveryForm").addEventListener("submit", requestPasswordRecovery);
-    document.getElementById("googleLoginButton").addEventListener("click", googleLogin);
+    document.getElementById("googleLoginButton").addEventListener("click", () => googleLogin("signup"));
+    document.getElementById("googleLoginLoginButton").addEventListener("click", () => googleLogin("login"));
     document.getElementById("showRegisterButton").addEventListener("click", showRegisterForm);
     document.getElementById("showReactivationButton").addEventListener("click", showReactivationForm);
     document.getElementById("showRecoveryButton").addEventListener("click", showRecoveryForm);

@@ -23,6 +23,8 @@ from app.core.auth_security import (
     clear_session_cookies,
     consume_recovery_code,
     create_mfa_challenge_token,
+    consume_google_nonce,
+    create_google_nonce,
     create_user_session,
     generate_recovery_codes,
     generate_totp_secret,
@@ -124,6 +126,11 @@ def public_config():
         google_client_id=os.getenv("GOOGLE_CLIENT_ID", "").strip() or None,
         public_signup_enabled=os.getenv("PUBLIC_SIGNUP_ENABLED", "true").strip().lower() != "false",
     )
+
+
+@router.get("/google/nonce")
+def google_nonce(response: Response, intent: str = "signup", invite_token: str | None = None, db: Session = Depends(get_db)):
+    return {"nonce": create_google_nonce(db, response, intent=intent, invite_token=invite_token)}
 
 
 def normalized_email(value: str) -> str:
@@ -1065,7 +1072,9 @@ def reset_password(payload: PasswordResetRequest, request: Request, db: Session 
 @router.post("/google", response_model=AuthResponse)
 def google_login(payload: GoogleLoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
     verify_turnstile_or_403(db, request, token=payload.turnstile_token, expected_action="google_login")
-    claims = validate_google_id_token_or_401(payload.id_token)
+    expected_nonce = consume_google_nonce(db, request.cookies.get("ts_google_nonce"), intent=payload.intent, invite_token=payload.invite_token)
+    claims = validate_google_id_token_or_401(payload.id_token, expected_nonce=expected_nonce)
+    response.delete_cookie("ts_google_nonce", path="/auth")
     provider_subject = claims["sub"]
     provider_email = str(claims.get("email", "")).strip().lower()
     identity = (
@@ -1074,17 +1083,28 @@ def google_login(payload: GoogleLoginRequest, request: Request, response: Respon
         .first()
     )
     if not identity:
+        if payload.intent == "login":
+            raise HTTPException(status_code=404, detail="Conta Google nao encontrada. Crie sua conta primeiro.")
+        invitation = invitation_for_token(db, payload.invite_token, lock=True) if payload.invite_token else None
+        if invitation and provider_email != invitation.invited_email:
+            raise HTTPException(status_code=403, detail="O convite foi enviado para outro e-mail")
         existing_email_user = db.query(User).filter(func.lower(User.email) == provider_email).first()
         if existing_email_user and existing_email_user.status != "ANONYMIZED":
             audit_auth_event(db, request=request, event_type="GOOGLE_LOGIN", outcome="LINK_REQUIRED", user=existing_email_user)
             db.commit()
             raise HTTPException(status_code=409, detail="Conta Google precisa ser vinculada após login seguro na conta atual.")
-        organization = create_independent_organization(
-            db,
-            name=claims.get("name") or provider_email,
-            country="MX",
-            pending_onboarding=True,
+        organization = (
+            db.query(Organization).filter(Organization.id == invitation.organization_id).first()
+            if invitation
+            else create_independent_organization(
+                db,
+                name=claims.get("name") or provider_email,
+                country="MX",
+                pending_onboarding=True,
+            )
         )
+        if not organization:
+            raise HTTPException(status_code=404, detail="Organização do convite não encontrada")
         user = User(
             organization_id=organization.id,
             username=provider_email,
@@ -1092,16 +1112,20 @@ def google_login(payload: GoogleLoginRequest, request: Request, response: Respon
             full_name=claims.get("name") or provider_email,
             profile_photo_url=claims.get("picture"),
             password_hash=hash_password(secrets.token_urlsafe(48)),
-            role="BROKER",
+            role=invitation.role if invitation else "BROKER",
+            manager_id=invitation.supervisor_user_id if invitation else None,
             email_verified=True,
             status="PENDING_ADMIN",
             is_active=False,
-            onboarding_source="STANDARD",
+            onboarding_source="INVITATION" if invitation else "STANDARD",
             registered_at=datetime.utcnow(),
         )
         db.add(user)
         db.flush()
-        ensure_user_commercial_profile(db, user, plan="FREE", source="PLATFORM_SIGNUP")
+        ensure_user_commercial_profile(db, user, plan="FREE", source="INVITATION" if invitation else "PLATFORM_SIGNUP")
+        if invitation:
+            invitation.status = "ACCEPTED"
+            invitation.accepted_at = datetime.utcnow()
         identity = UserIdentity(
             organization_id=user.organization_id,
             user_id=user.id,

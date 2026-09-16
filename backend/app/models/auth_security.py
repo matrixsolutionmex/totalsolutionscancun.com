@@ -94,3 +94,19 @@ class AuthRateLimit(Base):
     attempts = Column(Integer, nullable=False, default=0)
     blocked_until = Column(DateTime, nullable=True, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class AuthLoginAttempt(Base):
+    __tablename__ = "auth_login_attempts"
+    __table_args__ = (
+        UniqueConstraint("provider", "nonce_hash", name="uq_auth_login_attempt_provider_nonce"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    provider = Column(String(40), nullable=False, index=True)
+    intent = Column(String(20), nullable=False, index=True)
+    nonce_hash = Column(String(128), nullable=False, index=True)
+    context_hash = Column(String(128), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    consumed_at = Column(DateTime, nullable=True, index=True)

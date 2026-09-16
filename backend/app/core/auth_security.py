@@ -13,10 +13,11 @@ from uuid import uuid4
 import httpx
 from fastapi import HTTPException, Request, Response
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password, verify_password
-from app.models.auth_security import AuthAuditEvent, AuthRateLimit, MfaRecoveryCode, UserSession
+from app.models.auth_security import AuthAuditEvent, AuthLoginAttempt, AuthRateLimit, MfaRecoveryCode, UserSession
 from app.models.user import User
 
 try:
@@ -36,6 +37,8 @@ except ImportError:  # pragma: no cover
 AUTH_COOKIE_NAME = "ts_session"
 CSRF_COOKIE_NAME = "ts_csrf"
 MFA_CHALLENGE_TTL_SECONDS = 300
+GOOGLE_NONCE_TTL_SECONDS = 300
+GOOGLE_NONCE_COOKIE_NAME = "ts_google_nonce"
 RATE_LIMIT_CLEANUP_AFTER_SECONDS = 86400
 
 
@@ -494,7 +497,82 @@ def otpauth_url(user: User, secret: str) -> str:
     return f"otpauth://totp/{quote(label)}?secret={secret}&issuer={quote(issuer)}&algorithm=SHA1&digits=6&period=30"
 
 
-def validate_google_id_token_or_401(token: str) -> dict:
+def _google_nonce_secret() -> str:
+    return os.getenv("AUTH_AUDIT_PEPPER", os.getenv("JWT_SECRET_KEY", "dev-pepper"))
+
+
+def create_google_nonce(db: Session, response: Response, *, intent: str, invite_token: str | None = None) -> str:
+    if intent not in {"login", "signup"}:
+        raise HTTPException(status_code=400, detail="Intent Google invalido")
+    nonce = secrets.token_urlsafe(32)
+    expires_at = now_utc() + timedelta(seconds=GOOGLE_NONCE_TTL_SECONDS)
+    context_hash = scoped_hmac_value("google_nonce_context", invite_token or "")
+    db.add(AuthLoginAttempt(
+        provider="google",
+        intent=intent,
+        nonce_hash=hash_value(nonce),
+        context_hash=context_hash,
+        expires_at=expires_at,
+    ))
+    db.flush()
+    payload = {
+        "nonce": nonce,
+        "iat": int(time.time()),
+        "exp": int(expires_at.timestamp()),
+        "purpose": "google_gis",
+        "intent": intent,
+        "context": context_hash,
+    }
+    encoded = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
+    signature = hmac.new(_google_nonce_secret().encode(), f"google_nonce:{encoded}".encode(), hashlib.sha256).hexdigest()
+    token = f"{encoded}.{signature}"
+    secure = os.getenv("COOKIE_SECURE", "true").lower() != "false"
+    response.set_cookie(
+        GOOGLE_NONCE_COOKIE_NAME,
+        token,
+        httponly=True,
+        secure=secure,
+        samesite=os.getenv("COOKIE_SAMESITE", "lax").lower(),
+        max_age=GOOGLE_NONCE_TTL_SECONDS,
+        path="/auth",
+    )
+    return nonce
+
+
+def consume_google_nonce(db: Session, cookie_value: str | None, *, intent: str, invite_token: str | None = None) -> str:
+    if not cookie_value or "." not in cookie_value:
+        raise HTTPException(status_code=401, detail="Nonce Google ausente ou expirado")
+    encoded, signature = cookie_value.rsplit(".", 1)
+    expected = hmac.new(_google_nonce_secret().encode(), f"google_nonce:{encoded}".encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        raise HTTPException(status_code=401, detail="Nonce Google invalido")
+    try:
+        padded = encoded + "=" * (-len(encoded) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded).decode())
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=401, detail="Nonce Google invalido") from exc
+    context_hash = scoped_hmac_value("google_nonce_context", invite_token or "")
+    if payload.get("purpose") != "google_gis" or payload.get("intent") != intent or payload.get("context") != context_hash or int(payload.get("exp", 0)) < int(time.time()) or not payload.get("nonce"):
+        raise HTTPException(status_code=401, detail="Nonce Google ausente ou expirado")
+    result = db.execute(
+        update(AuthLoginAttempt)
+        .where(
+            AuthLoginAttempt.provider == "google",
+            AuthLoginAttempt.intent == intent,
+            AuthLoginAttempt.nonce_hash == hash_value(str(payload["nonce"])),
+            AuthLoginAttempt.context_hash == context_hash,
+            AuthLoginAttempt.consumed_at.is_(None),
+            AuthLoginAttempt.expires_at > now_utc(),
+        )
+        .values(consumed_at=now_utc())
+    )
+    if result.rowcount != 1:
+        raise HTTPException(status_code=401, detail="Nonce Google ja utilizado ou expirado")
+    db.commit()
+    return str(payload["nonce"])
+
+
+def validate_google_id_token_or_401(token: str, expected_nonce: str | None = None) -> dict:
     client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
     if not client_id:
         raise HTTPException(status_code=503, detail="Google Sign-In nao configurado")
@@ -518,6 +596,8 @@ def validate_google_id_token_or_401(token: str) -> dict:
         raise HTTPException(status_code=401, detail="Email Google nao verificado")
     if not payload.get("sub"):
         raise HTTPException(status_code=401, detail="Identidade Google invalida")
+    if expected_nonce is not None and not hmac.compare_digest(str(payload.get("nonce", "")), expected_nonce):
+        raise HTTPException(status_code=401, detail="Nonce Google invalido")
     exp = int(payload.get("exp", 0))
     if exp and exp < int(time.time()):
         raise HTTPException(status_code=401, detail="Token Google expirado")

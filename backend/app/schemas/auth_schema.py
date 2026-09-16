@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel
 
 from app.schemas.user_schema import UserResponse
@@ -119,4 +121,6 @@ class PasswordResetRequest(BaseModel):
 
 class GoogleLoginRequest(BaseModel):
     id_token: str
+    intent: Literal["login", "signup"] = "signup"
+    invite_token: str | None = None
     turnstile_token: str | None = None

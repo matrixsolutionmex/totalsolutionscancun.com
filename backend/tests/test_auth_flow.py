@@ -37,7 +37,7 @@ from app.core import auth_security
 from app.core.auth_security import hash_value, hotp, totp_counter, verify_mfa_challenge_token
 from app.core.security import hash_password
 from app.database.connection import Base
-from app.models.auth_security import AuthAuditEvent, AuthRateLimit, MfaRecoveryCode, PasswordResetToken, UserIdentity, UserSession
+from app.models.auth_security import AuthAuditEvent, AuthLoginAttempt, AuthRateLimit, MfaRecoveryCode, PasswordResetToken, UserIdentity, UserSession
 from app.models.lead import Lead
 from app.models.notification import EmailOutbox, Notification, NotificationPreference, WebPushSubscription
 from app.models.organization import Organization
@@ -129,15 +129,18 @@ def create_test_session():
             MfaRecoveryCode.__table__,
             AuthAuditEvent.__table__,
             AuthRateLimit.__table__,
+            AuthLoginAttempt.__table__,
         ],
     )
     return sessionmaker(bind=engine)()
 
 
-def make_request(path="/auth/login", *, client_host="127.0.0.1", headers=None):
+def make_request(path="/auth/login", *, client_host="127.0.0.1", headers=None, cookies=None):
     raw_headers = [(b"user-agent", b"pytest")]
     for key, value in (headers or {}).items():
         raw_headers.append((key.lower().encode("latin-1"), value.encode("latin-1")))
+    if cookies:
+        raw_headers.append((b"cookie", "; ".join(f"{key}={value}" for key, value in cookies.items()).encode("latin-1")))
     return Request(
         {
             "type": "http",
@@ -151,6 +154,30 @@ def make_request(path="/auth/login", *, client_host="127.0.0.1", headers=None):
             "client": (client_host, 12345),
         }
     )
+
+
+def google_request_with_nonce(payload, db, *, intent="signup", invite_token=None):
+    nonce_response = Response()
+    nonce = auth_security.create_google_nonce(db, nonce_response, intent=intent, invite_token=invite_token)
+    payload["nonce"] = nonce
+    cookie = nonce_response.headers["set-cookie"].split(";", 1)[0].split("=", 1)[1]
+    return make_request("/auth/google", cookies={auth_security.GOOGLE_NONCE_COOKIE_NAME: cookie})
+
+
+def test_google_nonce_is_signed_short_lived_and_cleared_after_validation(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    session = create_test_session()
+    response = Response()
+    nonce = auth_security.create_google_nonce(session, response, intent="login")
+    cookie = response.headers["set-cookie"].split(";", 1)[0].split("=", 1)[1]
+    assert auth_security.consume_google_nonce(session, cookie, intent="login") == nonce
+    with pytest.raises(HTTPException) as replay:
+        auth_security.consume_google_nonce(session, cookie, intent="login")
+    assert replay.value.status_code == 401
+    with pytest.raises(HTTPException) as invalid:
+        auth_security.consume_google_nonce(session, f"{cookie}tampered", intent="login")
+    assert invalid.value.status_code == 401
+    session.close()
 
 
 class CapturingSMTP:
@@ -1712,14 +1739,16 @@ def test_google_login_never_auto_links_existing_email(monkeypatch):
         "email_verified": True,
         "name": "Same User",
     }
+    first_request = google_request_with_nonce(google_payload, session)
     with pytest.raises(HTTPException) as blocked:
-        google_login(GoogleLoginRequest(id_token=__import__("json").dumps(google_payload)), make_request("/auth/google"), Response(), session)
+        google_login(GoogleLoginRequest(id_token=__import__("json").dumps(google_payload)), first_request, Response(), session)
     assert blocked.value.status_code == 409
     assert session.query(UserIdentity).count() == 0
 
     google_payload["email"] = "new-google@example.com"
     google_payload["sub"] = "google-sub-2"
-    response = google_login(GoogleLoginRequest(id_token=__import__("json").dumps(google_payload)), make_request("/auth/google"), Response(), session)
+    second_request = google_request_with_nonce(google_payload, session)
+    response = google_login(GoogleLoginRequest(id_token=__import__("json").dumps(google_payload)), second_request, Response(), session)
     assert response.access_token is None
     pending = session.query(User).filter(User.email == "new-google@example.com").one()
     assert pending.status == "PENDING_ADMIN"
@@ -1729,6 +1758,98 @@ def test_google_login_never_auto_links_existing_email(monkeypatch):
     assert organization.is_platform_owner is not True
     assert session.query(UserIdentity).filter_by(user_id=pending.id, provider="google").count() == 1
     assert existing.status == "ACTIVE"
+    session.close()
+
+
+def test_google_login_intent_does_not_create_new_identity_or_organization(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("AUTH_SECURITY_TEST_MODE", "true")
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "google-client-id")
+    session = create_test_session()
+    payload = {
+        "iss": "https://accounts.google.com",
+        "aud": "google-client-id",
+        "exp": 4102444800,
+        "sub": "google-login-only-sub",
+        "email": "login-only@example.com",
+        "email_verified": True,
+    }
+    request = google_request_with_nonce(payload, session, intent="login")
+    with pytest.raises(HTTPException) as blocked:
+        google_login(
+            GoogleLoginRequest(id_token=json.dumps(payload), intent="login"),
+            request,
+            Response(),
+            session,
+        )
+    assert blocked.value.status_code == 404
+    assert session.query(User).filter(User.email == payload["email"]).count() == 0
+    assert session.query(Organization).count() == 0
+    session.close()
+
+
+def test_google_login_invitation_preserves_tenant_role_and_is_idempotent(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("AUTH_SECURITY_TEST_MODE", "true")
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "google-client-id")
+    session = create_test_session()
+    root = make_user(session, "google-invite-root", "ROOT")
+    organization = create_independent_organization(session, name="Google Invite Org", pending_onboarding=False)
+    manager = make_user(
+        session,
+        "google-invite-manager",
+        "GERENTE",
+        organization_id=organization.id,
+    )
+    invitation, raw_token = create_invitation(
+        session,
+        organization=organization,
+        invited_by=root,
+        invited_email="google-invite@example.com",
+        role="BROKER",
+        supervisor_user_id=manager.id,
+    )
+    session.commit()
+    payload = {
+        "iss": "https://accounts.google.com",
+        "aud": "google-client-id",
+        "exp": 4102444800,
+        "sub": "google-invite-sub",
+        "email": "google-invite@example.com",
+        "email_verified": True,
+        "name": "Google Invite",
+    }
+    first_request = google_request_with_nonce(payload, session, intent="signup", invite_token=raw_token)
+
+    first = google_login(
+        GoogleLoginRequest(id_token=__import__("json").dumps(payload), invite_token=raw_token),
+        first_request,
+        Response(),
+        session,
+    )
+    user = session.query(User).filter(User.email == payload["email"]).one()
+    assert first.access_token is None
+    assert user.organization_id == organization.id
+    assert user.role == "BROKER"
+    assert user.manager_id == manager.id
+    assert user.onboarding_source == "INVITATION"
+    assert user.email_verified is True
+    assert session.query(Organization).count() == 1
+    assert session.query(UserIdentity).filter_by(provider="google", provider_subject=payload["sub"]).count() == 1
+    assert invitation.status == "ACCEPTED"
+
+    with pytest.raises(HTTPException) as pending:
+        retry_request = google_request_with_nonce(payload, session, intent="signup", invite_token=raw_token)
+        google_login(
+            GoogleLoginRequest(id_token=__import__("json").dumps(payload), invite_token=raw_token),
+            retry_request,
+            Response(),
+            session,
+        )
+    assert pending.value.status_code == 403
+    assert session.query(Organization).count() == 1
+    assert session.query(User).filter(User.email == payload["email"]).count() == 1
+    assert session.query(UserIdentity).filter_by(provider="google", provider_subject=payload["sub"]).count() == 1
     session.close()
 
 
