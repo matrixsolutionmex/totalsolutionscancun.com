@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, text
@@ -16,7 +16,7 @@ from app.core.organization import get_or_create_default_organization
 from app.core.storage import UPLOADS_DIR
 from app.auth.routes import router as auth_router
 from app.database.connection import Base, SessionLocal, engine
-from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, service_order_tracking, deletion_request, notification, user_lifecycle, auth_security, organization, organization_invitation, referral_attribution, service_property, service_request, service_opportunity, organization_marketplace_link, commercial_subscription, commercial_upgrade_intent, user_commercial_profile, pricing_rate, payment, service_order_financial, service_order_ledger_entry, visit_pricing_snapshot, organization_payment_policy, service_order_diagnosis, service_order_quote, service_order_payment_plan, service_order_installment_release_event, service_order_completion, service_order_warranty_claim, service_order_review, technician_skill, segmentation_referral, professional_application
+from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, service_order_tracking, deletion_request, notification, user_lifecycle, auth_security, organization, organization_invitation, referral_attribution, service_property, service_request, service_opportunity, organization_marketplace_link, commercial_subscription, commercial_upgrade_intent, user_commercial_profile, pricing_rate, payment, service_order_financial, service_order_ledger_entry, visit_pricing_snapshot, organization_payment_policy, service_order_diagnosis, service_order_quote, service_order_payment_plan, service_order_installment_release_event, service_order_completion, service_order_warranty_claim, service_order_review, technician_skill, segmentation_referral, professional_application, professional_network
 from app.models.lead import Lead
 from app.models.service_order import ServiceOrder
 from app.models.user import User
@@ -28,6 +28,7 @@ from app.routes.lead_document_routes import router as lead_document_router
 from app.routes.notification_routes import router as notification_router
 from app.routes.public_service_request_routes import router as public_service_request_router
 from app.routes.professional_application_routes import router as professional_application_router
+from app.routes.professional_network_routes import router as professional_network_router
 from app.routes.pablo_routes import router as pablo_router
 from app.routes.segmentation_referral_routes import router as segmentation_referral_router
 from app.routes.service_request_routes import router as service_request_router
@@ -96,6 +97,7 @@ app.include_router(contract_router)
 app.include_router(organization_router)
 app.include_router(public_service_request_router)
 app.include_router(professional_application_router)
+app.include_router(professional_network_router)
 app.include_router(service_request_router)
 app.include_router(marketplace_router)
 app.include_router(commercial_router)
@@ -120,6 +122,8 @@ app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
+    if request.url.path.startswith("/uploads/professional-applications/"):
+        return JSONResponse(status_code=404, content={"detail": "Archivo no encontrado"})
     response = await call_next(request)
     no_store_paths = {"/", "/sw.js", "/solicitar-servico"}
     if request.url.path in no_store_paths or request.url.path.startswith(("/m/", "/acompanhar/", "/seguimiento/")):
