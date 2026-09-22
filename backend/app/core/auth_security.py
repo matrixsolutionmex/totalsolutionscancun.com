@@ -502,7 +502,7 @@ def _google_nonce_secret() -> str:
 
 
 def create_google_nonce(db: Session, response: Response, *, intent: str, invite_token: str | None = None) -> str:
-    if intent not in {"login", "signup"}:
+    if intent not in {"login", "signup", "continue"}:
         raise HTTPException(status_code=400, detail="Intent Google invalido")
     nonce = secrets.token_urlsafe(32)
     expires_at = now_utc() + timedelta(seconds=GOOGLE_NONCE_TTL_SECONDS)

@@ -3628,7 +3628,26 @@
       </div>
     </div>
     <div class="login-panel">
-      <form class="login-card" id="loginForm" autocomplete="off">
+      <form class="login-card auth-gateway-card" id="authGatewayForm" autocomplete="off">
+        <div class="brand-lockup compact" aria-label="Total Solutions">
+          <img class="brand-logo" src="/assets/assets/favicon.svg" alt="">
+          <div class="brand-wordmark"><span>Total</span><span>Solutions</span><small data-i18n="auth_gateway_brand_subtitle">Operación segura</small></div>
+        </div>
+        <h1 data-i18n="auth_gateway_title">Entrar ou criar uma conta</h1>
+        <div class="subtitle" data-i18n="auth_gateway_subtitle">Acesse sua conta ou solicite um novo acesso.</div>
+        <div class="google-gis-button" id="googleContinueButton" aria-label="Continuar com Google"></div>
+        <div class="auth-divider" data-i18n="auth_gateway_or">ou</div>
+        <div class="login-form">
+          <label for="authGatewayEmail" data-i18n="auth_gateway_email_label">E-mail</label>
+          <input id="authGatewayEmail" type="email" autocomplete="email" data-i18n-placeholder="auth_gateway_email_placeholder" placeholder="E-mail">
+          <button id="authGatewayContinue" type="button" data-i18n="auth_gateway_continue">Continuar</button>
+        </div>
+        <button class="auth-switch" id="authGatewayPassword" type="button" data-i18n="auth_gateway_password">Entrar com usuário e senha</button>
+        <button class="auth-switch" id="authGatewayRecovery" type="button" data-i18n="auth_recovery">Recuperar acesso</button>
+        <button class="auth-switch" id="authGatewayReactivation" type="button" data-i18n="auth_reactivation">Solicitar reativação</button>
+        <div class="auth-status" id="authGatewayStatus" aria-live="polite"></div>
+      </form>
+      <form class="login-card hidden" id="loginForm" autocomplete="off">
         <div class="brand-lockup compact" aria-label="Total Solutions">
           <img class="brand-logo" src="/assets/assets/favicon.svg" alt="">
           <div class="brand-wordmark">
@@ -3709,7 +3728,7 @@
         <div class="subtitle hidden" id="registerInviteSummary"></div>
         <div class="login-form">
           <div class="google-gis-button" id="googleLoginButton" aria-label="Registrarse con Google"></div>
-          <button class="auth-switch identity-provider-button" id="appleLoginButton" type="button">
+          <button class="auth-switch identity-provider-button hidden" id="appleLoginButton" type="button">
             <span class="identity-provider-icon apple" aria-hidden="true"></span>
             <span id="appleLoginLabel">Registrarse con Apple</span>
             <span class="identity-provider-status" id="appleLoginStatus">pendiente</span>
@@ -4827,6 +4846,9 @@
     let googleLoginIntent = "signup";
     let googleRenderedIntent = null;
     let googleRenderSequence = 0;
+    let googleNonceState = null;
+    let googleNonceRefreshTimer = null;
+    let googleCredentialInFlight = false;
     const pendingInviteToken = window.location.pathname.startsWith("/invite/")
       ? decodeURIComponent(window.location.pathname.slice("/invite/".length).split("/")[0] || "")
       : "";
@@ -4864,7 +4886,7 @@
       updateGoogleProviderButton();
       updateAppleProviderButton();
       if (authPublicConfig.google_client_id) {
-        googleLogin("login").catch(() => setAuthStatus("loginStatus", "No fue posible iniciar el acceso con Google.", "error"));
+        googleLogin("continue").catch(() => setAuthStatus("authGatewayStatus", "No fue posible iniciar el acceso con Google.", "error"));
       }
       if (authPublicConfig.turnstile_site_key) {
         loadTurnstileScript();
@@ -4874,7 +4896,7 @@
     function updateGoogleProviderButton() {
       const configured = Boolean(authPublicConfig.google_client_id);
       [
-        ["googleLoginButton", "googleLoginLoginButton"]
+        ["googleContinueButton", "googleLoginButton", "googleLoginLoginButton"]
       ].forEach(([buttonId]) => {
         const button = document.getElementById(buttonId);
         if (!button) return;
@@ -4888,10 +4910,9 @@
       const button = document.getElementById("appleLoginButton");
       const label = document.getElementById("appleLoginLabel");
       const status = document.getElementById("appleLoginStatus");
+      if (!button) return;
       button.disabled = true;
-      label.textContent = t("applePending");
-      status.textContent = t("providerPending");
-      button.title = "Cadastro com Apple exige Apple Developer, Services ID e chave privada Apple.";
+      button.classList.add("hidden");
     }
 
     function loadTurnstileScript() {
@@ -4988,6 +5009,7 @@
     }
 
     function showLoginForm() {
+      document.getElementById("authGatewayForm").classList.add("hidden");
       document.getElementById("registerForm").classList.add("hidden");
       document.getElementById("emailVerificationForm").classList.add("hidden");
       document.getElementById("reactivationForm").classList.add("hidden");
@@ -5000,6 +5022,55 @@
       setAuthStatus("reactivationStatus");
       setAuthStatus("recoveryStatus");
       setAuthStatus("mfaStatus");
+    }
+
+    function showAuthGateway() {
+      ["loginForm", "registerForm", "emailVerificationForm", "reactivationForm", "recoveryForm", "mfaForm"].forEach((id) => document.getElementById(id)?.classList.add("hidden"));
+      document.getElementById("authGatewayForm")?.classList.remove("hidden");
+      googleLogin("continue").catch(() => {});
+      ["authGatewayStatus", "loginStatus", "registerStatus", "emailVerificationStatus", "reactivationStatus", "recoveryStatus", "mfaStatus"].forEach((id) => setAuthStatus(id));
+    }
+
+    function clearGoogleNonceRefreshTimer() {
+      if (googleNonceRefreshTimer) {
+        window.clearTimeout(googleNonceRefreshTimer);
+        googleNonceRefreshTimer = null;
+      }
+    }
+
+    function scheduleGoogleNonceRefresh(intent, sequence) {
+      clearGoogleNonceRefreshTimer();
+      if (!googleNonceState || googleNonceState.sequence !== sequence) return;
+      const refreshIn = Math.max(1000, googleNonceState.expiresAt - Date.now() - 60000);
+      googleNonceRefreshTimer = window.setTimeout(() => {
+        if (sequence !== googleRenderSequence || document.hidden) return;
+        googleLogin(intent, { force: true }).catch(() => {});
+      }, refreshIn);
+    }
+
+    function googleAuthContextNeedsRefresh() {
+      return !googleNonceState || googleNonceState.expiresAt - Date.now() <= 60000;
+    }
+
+    function refreshGoogleAuthContext() {
+      if (document.hidden || !authPublicConfig.google_client_id || !googleAuthContextNeedsRefresh()) return;
+      const container = document.getElementById(
+        googleLoginIntent === "continue" ? "googleContinueButton" : googleLoginIntent === "login" ? "googleLoginLoginButton" : "googleLoginButton"
+      );
+      if (!container || container.closest(".hidden")) return;
+      googleLogin(googleLoginIntent, { force: true }).catch(() => {});
+    }
+
+    function continueWithEmail() {
+      const email = document.getElementById("authGatewayEmail").value.trim();
+      if (!email || !email.includes("@")) {
+        setAuthStatus("authGatewayStatus", t("auth_gateway_invalid_email"), "error");
+        return;
+      }
+      document.getElementById("loginUser").value = email;
+      document.getElementById("registerEmail").value = email;
+      showLoginForm();
+      setAuthStatus("loginStatus", t("auth_gateway_email_next"), "success");
     }
 
     async function loadPendingInvitation() {
@@ -5025,6 +5096,7 @@
         setAuthStatus("loginStatus", t("signupDisabled"), "error");
         return;
       }
+      document.getElementById("authGatewayForm").classList.add("hidden");
       document.getElementById("loginForm").classList.add("hidden");
       document.getElementById("emailVerificationForm").classList.add("hidden");
       document.getElementById("reactivationForm").classList.add("hidden");
@@ -5043,6 +5115,7 @@
     }
 
     function showReactivationForm() {
+      document.getElementById("authGatewayForm").classList.add("hidden");
       document.getElementById("loginForm").classList.add("hidden");
       document.getElementById("registerForm").classList.add("hidden");
       document.getElementById("emailVerificationForm").classList.add("hidden");
@@ -5054,6 +5127,7 @@
     }
 
     function showRecoveryForm() {
+      document.getElementById("authGatewayForm").classList.add("hidden");
       document.getElementById("loginForm").classList.add("hidden");
       document.getElementById("registerForm").classList.add("hidden");
       document.getElementById("emailVerificationForm").classList.add("hidden");
@@ -5067,6 +5141,7 @@
     function showMfaForm({ challengeToken, setupRequired, message }) {
       pendingMfaChallenge = challengeToken || "";
       pendingMfaSetupRequired = Boolean(setupRequired);
+      document.getElementById("authGatewayForm").classList.add("hidden");
       document.getElementById("loginForm").classList.add("hidden");
       document.getElementById("registerForm").classList.add("hidden");
       document.getElementById("emailVerificationForm").classList.add("hidden");
@@ -5260,9 +5335,22 @@
         login_submit: "Entrar",
         login_create_account: "Criar conta",
         login_authorized_only: "Acesso permitido somente para pessoal autorizado.",
+        auth_gateway_brand_subtitle: "Operação segura",
+        auth_gateway_title: "Entrar ou criar uma conta",
+        auth_gateway_subtitle: "Acesse sua conta ou solicite um novo acesso.",
+        auth_gateway_or: "ou",
+        auth_gateway_email_label: "E-mail",
+        auth_gateway_email_placeholder: "E-mail",
+        auth_gateway_continue: "Continuar",
+        auth_gateway_password: "Entrar com usuário e senha",
+        auth_gateway_invalid_email: "Informe um e-mail válido.",
+        auth_gateway_email_next: "Confira seus dados para continuar.",
+        auth_recovery: "Recuperar acesso",
+        auth_reactivation: "Solicitar reativação",
         googleContinue: "Continuar com Google",
         googlePending: "Google pendente de configuração",
         googlePendingApproval: "Seu e-mail foi confirmado. Seu acesso está aguardando aprovação.",
+        googleSessionExpired: "Sua sessão de login com Google expirou. Tente novamente.",
         applePending: "Apple pendente de configuração",
         providerActive: "ativo",
         providerPending: "pendente",
@@ -5453,9 +5541,22 @@
         login_submit: "Sign in",
         login_create_account: "Create account",
         login_authorized_only: "Access permitted only to authorized personnel.",
+        auth_gateway_brand_subtitle: "Secure operations",
+        auth_gateway_title: "Sign in or create an account",
+        auth_gateway_subtitle: "Access your account or request new access.",
+        auth_gateway_or: "or",
+        auth_gateway_email_label: "Email",
+        auth_gateway_email_placeholder: "Email",
+        auth_gateway_continue: "Continue",
+        auth_gateway_password: "Sign in with username and password",
+        auth_gateway_invalid_email: "Enter a valid email.",
+        auth_gateway_email_next: "Review your details to continue.",
+        auth_recovery: "Recover access",
+        auth_reactivation: "Request reactivation",
         googleContinue: "Continue with Google",
         googlePending: "Google pending configuration",
         googlePendingApproval: "Your email has been verified. Your access is awaiting approval.",
+        googleSessionExpired: "Your Google sign-in session expired. Please try again.",
         applePending: "Apple pending configuration",
         providerActive: "active",
         providerPending: "pending",
@@ -5654,9 +5755,22 @@
         login_submit: "Ingresar",
         login_create_account: "Crear cuenta",
         login_authorized_only: "Acceso permitido solo para personal autorizado.",
+        auth_gateway_brand_subtitle: "Operación segura",
+        auth_gateway_title: "Inicia sesión o crea una cuenta",
+        auth_gateway_subtitle: "Accede a tu cuenta o solicita un nuevo acceso.",
+        auth_gateway_or: "o",
+        auth_gateway_email_label: "Correo electrónico",
+        auth_gateway_email_placeholder: "Correo electrónico",
+        auth_gateway_continue: "Continuar",
+        auth_gateway_password: "Entrar con usuario y contraseña",
+        auth_gateway_invalid_email: "Ingresa un correo válido.",
+        auth_gateway_email_next: "Revisa tus datos para continuar.",
+        auth_recovery: "Recuperar acceso",
+        auth_reactivation: "Solicitar reactivación",
         googleContinue: "Continuar con Google",
         googlePending: "Google pendiente de configuración",
         googlePendingApproval: "Tu correo fue confirmado. Tu acceso está pendiente de aprobación.",
+        googleSessionExpired: "Tu sesión de acceso con Google expiró. Inténtalo de nuevo.",
         applePending: "Apple pendiente de configuración",
         providerActive: "activo",
         providerPending: "pendiente",
@@ -10057,52 +10171,69 @@
       await enterDashboard(data.user);
     }
 
-    async function handleGoogleCredential(credentialResponse, intent) {
-      const response = await fetch(`${API_BASE}/auth/google`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id_token: credentialResponse.credential,
-          intent,
-          invite_token: intent === "signup" ? (pendingInviteToken || null) : null,
-          turnstile_token: turnstileToken("login")
-        })
-      });
-      if (!response.ok) {
-        const errorMessage = await responseMessage(response, "No fue posible entrar con Google.");
-        if (intent === "login" && response.status === 403 && errorMessage.toLowerCase().includes("aprob")) {
-          setAuthStatus("loginStatus", t("googlePendingApproval"), "error");
-        } else {
-          setAuthStatus("loginStatus", errorMessage, "error");
-        }
-        return;
-      }
-      const data = await response.json();
-      if (data.mfa_required) {
-        showMfaForm({
-          challengeToken: data.mfa_challenge_token,
-          setupRequired: data.mfa_setup_required,
-          message: data.message
+    async function handleGoogleCredential(credentialResponse, intent, sequence) {
+      if (sequence !== googleRenderSequence || googleCredentialInFlight) return;
+      googleCredentialInFlight = true;
+      const statusId = intent === "continue" ? "authGatewayStatus" : "loginStatus";
+      try {
+        const response = await fetch(`${API_BASE}/auth/google`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id_token: credentialResponse.credential,
+            intent,
+            invite_token: ["signup", "continue"].includes(intent) ? (pendingInviteToken || null) : null,
+            turnstile_token: turnstileToken("login")
+          })
         });
-        return;
+        if (!response.ok) {
+          const errorMessage = await responseMessage(response, "No fue posible entrar con Google.");
+          const lowerMessage = errorMessage.toLowerCase();
+          if (lowerMessage.includes("nonce google") || lowerMessage.includes("nonce")) {
+            setAuthStatus(statusId, t("googleSessionExpired"), "error");
+          } else if (["login", "continue"].includes(intent) && response.status === 403 && lowerMessage.includes("aprob")) {
+            setAuthStatus(statusId, t("googlePendingApproval"), "error");
+          } else {
+            setAuthStatus(statusId, errorMessage, "error");
+          }
+          await googleLogin(intent, { force: true });
+          return;
+        }
+        const data = await response.json();
+        if (data.mfa_required) {
+          showMfaForm({
+            challengeToken: data.mfa_challenge_token,
+            setupRequired: data.mfa_setup_required,
+            message: data.message
+          });
+          return;
+        }
+        if (!data.access_token) {
+          setAuthStatus(statusId, data.message || "Registro recibido y pendiente de aprobación.", "success");
+          await googleLogin(intent, { force: true });
+          return;
+        }
+        accessToken = data.access_token;
+        localStorage.setItem("totalsolutions_access_token", accessToken);
+        await enterDashboard(data.user);
+      } catch (_error) {
+        setAuthStatus(statusId, "No fue posible iniciar el acceso con Google.", "error");
+        await googleLogin(intent, { force: true }).catch(() => {});
+      } finally {
+        googleCredentialInFlight = false;
       }
-      if (!data.access_token) {
-        setAuthStatus("loginStatus", data.message || "Registro recibido y pendiente de aprobación.", "success");
-        return;
-      }
-      accessToken = data.access_token;
-      localStorage.setItem("totalsolutions_access_token", accessToken);
-      await enterDashboard(data.user);
     }
 
-    async function googleLogin(intent = "signup") {
-      if (!new Set(["login", "signup"]).has(intent)) return;
+    async function googleLogin(intent = "signup", { force = false } = {}) {
+      if (!new Set(["login", "signup", "continue"]).has(intent)) return;
       googleLoginIntent = intent;
       const sequence = ++googleRenderSequence;
-      const container = document.getElementById(intent === "login" ? "googleLoginLoginButton" : "googleLoginButton");
+      const container = document.getElementById(intent === "continue" ? "googleContinueButton" : intent === "login" ? "googleLoginLoginButton" : "googleLoginButton");
       if (!authPublicConfig.google_client_id || !container) return;
-      if (googleRenderedIntent === intent && container.querySelector("iframe")) return;
+      if (!force && googleRenderedIntent === intent && container.querySelector("iframe") && !googleAuthContextNeedsRefresh()) return;
+      clearGoogleNonceRefreshTimer();
+      googleNonceState = null;
       if (!window.google?.accounts?.id) {
         if (!googleInitializationPromise) {
           googleInitializationPromise = new Promise((resolve, reject) => {
@@ -10118,7 +10249,7 @@
         try {
           await googleInitializationPromise;
         } catch (_error) {
-          setAuthStatus("loginStatus", "No fue posible iniciar el acceso con Google.", "error");
+          setAuthStatus(intent === "continue" ? "authGatewayStatus" : "loginStatus", "No fue posible iniciar el acceso con Google.", "error");
           return;
         }
       }
@@ -10127,30 +10258,33 @@
         window.google.accounts.id.cancel();
         googleInitialized = false;
         googleRenderedIntent = null;
+        document.getElementById("googleContinueButton")?.replaceChildren();
         document.getElementById("googleLoginButton")?.replaceChildren();
         document.getElementById("googleLoginLoginButton")?.replaceChildren();
       }
-      const nonceParams = new URLSearchParams({ intent, ...(intent === "signup" && pendingInviteToken ? { invite_token: pendingInviteToken } : {}) });
+      const nonceParams = new URLSearchParams({ intent, ...(["signup", "continue"].includes(intent) && pendingInviteToken ? { invite_token: pendingInviteToken } : {}) });
       const nonceResponse = await fetch(`${API_BASE}/auth/google/nonce?${nonceParams}`, { credentials: "include" });
       if (!nonceResponse.ok || sequence !== googleRenderSequence) throw new Error("google_nonce_unavailable");
       const { nonce } = await nonceResponse.json();
       window.google.accounts.id.initialize({
         client_id: authPublicConfig.google_client_id,
         nonce,
-        callback: (credentialResponse) => handleGoogleCredential(credentialResponse, intent)
+        callback: (credentialResponse) => handleGoogleCredential(credentialResponse, intent, sequence)
       });
       container.replaceChildren();
       window.google.accounts.id.renderButton(container, {
         type: "standard",
         theme: "outline",
         size: "large",
-        text: intent === "login" ? "signin_with" : "signup_with",
+        text: intent === "signup" ? "signup_with" : "signin_with",
         shape: "rectangular",
         logo_alignment: "left",
         width: Math.min(Math.max(container.clientWidth || 360, 240), 400)
       });
       googleInitialized = true;
       googleRenderedIntent = intent;
+      googleNonceState = { intent, sequence, issuedAt: Date.now(), expiresAt: Date.now() + 240000 };
+      scheduleGoogleNonceRefresh(intent, sequence);
     }
 
     async function logout() {
@@ -12127,6 +12261,10 @@
     document.getElementById("newClientButton").addEventListener("click", openNewLeadModal);
     document.getElementById("seedBrokerButton").addEventListener("click", sendToBroker);
     document.getElementById("loginForm").addEventListener("submit", login);
+    document.getElementById("authGatewayContinue").addEventListener("click", continueWithEmail);
+    document.getElementById("authGatewayPassword").addEventListener("click", showLoginForm);
+    document.getElementById("authGatewayRecovery").addEventListener("click", showRecoveryForm);
+    document.getElementById("authGatewayReactivation").addEventListener("click", showReactivationForm);
     document.getElementById("mfaForm").addEventListener("submit", verifyMfa);
     document.getElementById("copyMfaSecretButton").addEventListener("click", () => copyMfaValue("mfaManualSecret", "copyMfaSecretButton"));
     document.getElementById("copyMfaOtpButton").addEventListener("click", () => copyMfaValue("mfaOtpUrl", "copyMfaOtpButton"));
@@ -12137,13 +12275,13 @@
     document.getElementById("showRegisterButton").addEventListener("click", showRegisterForm);
     document.getElementById("showReactivationButton").addEventListener("click", showReactivationForm);
     document.getElementById("showRecoveryButton").addEventListener("click", showRecoveryForm);
-    document.getElementById("backToLoginButton").addEventListener("click", showLoginForm);
+    document.getElementById("backToLoginButton").addEventListener("click", showAuthGateway);
     document.getElementById("resendVerificationButton").addEventListener("click", resendVerificationEmail);
     document.getElementById("changeVerificationEmailButton").addEventListener("click", changeVerificationEmail);
-    document.getElementById("backToLoginFromEmailReviewButton").addEventListener("click", showLoginForm);
-    document.getElementById("backToLoginFromReactivationButton").addEventListener("click", showLoginForm);
-    document.getElementById("backToLoginFromRecoveryButton").addEventListener("click", showLoginForm);
-    document.getElementById("backToLoginFromMfaButton").addEventListener("click", showLoginForm);
+    document.getElementById("backToLoginFromEmailReviewButton").addEventListener("click", showAuthGateway);
+    document.getElementById("backToLoginFromReactivationButton").addEventListener("click", showAuthGateway);
+    document.getElementById("backToLoginFromRecoveryButton").addEventListener("click", showAuthGateway);
+    document.getElementById("backToLoginFromMfaButton").addEventListener("click", showAuthGateway);
     document.getElementById("logoutButton").addEventListener("click", logout);
     document.getElementById("supportButton").addEventListener("click", openSupport);
     document.getElementById("notificationBell").addEventListener("click", () => {
@@ -12668,6 +12806,7 @@
     });
 
     document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) refreshGoogleAuthContext();
       if (!document.hidden) ensureTrackingPublisher();
       if (document.hidden) {
         if (marketplaceRefreshTimer) {
@@ -12680,6 +12819,7 @@
         if (["ROOT", "GERENTE"].includes(currentUser?.role)) loadActiveTrackingOperations().catch(() => {});
       }
     });
+    window.addEventListener("focus", refreshGoogleAuthContext);
 
     document.getElementById("mobileLogoutButton")?.addEventListener("click", () => {
       closeMobileDrawer();
@@ -12753,7 +12893,7 @@
         localStorage.removeItem("totalsolutions_user");
         localStorage.removeItem("totalsolutions_access_token");
         accessToken = "";
-        showLoginForm();
+        showAuthGateway();
         hideSplash();
         return;
       }
@@ -12769,7 +12909,7 @@
         localStorage.removeItem("totalsolutions_user");
         localStorage.removeItem("totalsolutions_access_token");
         accessToken = "";
-        showLoginForm();
+        showAuthGateway();
       } finally {
         hideSplash();
       }

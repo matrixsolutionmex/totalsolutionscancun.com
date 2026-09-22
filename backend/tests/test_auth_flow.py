@@ -180,6 +180,18 @@ def test_google_nonce_is_signed_short_lived_and_cleared_after_validation(monkeyp
     session.close()
 
 
+def test_google_continue_nonce_is_supported_without_relaxing_replay_protection():
+    session = create_test_session()
+    response = Response()
+    nonce = auth_security.create_google_nonce(session, response, intent="continue")
+    cookie = response.headers["set-cookie"].split(";", 1)[0].split("=", 1)[1]
+    assert auth_security.consume_google_nonce(session, cookie, intent="continue") == nonce
+    with pytest.raises(HTTPException) as replay:
+        auth_security.consume_google_nonce(session, cookie, intent="continue")
+    assert replay.value.status_code == 401
+    session.close()
+
+
 class CapturingSMTP:
     sent_messages = []
     fail_send = False
@@ -1141,6 +1153,16 @@ def test_registration_frontend_does_not_embed_verification_token_or_url():
     assert "data.verification_url" not in html
     assert "verification_url" not in html
     assert "/auth/verify-email?token=" not in html
+
+
+def test_google_frontend_refreshes_nonce_and_blocks_duplicate_callbacks():
+    html = Path(__file__).parents[2].joinpath("frontend", "index.html").read_text(encoding="utf-8")
+    assert "googleNonceRefreshTimer" in html
+    assert "googleCredentialInFlight" in html
+    assert "googleLogin(intent, { force: true })" in html
+    assert "document.addEventListener(\"visibilitychange\"" in html
+    assert "window.addEventListener(\"focus\", refreshGoogleAuthContext)" in html
+    assert "google.accounts.id.prompt()" not in html
 
 
 def test_user_activation_notifies_other_root_in_same_organization(monkeypatch):
