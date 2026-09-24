@@ -192,6 +192,24 @@ def test_google_continue_nonce_is_supported_without_relaxing_replay_protection()
     session.close()
 
 
+def test_google_nonce_attempts_are_independent_and_replay_safe():
+    session = create_test_session()
+    first_response = Response()
+    first_nonce = auth_security.create_google_nonce(session, first_response, intent="continue")
+    first_cookie = first_response.headers["set-cookie"].split(";", 1)[0].split("=", 1)[1]
+    second_response = Response()
+    second_nonce = auth_security.create_google_nonce(session, second_response, intent="continue")
+    second_cookie = second_response.headers["set-cookie"].split(";", 1)[0].split("=", 1)[1]
+
+    assert first_nonce != second_nonce
+    assert auth_security.consume_google_nonce(session, first_cookie, intent="continue") == first_nonce
+    with pytest.raises(HTTPException) as replay:
+        auth_security.consume_google_nonce(session, first_cookie, intent="continue")
+    assert replay.value.status_code == 401
+    assert auth_security.consume_google_nonce(session, second_cookie, intent="continue") == second_nonce
+    session.close()
+
+
 class CapturingSMTP:
     sent_messages = []
     fail_send = False
@@ -1159,6 +1177,10 @@ def test_google_frontend_refreshes_nonce_and_blocks_duplicate_callbacks():
     html = Path(__file__).parents[2].joinpath("frontend", "index.html").read_text(encoding="utf-8")
     assert "googleNonceRefreshTimer" in html
     assert "googleCredentialInFlight" in html
+    assert "googleInteractionActive" in html
+    assert 'container.addEventListener("pointerdown", markActive, true)' in html
+    assert 'container.addEventListener("keydown", markActive, true)' in html
+    assert "document.hidden || googleInteractionActive" in html
     assert "googleLogin(intent, { force: true })" in html
     assert "document.addEventListener(\"visibilitychange\"" in html
     assert "window.addEventListener(\"focus\", refreshGoogleAuthContext)" in html

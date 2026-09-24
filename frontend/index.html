@@ -4849,6 +4849,7 @@
     let googleNonceState = null;
     let googleNonceRefreshTimer = null;
     let googleCredentialInFlight = false;
+    let googleInteractionActive = false;
     const pendingInviteToken = window.location.pathname.startsWith("/invite/")
       ? decodeURIComponent(window.location.pathname.slice("/invite/".length).split("/")[0] || "")
       : "";
@@ -5043,7 +5044,7 @@
       if (!googleNonceState || googleNonceState.sequence !== sequence) return;
       const refreshIn = Math.max(1000, googleNonceState.expiresAt - Date.now() - 60000);
       googleNonceRefreshTimer = window.setTimeout(() => {
-        if (sequence !== googleRenderSequence || document.hidden) return;
+        if (sequence !== googleRenderSequence || document.hidden || googleInteractionActive) return;
         googleLogin(intent, { force: true }).catch(() => {});
       }, refreshIn);
     }
@@ -5053,7 +5054,7 @@
     }
 
     function refreshGoogleAuthContext() {
-      if (document.hidden || !authPublicConfig.google_client_id || !googleAuthContextNeedsRefresh()) return;
+      if (document.hidden || googleInteractionActive || !authPublicConfig.google_client_id || !googleAuthContextNeedsRefresh()) return;
       const container = document.getElementById(
         googleLoginIntent === "continue" ? "googleContinueButton" : googleLoginIntent === "login" ? "googleLoginLoginButton" : "googleLoginButton"
       );
@@ -10222,7 +10223,18 @@
         await googleLogin(intent, { force: true }).catch(() => {});
       } finally {
         googleCredentialInFlight = false;
+        googleInteractionActive = false;
       }
+    }
+
+    function bindGoogleInteraction(container) {
+      if (!container || container.dataset.googleInteractionBound === "true") return;
+      container.dataset.googleInteractionBound = "true";
+      const markActive = () => { googleInteractionActive = true; };
+      container.addEventListener("pointerdown", markActive, true);
+      container.addEventListener("mousedown", markActive, true);
+      container.addEventListener("touchstart", markActive, true);
+      container.addEventListener("keydown", markActive, true);
     }
 
     async function googleLogin(intent = "signup", { force = false } = {}) {
@@ -10272,6 +10284,7 @@
         callback: (credentialResponse) => handleGoogleCredential(credentialResponse, intent, sequence)
       });
       container.replaceChildren();
+      bindGoogleInteraction(container);
       window.google.accounts.id.renderButton(container, {
         type: "standard",
         theme: "outline",
@@ -12806,7 +12819,7 @@
     });
 
     document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) refreshGoogleAuthContext();
+      if (!document.hidden && !googleInteractionActive) refreshGoogleAuthContext();
       if (!document.hidden) ensureTrackingPublisher();
       if (document.hidden) {
         if (marketplaceRefreshTimer) {
