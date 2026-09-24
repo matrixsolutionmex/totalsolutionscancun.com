@@ -16,7 +16,7 @@ from app.core.organization import get_or_create_default_organization
 from app.core.storage import UPLOADS_DIR
 from app.auth.routes import router as auth_router
 from app.database.connection import Base, SessionLocal, engine
-from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, service_order_tracking, deletion_request, notification, user_lifecycle, auth_security, organization, organization_invitation, referral_attribution, service_property, service_request, service_opportunity, organization_marketplace_link, commercial_subscription, commercial_upgrade_intent, user_commercial_profile, pricing_rate, payment, service_order_financial, service_order_ledger_entry, visit_pricing_snapshot, organization_payment_policy, service_order_diagnosis, service_order_quote, service_order_payment_plan, service_order_installment_release_event, service_order_completion, service_order_warranty_claim, service_order_review, technician_skill, segmentation_referral, professional_application, professional_network
+from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, service_order_tracking, deletion_request, notification, user_lifecycle, auth_security, organization, organization_invitation, referral_attribution, service_property, service_request, service_opportunity, organization_marketplace_link, commercial_subscription, commercial_upgrade_intent, user_commercial_profile, pricing_rate, payment, service_order_financial, service_order_ledger_entry, visit_pricing_snapshot, organization_payment_policy, service_order_diagnosis, service_order_quote, service_order_payment_plan, service_order_installment_release_event, service_order_completion, service_order_warranty_claim, service_order_review, technician_skill, segmentation_referral, professional_application, professional_network, commercial_compliance
 from app.models.lead import Lead
 from app.models.service_order import ServiceOrder
 from app.models.user import User
@@ -34,6 +34,7 @@ from app.routes.segmentation_referral_routes import router as segmentation_refer
 from app.routes.service_request_routes import router as service_request_router
 from app.routes.marketplace_routes import router as marketplace_router
 from app.routes.commercial_routes import router as commercial_router
+from app.routes.commercial_compliance_routes import router as commercial_compliance_router
 from app.routes.support_routes import router as support_router
 from app.routes.user_routes import router as user_router
 from app.routes.contract_routes import router as contract_router
@@ -101,6 +102,7 @@ app.include_router(professional_network_router)
 app.include_router(service_request_router)
 app.include_router(marketplace_router)
 app.include_router(commercial_router)
+app.include_router(commercial_compliance_router)
 app.include_router(payment_router)
 app.include_router(service_order_quote_router)
 app.include_router(service_order_completion_router)
@@ -125,7 +127,7 @@ async def security_headers(request: Request, call_next):
     if request.url.path.startswith("/uploads/professional-applications/"):
         return JSONResponse(status_code=404, content={"detail": "Archivo no encontrado"})
     response = await call_next(request)
-    no_store_paths = {"/", "/sw.js", "/solicitar-servico"}
+    no_store_paths = {"/", "/sw.js", "/solicitar-servico", "/aviso-de-privacidad", "/preferencias-comunicacion"}
     if request.url.path in no_store_paths or request.url.path.startswith(("/m/", "/acompanhar/", "/seguimiento/")):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
@@ -612,6 +614,10 @@ def create_database_tables():
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_service_request_media_request ON service_request_media (service_request_id)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_properties_lead ON properties (lead_id)")
         ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_web_push_subscriptions_user_active ON web_push_subscriptions (user_id, active)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_global_suppressions_email ON global_suppressions (normalized_email)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_global_suppressions_domain ON global_suppressions (domain)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_commercial_outreach_org_status ON commercial_outreach (organization_id, status)")
+        ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_commercial_audit_events_org_type ON commercial_audit_events (organization_id, event_type)")
         ensure_index(
             db,
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_leads_external_source_id ON leads (external_source, external_id) WHERE external_source IS NOT NULL AND external_source <> '' AND external_id IS NOT NULL AND external_id <> ''",

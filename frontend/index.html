@@ -3851,6 +3851,7 @@
       <button class="nav-main" data-view-target="planos">Planos</button>
       <button class="nav-main manager-only" data-view-target="marketplace-links">Link Marketplace</button>
       <button class="nav-main manager-only" data-view-target="professional-network">Red Profesional</button>
+      <button class="nav-main manager-only" data-view-target="commercial-compliance">Compliance</button>
     </nav>
     <div class="spacer"></div>
     <button
@@ -3905,6 +3906,7 @@
       <button type="button" data-mobile-view="planos">Planos</button>
       <button type="button" class="manager-only" data-mobile-view="marketplace-links">Link Marketplace</button>
       <button type="button" class="manager-only" data-mobile-view="professional-network">Red Profesional</button>
+      <button type="button" class="manager-only" data-mobile-view="commercial-compliance">Compliance</button>
     </nav>
 
     <div class="mobile-drawer-section">
@@ -4197,6 +4199,64 @@
       <div class="panel-box"><div class="panel-title">Cobertura técnica · Cancún</div><div class="professional-network-coverage" id="professionalNetworkCoverage"></div></div>
       <div class="panel-box"><div class="panel-title">Candidatos</div><div class="professional-network-filters"><input id="professionalNetworkSearch" placeholder="Nombre, código, email o WhatsApp"><select id="professionalNetworkStatus"><option value="">Todos los estados</option><option>RECEIVED</option><option>UNDER_REVIEW</option><option>CONTACTED</option><option>INTERVIEW</option><option>DOCUMENTATION</option><option>TECHNICAL_VALIDATION</option><option>APPROVED</option><option>REJECTED</option></select><input id="professionalNetworkSpecialty" placeholder="Especialidad"></div><div id="professionalNetworkList" class="broker-list"></div></div>
       <div class="panel-box hidden" id="professionalNetworkDetail"></div>
+    </div>
+  </section>
+
+  <section class="view manager-only" id="view-commercial-compliance">
+    <div class="view-grid">
+      <div class="panel-box" style="grid-column: 1 / -1;">
+        <div class="panel-title">Privacy + Suppression Gate</div>
+        <div class="line" id="commercialComplianceStatus">Cargando estado de privacidad...</div>
+        <div class="inline-actions" style="margin-top: 12px;">
+          <a class="ghost" href="/aviso-de-privacidad" target="_blank" rel="noopener">Aviso de Privacidad</a>
+          <a class="ghost" href="/preferencias-comunicacion" target="_blank" rel="noopener">Preferencias</a>
+          <button type="button" id="reloadCommercialComplianceButton">Actualizar</button>
+        </div>
+      </div>
+      <div class="panel-box">
+        <div class="panel-title">Crear suppression</div>
+        <form class="admin-grid" id="commercialSuppressionForm">
+          <input id="commercialSuppressionEmail" type="email" placeholder="email@dominio.com">
+          <input id="commercialSuppressionDomain" placeholder="dominio.com">
+          <select id="commercialSuppressionScope">
+            <option value="EMAIL_ONLY">Email</option>
+            <option value="DOMAIN">Dominio</option>
+            <option value="ALL_MARKETING">Marketing</option>
+          </select>
+          <select id="commercialSuppressionReason">
+            <option>MANUAL_BLOCK</option>
+            <option>OPT_OUT</option>
+            <option>DO_NOT_CONTACT</option>
+            <option>LEGAL_REQUEST</option>
+            <option>COMPLAINT</option>
+            <option>PERMANENT_BOUNCE</option>
+            <option>OTHER</option>
+          </select>
+          <input id="commercialSuppressionNotes" placeholder="Notas">
+          <button type="submit">Guardar suppression</button>
+        </form>
+        <div class="broker-list" id="commercialSuppressionList"></div>
+      </div>
+      <div class="panel-box">
+        <div class="panel-title">Outreach ledger</div>
+        <form class="admin-grid" id="commercialOutreachForm">
+          <input id="commercialOutreachCompany" placeholder="Empresa" required>
+          <input id="commercialOutreachRecipient" type="email" placeholder="recipient@dominio.com" required>
+          <input id="commercialOutreachDomain" placeholder="dominio.com">
+          <input id="commercialOutreachSource" placeholder="Fuente documentada" required>
+          <input id="commercialOutreachSourceUrl" placeholder="URL fuente">
+          <select id="commercialOutreachCompliance">
+            <option value="PENDING_REVIEW">PENDING_REVIEW</option>
+            <option value="VALID">VALID</option>
+          </select>
+          <button type="submit">Crear para revisión</button>
+        </form>
+        <div class="broker-list" id="commercialOutreachList"></div>
+      </div>
+      <div class="panel-box" style="grid-column: 1 / -1;">
+        <div class="panel-title">Audit trail</div>
+        <div class="broker-list" id="commercialAuditList"></div>
+      </div>
     </div>
   </section>
   
@@ -6607,7 +6667,7 @@
       document.querySelectorAll(".nav .nav-main[data-view-target]").forEach((button) => {
         button.classList.toggle("active", button.dataset.viewTarget === viewName);
       });
-      document.body.classList.remove("view-vendas", "view-leads", "view-atendimento", "view-relatorios", "view-planos", "view-suporte", "view-usuarios", "view-contratos", "view-marketplace-links");
+      document.body.classList.remove("view-vendas", "view-leads", "view-atendimento", "view-relatorios", "view-planos", "view-suporte", "view-usuarios", "view-contratos", "view-marketplace-links", "view-commercial-compliance");
       document.body.classList.add(`view-${viewName}`);
       if (viewName === "suporte") {
         loadSupportTickets().catch(() => {});
@@ -6635,6 +6695,12 @@
         loadOrganizationMarketplaceLinks().catch((error) => {
           const status = document.getElementById("organizationMarketplaceStatus");
           if (status) status.textContent = error.message || "No fue posible cargar los enlaces.";
+        });
+      }
+      if (viewName === "commercial-compliance") {
+        loadCommercialCompliance().catch((error) => {
+          const status = document.getElementById("commercialComplianceStatus");
+          if (status) status.textContent = error.message || "No fue posible cargar compliance.";
         });
       }
       if (viewName === "vendas" && currentUser?.role === "GERENTE") {
@@ -12399,6 +12465,104 @@
         localStorage.setItem("totalsolutions_user", JSON.stringify(currentUser));
       }
     });
+    async function loadCommercialCompliance() {
+      const [configResponse, suppressionsResponse, outreachResponse, auditResponse] = await Promise.all([
+        apiFetch(`${API_BASE}/admin/commercial-compliance/config`),
+        apiFetch(`${API_BASE}/admin/commercial-compliance/suppressions`),
+        apiFetch(`${API_BASE}/admin/commercial-compliance/outreach`),
+        apiFetch(`${API_BASE}/admin/commercial-compliance/audit`)
+      ]);
+      const config = await configResponse.json().catch(() => ({}));
+      const suppressions = await suppressionsResponse.json().catch(() => ({items: []}));
+      const outreach = await outreachResponse.json().catch(() => ({items: []}));
+      const audit = await auditResponse.json().catch(() => ({items: []}));
+      if (!configResponse.ok) throw new Error(config.detail || "Compliance indisponible.");
+
+      const status = document.getElementById("commercialComplianceStatus");
+      if (status) {
+        const privacy = config.privacy || {};
+        status.textContent = `Privacy ${privacy.ready ? "READY" : "NOT_READY"} · ${config.version || "TS_PRIVACY_2026_01"}${privacy.missing?.length ? ` · pendente: ${privacy.missing.join(", ")}` : ""}`;
+      }
+      renderCommercialSuppressions(suppressions.items || []);
+      renderCommercialOutreach(outreach.items || []);
+      renderCommercialAudit(audit.items || []);
+    }
+
+    function renderCommercialSuppressions(items) {
+      const list = document.getElementById("commercialSuppressionList");
+      if (!list) return;
+      list.innerHTML = items.length ? items.map((item) => `
+        <div class="lead-item">
+          <strong>${escapeHtml(item.email || item.domain || "Suppression")}</strong>
+          <div class="line">${escapeHtml(item.scope)} · ${escapeHtml(item.reason)} · ${escapeHtml(item.source || "")}</div>
+        </div>
+      `).join("") : '<div class="empty-state">Sin suppressions registradas.</div>';
+    }
+
+    function renderCommercialOutreach(items) {
+      const list = document.getElementById("commercialOutreachList");
+      if (!list) return;
+      list.innerHTML = items.length ? items.map((item) => `
+        <div class="lead-item">
+          <strong>${escapeHtml(item.company_name)} · ${escapeHtml(item.recipient)}</strong>
+          <div class="line">${escapeHtml(item.status)} · ${escapeHtml(item.compliance_status)} · ${escapeHtml(item.privacy_notice_version)}</div>
+          <div class="inline-actions">
+            <button class="ghost" type="button" data-commercial-approve="${escapeHtml(item.id)}">Aprobar humano</button>
+            <button class="ghost" type="button" data-commercial-can-contact="${escapeHtml(item.id)}">can_contact</button>
+          </div>
+        </div>
+      `).join("") : '<div class="empty-state">Sin outreach comercial.</div>';
+    }
+
+    function renderCommercialAudit(items) {
+      const list = document.getElementById("commercialAuditList");
+      if (!list) return;
+      list.innerHTML = items.length ? items.map((item) => `
+        <div class="lead-item">
+          <strong>${escapeHtml(item.event_type)}</strong>
+          <div class="line">${escapeHtml(item.object_type || "")} #${escapeHtml(item.object_id || "")} · ${escapeHtml(item.created_at || "")}</div>
+        </div>
+      `).join("") : '<div class="empty-state">Sin eventos de auditoría.</div>';
+    }
+
+    async function createCommercialSuppression(event) {
+      event.preventDefault();
+      const payload = {
+        email: document.getElementById("commercialSuppressionEmail")?.value.trim() || null,
+        domain: document.getElementById("commercialSuppressionDomain")?.value.trim() || null,
+        scope: document.getElementById("commercialSuppressionScope")?.value,
+        reason: document.getElementById("commercialSuppressionReason")?.value,
+        notes: document.getElementById("commercialSuppressionNotes")?.value.trim() || null
+      };
+      const response = await apiFetch(`${API_BASE}/admin/commercial-compliance/suppressions`, {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "No fue posible crear suppression.");
+      event.currentTarget.reset();
+      await loadCommercialCompliance();
+    }
+
+    async function createCommercialOutreach(event) {
+      event.preventDefault();
+      const payload = {
+        company_name: document.getElementById("commercialOutreachCompany")?.value.trim(),
+        recipient: document.getElementById("commercialOutreachRecipient")?.value.trim(),
+        domain: document.getElementById("commercialOutreachDomain")?.value.trim() || null,
+        contact_source: document.getElementById("commercialOutreachSource")?.value.trim(),
+        contact_source_url: document.getElementById("commercialOutreachSourceUrl")?.value.trim() || null,
+        compliance_status: document.getElementById("commercialOutreachCompliance")?.value,
+        status: "READY_FOR_REVIEW"
+      };
+      const response = await apiFetch(`${API_BASE}/admin/commercial-compliance/outreach`, {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "No fue posible crear outreach.");
+      event.currentTarget.reset();
+      await loadCommercialCompliance();
+    }
+
     document.getElementById("loginTheme").addEventListener("change", (event) => {
       applyTheme(event.target.value);
     });
@@ -12436,6 +12600,47 @@
         button.textContent = "Copiado";
       } catch (_error) {
         button.textContent = "No fue posible copiar";
+      }
+    });
+    document.getElementById("reloadCommercialComplianceButton")?.addEventListener("click", () => {
+      loadCommercialCompliance().catch((error) => {
+        const status = document.getElementById("commercialComplianceStatus");
+        if (status) status.textContent = error.message || "No fue posible cargar compliance.";
+      });
+    });
+    document.getElementById("commercialSuppressionForm")?.addEventListener("submit", (event) => {
+      createCommercialSuppression(event).catch((error) => {
+        const status = document.getElementById("commercialComplianceStatus");
+        if (status) status.textContent = error.message || "No fue posible guardar suppression.";
+      });
+    });
+    document.getElementById("commercialOutreachForm")?.addEventListener("submit", (event) => {
+      createCommercialOutreach(event).catch((error) => {
+        const status = document.getElementById("commercialComplianceStatus");
+        if (status) status.textContent = error.message || "No fue posible crear outreach.";
+      });
+    });
+    document.getElementById("commercialOutreachList")?.addEventListener("click", async (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      try {
+        if (target.matches("[data-commercial-approve]")) {
+          const response = await apiFetch(`${API_BASE}/admin/commercial-compliance/outreach/${encodeURIComponent(target.dataset.commercialApprove)}/approve`, {method: "POST"});
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.detail || "No fue posible aprobar.");
+          await loadCommercialCompliance();
+        }
+        if (target.matches("[data-commercial-can-contact]")) {
+          const response = await apiFetch(`${API_BASE}/admin/commercial-compliance/outreach/${encodeURIComponent(target.dataset.commercialCanContact)}/can-contact`);
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.detail || "No fue posible consultar can_contact.");
+          const status = document.getElementById("commercialComplianceStatus");
+          if (status) status.textContent = `can_contact: ${data.decision} · eligible=${data.eligible}`;
+          await loadCommercialCompliance();
+        }
+      } catch (error) {
+        const status = document.getElementById("commercialComplianceStatus");
+        if (status) status.textContent = error.message || "No fue posible actualizar outreach.";
       }
     });
 
