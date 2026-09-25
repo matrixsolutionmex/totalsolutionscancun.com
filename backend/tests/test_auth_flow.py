@@ -210,6 +210,115 @@ def test_google_nonce_attempts_are_independent_and_replay_safe():
     session.close()
 
 
+def test_google_state_binds_attempt_and_ignores_overwritten_cookie(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("AUTH_SECURITY_TEST_MODE", "true")
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "google-client-id")
+    session = create_test_session()
+    user = make_user(session, "state-bound-google", email="state-bound@example.com")
+    session.add(UserIdentity(
+        organization_id=user.organization_id,
+        user_id=user.id,
+        provider="google",
+        provider_subject="state-bound-sub",
+        provider_email=user.email,
+        email_verified=True,
+    ))
+    session.commit()
+
+    first_response = Response()
+    first = auth_security.create_google_attempt(session, first_response, intent="continue")
+    second_response = Response()
+    second = auth_security.create_google_attempt(session, second_response, intent="continue")
+    second_cookie = second_response.headers["set-cookie"].split(";", 1)[0].split("=", 1)[1]
+    payload = {
+        "iss": "https://accounts.google.com",
+        "aud": "google-client-id",
+        "exp": 4102444800,
+        "sub": "state-bound-sub",
+        "email": user.email,
+        "email_verified": True,
+        "nonce": first["nonce"],
+    }
+    request = make_request("/auth/google", cookies={auth_security.GOOGLE_NONCE_COOKIE_NAME: second_cookie})
+    result = google_login(
+        GoogleLoginRequest(id_token=json.dumps(payload), intent="continue", state=first["state"]),
+        request,
+        Response(),
+        session,
+    )
+    assert result.access_token
+    first_row = session.query(AuthLoginAttempt).filter_by(public_state=first["state"]).one()
+    second_row = session.query(AuthLoginAttempt).filter_by(public_state=second["state"]).one()
+    assert first_row.consumed_at is not None
+    assert second_row.consumed_at is None
+
+    with pytest.raises(HTTPException) as replay:
+        google_login(
+            GoogleLoginRequest(id_token=json.dumps(payload), intent="continue", state=first["state"]),
+            request,
+            Response(),
+            session,
+        )
+    assert replay.value.status_code == 401
+    assert "utilizada" in replay.value.detail
+    session.close()
+
+
+def test_google_state_rejects_invalid_expired_and_mismatched_nonce_without_early_consume(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("AUTH_SECURITY_TEST_MODE", "true")
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "google-client-id")
+    session = create_test_session()
+    first_response = Response()
+    first = auth_security.create_google_attempt(session, first_response, intent="continue")
+    mismatch_response = Response()
+    mismatch = auth_security.create_google_attempt(session, mismatch_response, intent="continue")
+    payload = {
+        "iss": "https://accounts.google.com",
+        "aud": "google-client-id",
+        "exp": 4102444800,
+        "sub": "state-bound-invalid-sub",
+        "email": "state-bound-invalid@example.com",
+        "email_verified": True,
+        "nonce": mismatch["nonce"],
+    }
+    request = make_request("/auth/google")
+    with pytest.raises(HTTPException) as invalid_state:
+        google_login(
+            GoogleLoginRequest(id_token=json.dumps(payload), intent="continue", state="unknown-state"),
+            request,
+            Response(),
+            session,
+        )
+    assert invalid_state.value.status_code == 401
+
+    with pytest.raises(HTTPException) as nonce_mismatch:
+        google_login(
+            GoogleLoginRequest(id_token=json.dumps(payload), intent="continue", state=first["state"]),
+            request,
+            Response(),
+            session,
+        )
+    assert nonce_mismatch.value.status_code == 401
+    assert "Nonce Google invalido" == nonce_mismatch.value.detail
+    row = session.query(AuthLoginAttempt).filter_by(public_state=first["state"]).one()
+    assert row.consumed_at is None
+
+    row.expires_at = auth_security.now_utc() - timedelta(seconds=1)
+    session.commit()
+    with pytest.raises(HTTPException) as expired:
+        google_login(
+            GoogleLoginRequest(id_token=json.dumps(payload), intent="continue", state=first["state"]),
+            request,
+            Response(),
+            session,
+        )
+    assert expired.value.status_code == 401
+    assert "expirada" in expired.value.detail
+    session.close()
+
+
 class CapturingSMTP:
     sent_messages = []
     fail_send = False
@@ -1185,6 +1294,8 @@ def test_google_frontend_refreshes_nonce_and_blocks_duplicate_callbacks():
     assert "document.addEventListener(\"visibilitychange\"" in html
     assert "window.addEventListener(\"focus\", refreshGoogleAuthContext)" in html
     assert "google.accounts.id.prompt()" not in html
+    assert "state: credentialResponse.state" in html
+    assert "state\n      });" in html or "state\n        });" in html
 
 
 def test_user_activation_notifies_other_root_in_same_organization(monkeypatch):

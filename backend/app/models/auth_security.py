@@ -104,6 +104,7 @@ class AuthLoginAttempt(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     provider = Column(String(40), nullable=False, index=True)
+    public_state = Column(String(128), nullable=True, unique=True, index=True)
     intent = Column(String(20), nullable=False, index=True)
     nonce_hash = Column(String(128), nullable=False, index=True)
     context_hash = Column(String(128), nullable=True, index=True)

@@ -347,6 +347,12 @@ def create_database_tables():
         add_column_if_missing(db, "commercial_upgrade_intents", "payment_confirmed_at", "TIMESTAMP")
         add_column_if_missing(db, "commercial_upgrade_intents", "payment_confirmed_by_user_id", "INTEGER")
         add_column_if_missing(db, "commercial_upgrade_intents", "confirmation_source", "VARCHAR(40)")
+        add_column_if_missing(db, "auth_login_attempts", "public_state", "VARCHAR(128)")
+        ensure_index(
+            db,
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_auth_login_attempt_public_state ON auth_login_attempts (public_state)",
+            label="auth_login_attempts.public_state",
+        )
         add_column_if_missing(db, "service_order_tracking", "last_heartbeat_at", "TIMESTAMP")
         add_column_if_missing(db, "payments", "installment_id", "INTEGER")
         add_column_if_missing(db, "service_order_financials", "service_paid_amount", "NUMERIC(12,2)")

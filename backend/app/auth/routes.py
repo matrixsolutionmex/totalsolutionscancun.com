@@ -24,6 +24,7 @@ from app.core.auth_security import (
     consume_recovery_code,
     create_mfa_challenge_token,
     consume_google_nonce,
+    create_google_attempt,
     create_google_nonce,
     create_user_session,
     generate_recovery_codes,
@@ -37,6 +38,8 @@ from app.core.auth_security import (
     revoke_sessions_for_user,
     turnstile_configured,
     validate_google_id_token_or_401,
+    find_google_attempt,
+    consume_google_attempt,
     verify_mfa_challenge_token,
     verify_totp_code,
     verify_turnstile_or_403,
@@ -130,7 +133,7 @@ def public_config():
 
 @router.get("/google/nonce")
 def google_nonce(response: Response, intent: str = "signup", invite_token: str | None = None, db: Session = Depends(get_db)):
-    return {"nonce": create_google_nonce(db, response, intent=intent, invite_token=invite_token)}
+    return create_google_attempt(db, response, intent=intent, invite_token=invite_token)
 
 
 def normalized_email(value: str) -> str:
@@ -1072,8 +1075,13 @@ def reset_password(payload: PasswordResetRequest, request: Request, db: Session 
 @router.post("/google", response_model=AuthResponse)
 def google_login(payload: GoogleLoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
     verify_turnstile_or_403(db, request, token=payload.turnstile_token, expected_action="google_login")
-    expected_nonce = consume_google_nonce(db, request.cookies.get("ts_google_nonce"), intent=payload.intent, invite_token=payload.invite_token)
-    claims = validate_google_id_token_or_401(payload.id_token, expected_nonce=expected_nonce)
+    if payload.state:
+        attempt = find_google_attempt(db, payload.state, intent=payload.intent, invite_token=payload.invite_token)
+        claims = validate_google_id_token_or_401(payload.id_token, expected_nonce_hash=attempt.nonce_hash)
+        consume_google_attempt(db, payload.state, attempt.nonce_hash)
+    else:
+        expected_nonce = consume_google_nonce(db, request.cookies.get("ts_google_nonce"), intent=payload.intent, invite_token=payload.invite_token)
+        claims = validate_google_id_token_or_401(payload.id_token, expected_nonce=expected_nonce)
     response.delete_cookie("ts_google_nonce", path="/auth")
     provider_subject = claims["sub"]
     provider_email = str(claims.get("email", "")).strip().lower()

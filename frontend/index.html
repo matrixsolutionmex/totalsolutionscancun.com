@@ -10255,6 +10255,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             id_token: credentialResponse.credential,
+            state: credentialResponse.state || null,
             intent,
             invite_token: ["signup", "continue"].includes(intent) ? (pendingInviteToken || null) : null,
             turnstile_token: turnstileToken("login")
@@ -10349,7 +10350,7 @@
       const nonceParams = new URLSearchParams({ intent, ...(["signup", "continue"].includes(intent) && pendingInviteToken ? { invite_token: pendingInviteToken } : {}) });
       const nonceResponse = await fetch(`${API_BASE}/auth/google/nonce?${nonceParams}`, { credentials: "include" });
       if (!nonceResponse.ok || sequence !== googleRenderSequence) throw new Error("google_nonce_unavailable");
-      const { nonce } = await nonceResponse.json();
+      const { nonce, state } = await nonceResponse.json();
       window.google.accounts.id.initialize({
         client_id: authPublicConfig.google_client_id,
         nonce,
@@ -10364,11 +10365,12 @@
         text: intent === "signup" ? "signup_with" : "signin_with",
         shape: "rectangular",
         logo_alignment: "left",
-        width: Math.min(Math.max(container.clientWidth || 360, 240), 400)
+        width: Math.min(Math.max(container.clientWidth || 360, 240), 400),
+        state
       });
       googleInitialized = true;
       googleRenderedIntent = intent;
-      googleNonceState = { intent, sequence, issuedAt: Date.now(), expiresAt: Date.now() + 240000 };
+      googleNonceState = { intent, sequence, state, issuedAt: Date.now(), expiresAt: Date.now() + 240000 };
       scheduleGoogleNonceRefresh(intent, sequence);
     }
 
