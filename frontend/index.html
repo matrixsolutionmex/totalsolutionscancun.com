@@ -12578,6 +12578,7 @@
 
     async function createCommercialOutreach(event) {
       event.preventDefault();
+      const form = event.currentTarget;
       const organizationSelector = document.getElementById("commercialOutreachOrganization");
       const organizationId = globalCommercialRoot()
         ? organizationSelector?.value
@@ -12603,7 +12604,7 @@
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || "No fue posible crear outreach.");
-      event.currentTarget.reset();
+      form.reset();
       await loadCommercialCompliance();
     }
 
