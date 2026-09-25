@@ -502,7 +502,7 @@ def _google_nonce_secret() -> str:
 
 
 def create_google_attempt(db: Session, response: Response, *, intent: str, invite_token: str | None = None) -> dict[str, str]:
-    if intent not in {"login", "signup", "continue"}:
+    if intent not in {"login", "signup", "continue", "link"}:
         raise HTTPException(status_code=400, detail="Intent Google invalido")
     nonce = secrets.token_urlsafe(32)
     public_state = secrets.token_urlsafe(32)

@@ -3998,6 +3998,13 @@
       </div>
       <input hidden id="profilePhotoInput" type="file" accept="image/jpeg,image/png,image/webp">
     </div>
+    <div class="panel-box" id="googleLinkPanel" hidden>
+      <div class="panel-title" id="googleLinkTitle">Vincular conta Google</div>
+      <div class="line" id="googleLinkDescription">Vincule a conta Google que usa o mesmo e-mail desta conta.</div>
+      <div class="google-gis-button" id="googleLinkButton" aria-label="Vincular conta Google"></div>
+      <div class="turnstile-slot" id="googleLinkTurnstile"></div>
+      <div class="auth-status" id="googleLinkStatus" aria-live="polite"></div>
+    </div>
     <div class="panel-box manager-only">
       <div class="panel-title">Asignar solicitudes por servicio y ubicación</div>
       <div class="admin-grid">
@@ -4963,7 +4970,7 @@
     function updateGoogleProviderButton() {
       const configured = Boolean(authPublicConfig.google_client_id);
       [
-        ["googleContinueButton", "googleLoginButton", "googleLoginLoginButton"]
+        ["googleContinueButton", "googleLoginButton", "googleLoginLoginButton", "googleLinkButton"]
       ].forEach(([buttonId]) => {
         const button = document.getElementById(buttonId);
         if (!button) return;
@@ -5001,7 +5008,8 @@
         ["email_verification_resend", "resendVerificationTurnstile"],
         ["email_verification_change", "changeVerificationTurnstile"],
         ["reactivation", "reactivationTurnstile"],
-        ["password_recovery", "recoveryTurnstile"]
+        ["password_recovery", "recoveryTurnstile"],
+        ["google_link", "googleLinkTurnstile"]
       ].forEach(([action, elementId]) => {
         const element = document.getElementById(elementId);
         if (element && !turnstileWidgets[action]) {
@@ -5122,7 +5130,7 @@
     function refreshGoogleAuthContext() {
       if (document.hidden || googleInteractionActive || !authPublicConfig.google_client_id || !googleAuthContextNeedsRefresh()) return;
       const container = document.getElementById(
-        googleLoginIntent === "continue" ? "googleContinueButton" : googleLoginIntent === "login" ? "googleLoginLoginButton" : "googleLoginButton"
+        googleLoginIntent === "continue" ? "googleContinueButton" : googleLoginIntent === "login" ? "googleLoginLoginButton" : googleLoginIntent === "link" ? "googleLinkButton" : "googleLoginButton"
       );
       if (!container || container.closest(".hidden")) return;
       googleLogin(googleLoginIntent, { force: true }).catch(() => {});
@@ -5523,6 +5531,10 @@
         sendBroker: "Asignar al técnico",
         profileTitle: "Mi perfil",
         editProfile: "Editar perfil",
+        googleLinkTitle: "Vincular conta Google",
+        googleLinkDescription: "Vincule a conta Google que usa o mesmo e-mail desta conta.",
+        googleLinkSuccess: "Conta Google vinculada com sucesso.",
+        googleLinkError: "Não foi possível vincular a conta Google.",
         changePhoto: "Cambiar foto",
         removePhoto: "Eliminar foto",
         photoTooLarge: "A foto deve ter no máximo 5 MB.",
@@ -5729,6 +5741,10 @@
         sendBroker: "Asignar al técnico",
         profileTitle: "My profile",
         editProfile: "Edit profile",
+        googleLinkTitle: "Link Google account",
+        googleLinkDescription: "Link the Google account that uses this account's email.",
+        googleLinkSuccess: "Google account linked successfully.",
+        googleLinkError: "Could not link the Google account.",
         changePhoto: "Change photo",
         removePhoto: "Remove photo",
         photoTooLarge: "The photo must be at most 5 MB.",
@@ -5943,6 +5959,10 @@
         sendBroker: "Asignar al técnico",
         profileTitle: "Mi perfil",
         editProfile: "Editar perfil",
+        googleLinkTitle: "Vincular cuenta de Google",
+        googleLinkDescription: "Vincula la cuenta de Google que usa el mismo correo de esta cuenta.",
+        googleLinkSuccess: "Cuenta de Google vinculada correctamente.",
+        googleLinkError: "No fue posible vincular la cuenta de Google.",
         changePhoto: "Cambiar foto",
         removePhoto: "Eliminar foto",
         photoTooLarge: "La foto debe tener como máximo 5 MB.",
@@ -7562,6 +7582,8 @@
       setText("#reloadButton", t("filterButton"));
       setText("#seedBrokerButton", t("sendBroker"));
       setText("#editMyProfileButton", t("editProfile"));
+      setText("#googleLinkTitle", t("googleLinkTitle"));
+      setText("#googleLinkDescription", t("googleLinkDescription"));
       setText("#removeProfilePhotoButton", t("removePhoto"));
       profilePhotoButton.title = t("changePhoto");
       profilePhotoButton.setAttribute("aria-label", t("changePhoto"));
@@ -9947,8 +9969,29 @@
       startBrokerLeadWatch();
       startBoardClock();
       startNotificationPolling();
+      loadGoogleLinkStatus().catch(() => {});
       openAdminUsersFromUrlIfPresent().catch(() => {});
       openLeadFromUrlIfPresent().catch(() => {});
+    }
+
+    async function loadGoogleLinkStatus() {
+      const panel = document.getElementById("googleLinkPanel");
+      if (!panel || !currentUser?.id || !authPublicConfig.google_client_id) {
+        if (panel) panel.hidden = true;
+        return;
+      }
+      const response = await apiFetch(`${API_BASE}/auth/google/link/status`);
+      if (!response.ok) {
+        panel.hidden = true;
+        return;
+      }
+      const data = await response.json();
+      panel.hidden = Boolean(data.linked);
+      if (!data.linked) {
+        googleLogin("link", { force: true }).catch(() => {
+          setAuthStatus("googleLinkStatus", t("googleLinkError"), "error");
+        });
+      }
     }
 
     function startBrokerLeadWatch() {
@@ -10247,9 +10290,10 @@
     async function handleGoogleCredential(credentialResponse, intent, sequence) {
       if (sequence !== googleRenderSequence || googleCredentialInFlight) return;
       googleCredentialInFlight = true;
-      const statusId = intent === "continue" ? "authGatewayStatus" : "loginStatus";
+      const linking = intent === "link";
+      const statusId = linking ? "googleLinkStatus" : intent === "continue" ? "authGatewayStatus" : "loginStatus";
       try {
-        const response = await fetch(`${API_BASE}/auth/google`, {
+        const response = await fetch(`${API_BASE}${linking ? "/auth/google/link" : "/auth/google"}`, {
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
@@ -10257,12 +10301,12 @@
             id_token: credentialResponse.credential,
             state: credentialResponse.state || null,
             intent,
-            invite_token: ["signup", "continue"].includes(intent) ? (pendingInviteToken || null) : null,
-            turnstile_token: turnstileToken("login")
+            invite_token: linking ? null : ["signup", "continue"].includes(intent) ? (pendingInviteToken || null) : null,
+            turnstile_token: turnstileToken(linking ? "google_link" : "login")
           })
         });
         if (!response.ok) {
-          const errorMessage = await responseMessage(response, "No fue posible entrar con Google.");
+          const errorMessage = await responseMessage(response, linking ? t("googleLinkError") : "No fue posible entrar con Google.");
           const lowerMessage = errorMessage.toLowerCase();
           if (lowerMessage.includes("nonce google") || lowerMessage.includes("nonce")) {
             setAuthStatus(statusId, t("googleSessionExpired"), "error");
@@ -10275,6 +10319,11 @@
           return;
         }
         const data = await response.json();
+        if (linking) {
+          setAuthStatus(statusId, data.message || t("googleLinkSuccess"), "success");
+          await loadGoogleLinkStatus();
+          return;
+        }
         if (data.mfa_required) {
           showMfaForm({
             challengeToken: data.mfa_challenge_token,
@@ -10311,10 +10360,10 @@
     }
 
     async function googleLogin(intent = "signup", { force = false } = {}) {
-      if (!new Set(["login", "signup", "continue"]).has(intent)) return;
+      if (!new Set(["login", "signup", "continue", "link"]).has(intent)) return;
       googleLoginIntent = intent;
       const sequence = ++googleRenderSequence;
-      const container = document.getElementById(intent === "continue" ? "googleContinueButton" : intent === "login" ? "googleLoginLoginButton" : "googleLoginButton");
+      const container = document.getElementById(intent === "continue" ? "googleContinueButton" : intent === "login" ? "googleLoginLoginButton" : intent === "link" ? "googleLinkButton" : "googleLoginButton");
       if (!authPublicConfig.google_client_id || !container) return;
       if (!force && googleRenderedIntent === intent && container.querySelector("iframe") && !googleAuthContextNeedsRefresh()) return;
       clearGoogleNonceRefreshTimer();
@@ -10346,6 +10395,7 @@
         document.getElementById("googleContinueButton")?.replaceChildren();
         document.getElementById("googleLoginButton")?.replaceChildren();
         document.getElementById("googleLoginLoginButton")?.replaceChildren();
+        document.getElementById("googleLinkButton")?.replaceChildren();
       }
       const nonceParams = new URLSearchParams({ intent, ...(["signup", "continue"].includes(intent) && pendingInviteToken ? { invite_token: pendingInviteToken } : {}) });
       const nonceResponse = await fetch(`${API_BASE}/auth/google/nonce?${nonceParams}`, { credentials: "include" });

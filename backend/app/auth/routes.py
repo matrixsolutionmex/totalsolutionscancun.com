@@ -136,6 +136,16 @@ def google_nonce(response: Response, intent: str = "signup", invite_token: str |
     return create_google_attempt(db, response, intent=intent, invite_token=invite_token)
 
 
+@router.get("/google/link/status")
+def google_link_status(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    identity = (
+        db.query(UserIdentity)
+        .filter(UserIdentity.user_id == current_user.id, UserIdentity.provider == "google")
+        .first()
+    )
+    return {"linked": bool(identity), "provider": "google"}
+
+
 def normalized_email(value: str) -> str:
     email = value.strip().lower()
     if "@" not in email or email.startswith("@") or email.endswith("@"):
@@ -1161,6 +1171,59 @@ def google_login(payload: GoogleLoginRequest, request: Request, response: Respon
     if mfa_response:
         return mfa_response
     return issue_authenticated_response(db, request, response, user, event_type="GOOGLE_LOGIN")
+
+
+@router.post("/google/link", response_model=AuthResponse)
+def google_link(
+    payload: GoogleLoginRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if payload.intent != "link":
+        raise HTTPException(status_code=400, detail="Intent de vinculação inválido")
+    verify_turnstile_or_403(db, request, token=payload.turnstile_token, expected_action="google_link")
+    if not payload.state:
+        raise HTTPException(status_code=401, detail="Tentativa Google inválida")
+    attempt = find_google_attempt(db, payload.state, intent="link")
+    claims = validate_google_id_token_or_401(payload.id_token, expected_nonce_hash=attempt.nonce_hash)
+    consume_google_attempt(db, payload.state, attempt.nonce_hash)
+    provider_subject = claims["sub"]
+    provider_email = str(claims.get("email", "")).strip().lower()
+    current_email = str(current_user.email or "").strip().lower()
+    if not current_email or provider_email != current_email:
+        raise HTTPException(status_code=409, detail="A conta Google precisa usar o mesmo e-mail da conta atual.")
+
+    subject_identity = (
+        db.query(UserIdentity)
+        .filter(UserIdentity.provider == "google", UserIdentity.provider_subject == provider_subject)
+        .first()
+    )
+    if subject_identity and subject_identity.user_id != current_user.id:
+        raise HTTPException(status_code=409, detail="Esta conta Google já está vinculada a outro usuário.")
+    email_identity = (
+        db.query(UserIdentity)
+        .filter(UserIdentity.provider == "google", UserIdentity.provider_email == provider_email)
+        .first()
+    )
+    if email_identity and email_identity.user_id != current_user.id:
+        raise HTTPException(status_code=409, detail="Este e-mail Google já está vinculado a outro usuário.")
+    if subject_identity:
+        return AuthResponse(message="Conta Google já vinculada.", user=UserResponse.model_validate(current_user))
+
+    db.add(UserIdentity(
+        organization_id=current_user.organization_id,
+        user_id=current_user.id,
+        provider="google",
+        provider_subject=provider_subject,
+        provider_email=provider_email,
+        email_verified=True,
+        linked_at=datetime.utcnow(),
+    ))
+    audit_auth_event(db, request=request, event_type="GOOGLE_LINK", outcome="SUCCESS", user=current_user)
+    db.commit()
+    return AuthResponse(message="Conta Google vinculada com sucesso.", user=UserResponse.model_validate(current_user))
 
 
 @router.post("/logout")

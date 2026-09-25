@@ -18,6 +18,7 @@ from app.auth.jwt_handler import get_current_user, verify_access_token
 from app.auth.routes import (
     confirm_mfa_setup_from_challenge,
     google_login,
+    google_link,
     login,
     request_password_recovery,
     change_verification_email,
@@ -1914,6 +1915,128 @@ def test_google_login_never_auto_links_existing_email(monkeypatch):
     assert session.query(UserIdentity).filter_by(user_id=pending.id, provider="google").count() == 1
     assert existing.status == "ACTIVE"
     session.close()
+
+
+def test_google_link_requires_matching_authenticated_account_and_is_replay_safe(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("AUTH_SECURITY_TEST_MODE", "true")
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "google-client-id")
+    session = create_test_session()
+    organization = make_organization(session, "google-link-org", "Google Link Org")
+    user = make_user(session, "google-link-user", "BROKER", email="link@example.com", organization_id=organization.id)
+    payload = {
+        "iss": "https://accounts.google.com",
+        "aud": "google-client-id",
+        "exp": 4102444800,
+        "sub": "google-link-sub",
+        "email": "link@example.com",
+        "email_verified": True,
+        "nonce": "",
+    }
+
+    first_response = Response()
+    first = auth_security.create_google_attempt(session, first_response, intent="link")
+    payload["nonce"] = first["nonce"]
+    result = google_link(
+        GoogleLoginRequest(id_token=json.dumps(payload), intent="link", state=first["state"]),
+        make_request("/auth/google/link"),
+        Response(),
+        session,
+        user,
+    )
+    assert result.message == "Conta Google vinculada com sucesso."
+    identity = session.query(UserIdentity).filter_by(provider="google", provider_subject=payload["sub"]).one()
+    assert identity.user_id == user.id
+    assert identity.organization_id == organization.id
+
+    with pytest.raises(HTTPException) as replay:
+        google_link(
+            GoogleLoginRequest(id_token=json.dumps(payload), intent="link", state=first["state"]),
+            make_request("/auth/google/link"),
+            Response(),
+            session,
+            user,
+        )
+    assert replay.value.status_code == 401
+
+    second_response = Response()
+    second = auth_security.create_google_attempt(session, second_response, intent="link")
+    payload["nonce"] = second["nonce"]
+    already_linked = google_link(
+        GoogleLoginRequest(id_token=json.dumps(payload), intent="link", state=second["state"]),
+        make_request("/auth/google/link"),
+        Response(),
+        session,
+        user,
+    )
+    assert already_linked.message == "Conta Google já vinculada."
+    assert session.query(UserIdentity).filter_by(user_id=user.id, provider="google").count() == 1
+    session.close()
+
+
+def test_google_link_blocks_email_and_subject_collisions_without_cross_tenant_link(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("AUTH_SECURITY_TEST_MODE", "true")
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "google-client-id")
+    session = create_test_session()
+    org_a = make_organization(session, "google-link-a", "Google Link A")
+    org_b = make_organization(session, "google-link-b", "Google Link B")
+    current = make_user(session, "google-link-current", email="current@example.com", organization_id=org_a.id)
+    other = make_user(session, "google-link-other", email="other@example.com", organization_id=org_b.id)
+    session.add(UserIdentity(
+        organization_id=org_b.id,
+        user_id=other.id,
+        provider="google",
+        provider_subject="other-google-sub",
+        provider_email="other@example.com",
+        email_verified=True,
+    ))
+    session.commit()
+
+    def attempt_for(nonce_value, subject, email):
+        response = Response()
+        attempt = auth_security.create_google_attempt(session, response, intent="link")
+        claims = {
+            "iss": "https://accounts.google.com",
+            "aud": "google-client-id",
+            "exp": 4102444800,
+            "sub": subject,
+            "email": email,
+            "email_verified": True,
+            "nonce": attempt["nonce"],
+        }
+        return attempt, claims
+
+    email_attempt, email_claims = attempt_for("", "new-sub", "other@example.com")
+    with pytest.raises(HTTPException) as email_collision:
+        google_link(
+            GoogleLoginRequest(id_token=json.dumps(email_claims), intent="link", state=email_attempt["state"]),
+            make_request("/auth/google/link"), Response(), session, current,
+        )
+    assert email_collision.value.status_code == 409
+
+    subject_attempt, subject_claims = attempt_for("", "other-google-sub", "current@example.com")
+    with pytest.raises(HTTPException) as subject_collision:
+        google_link(
+            GoogleLoginRequest(id_token=json.dumps(subject_claims), intent="link", state=subject_attempt["state"]),
+            make_request("/auth/google/link"), Response(), session, current,
+        )
+    assert subject_collision.value.status_code == 409
+    assert session.query(UserIdentity).filter_by(user_id=current.id, provider="google").count() == 0
+    assert session.query(UserIdentity).filter_by(user_id=other.id, provider="google").count() == 1
+    session.close()
+
+
+def test_google_link_frontend_is_explicit_and_localized():
+    html = Path(__file__).parents[2].joinpath("frontend", "index.html").read_text(encoding="utf-8")
+    assert 'id="googleLinkPanel"' in html
+    assert 'id="googleLinkButton"' in html
+    assert '"/auth/google/link"' in html
+    assert 'intent = "link"' in html or 'intent,\n            invite_token' in html
+    assert "googleLinkTitle" in html
+    assert "Vincular cuenta de Google" in html
+    assert "Link Google account" in html
+    assert "Vincular conta Google" in html
 
 
 def test_google_login_intent_does_not_create_new_identity_or_organization(monkeypatch):

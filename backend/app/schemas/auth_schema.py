@@ -122,6 +122,6 @@ class PasswordResetRequest(BaseModel):
 class GoogleLoginRequest(BaseModel):
     id_token: str
     state: str | None = None
-    intent: Literal["login", "signup", "continue"] = "signup"
+    intent: Literal["login", "signup", "continue", "link"] = "signup"
     invite_token: str | None = None
     turnstile_token: str | None = None
