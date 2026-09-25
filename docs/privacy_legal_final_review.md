@@ -17,7 +17,7 @@ The legal values in this review were supplied and confirmed directly by the resp
 | `PRIVACY_CONTACT_EMAIL` | privacidad@totalsolutionscancun.com | CONFIGURED |
 | `EFFECTIVE_DATE` | 24/09/2026 | VERIFIED |
 
-`juan@totalsolutionscancun.com` was provided as an internal legal contact. It is not the public privacy contact and was not published in the frontend notice.
+An additional internal legal contact was provided separately and is intentionally omitted from Git, frontend code, logs, and public documentation. It is not the public privacy contact.
 
 ## Production Validation
 
