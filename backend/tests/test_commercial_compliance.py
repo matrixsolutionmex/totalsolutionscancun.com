@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 import httpx
 import pytest
@@ -256,6 +257,86 @@ def test_root_can_create_global_domain_suppression(db):
 
     assert result["suppression"]["organization_id"] is None
     assert result["suppression"]["domain"] == "blocked.test"
+
+
+def test_root_can_create_outreach_for_selected_organization(db, legal_env):
+    organization = org(db, "canonical")
+    root = actor(db, None, role="ROOT")
+
+    created = create_outreach_route(
+        OutreachIn(
+            organization_id=organization.id,
+            company_name="QA Outreach",
+            recipient="qa-outreach@example.invalid",
+            contact_source="QA",
+            compliance_status="VALID",
+        ),
+        db=db,
+        actor=root,
+    )
+
+    assert created["organization_id"] == organization.id
+
+
+def test_frontend_outreach_selector_uses_authorized_organization_list():
+    frontend = Path(__file__).parents[2].joinpath("frontend/index.html").read_text()
+
+    assert 'id="commercialOutreachOrganization"' in frontend
+    assert "${API_BASE}/organization/available" in frontend
+    assert "organization_id: organizationId ? Number(organizationId) : null" in frontend
+    assert "Seleccione una organización." in frontend
+    assert "organization_id: 1" not in frontend
+
+
+def test_root_outreach_requires_existing_selected_organization(db, legal_env):
+    root = actor(db, None, role="ROOT")
+
+    with pytest.raises(HTTPException) as missing:
+        create_outreach_route(
+            OutreachIn(company_name="QA Missing Org", recipient="qa@example.invalid", contact_source="QA"),
+            db=db,
+            actor=root,
+        )
+    assert missing.value.status_code == 400
+
+    with pytest.raises(HTTPException) as nonexistent:
+        create_outreach_route(
+            OutreachIn(organization_id=999, company_name="QA Bad Org", recipient="qa@example.invalid", contact_source="QA"),
+            db=db,
+            actor=root,
+        )
+    assert nonexistent.value.status_code == 400
+
+
+def test_org_scoped_outreach_cannot_cross_tenant(db, legal_env):
+    organization_a = org(db, "a")
+    organization_b = org(db, "b")
+    manager = actor(db, organization_a, role="GERENTE")
+
+    with pytest.raises(HTTPException) as cross_tenant:
+        create_outreach_route(
+            OutreachIn(
+                organization_id=organization_b.id,
+                company_name="QA Cross Tenant",
+                recipient="qa-cross@example.invalid",
+                contact_source="QA",
+            ),
+            db=db,
+            actor=manager,
+        )
+    assert cross_tenant.value.status_code == 403
+
+    own = create_outreach_route(
+        OutreachIn(
+            organization_id=organization_a.id,
+            company_name="QA Own Tenant",
+            recipient="qa-own@example.invalid",
+            contact_source="QA",
+        ),
+        db=db,
+        actor=manager,
+    )
+    assert own["organization_id"] == organization_a.id
 
 
 def test_outreach_create_list_approve_and_audit(db, legal_env):

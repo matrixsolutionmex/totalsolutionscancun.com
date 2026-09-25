@@ -4240,6 +4240,12 @@
       <div class="panel-box">
         <div class="panel-title">Outreach ledger</div>
         <form class="admin-grid" id="commercialOutreachForm">
+          <label id="commercialOutreachOrganizationField" hidden>
+            Organización
+            <select id="commercialOutreachOrganization" required disabled>
+              <option value="">Seleccione una organización</option>
+            </select>
+          </label>
           <input id="commercialOutreachCompany" placeholder="Empresa" required>
           <input id="commercialOutreachRecipient" type="email" placeholder="recipient@dominio.com" required>
           <input id="commercialOutreachDomain" placeholder="dominio.com">
@@ -12465,7 +12471,34 @@
         localStorage.setItem("totalsolutions_user", JSON.stringify(currentUser));
       }
     });
+    function globalCommercialRoot() {
+      return currentUser?.role === "ROOT" && !currentUser?.organization_id;
+    }
+
+    async function loadCommercialOrganizationSelector() {
+      const field = document.getElementById("commercialOutreachOrganizationField");
+      const selector = document.getElementById("commercialOutreachOrganization");
+      if (!field || !selector) return;
+      const isGlobalRoot = globalCommercialRoot();
+      field.hidden = !isGlobalRoot;
+      selector.disabled = !isGlobalRoot;
+      selector.required = isGlobalRoot;
+      if (!isGlobalRoot) {
+        selector.value = currentUser?.organization_id ? String(currentUser.organization_id) : "";
+        return;
+      }
+      const response = await apiFetch(`${API_BASE}/organization/available`);
+      const data = await response.json().catch(() => []);
+      if (!response.ok) throw new Error(data.detail || "No fue posible cargar las organizaciones.");
+      selector.replaceChildren(new Option("Seleccione una organización", ""));
+      for (const organization of Array.isArray(data) ? data : []) {
+        if (organization.status !== "ACTIVE") continue;
+        selector.appendChild(new Option(organization.name, String(organization.id)));
+      }
+    }
+
     async function loadCommercialCompliance() {
+      await loadCommercialOrganizationSelector();
       const [configResponse, suppressionsResponse, outreachResponse, auditResponse] = await Promise.all([
         apiFetch(`${API_BASE}/admin/commercial-compliance/config`),
         apiFetch(`${API_BASE}/admin/commercial-compliance/suppressions`),
@@ -12545,7 +12578,18 @@
 
     async function createCommercialOutreach(event) {
       event.preventDefault();
+      const organizationSelector = document.getElementById("commercialOutreachOrganization");
+      const organizationId = globalCommercialRoot()
+        ? organizationSelector?.value
+        : currentUser?.organization_id;
+      if (globalCommercialRoot() && !organizationId) {
+        const status = document.getElementById("commercialComplianceStatus");
+        if (status) status.textContent = "Seleccione una organización.";
+        organizationSelector?.focus();
+        return;
+      }
       const payload = {
+        organization_id: organizationId ? Number(organizationId) : null,
         company_name: document.getElementById("commercialOutreachCompany")?.value.trim(),
         recipient: document.getElementById("commercialOutreachRecipient")?.value.trim(),
         domain: document.getElementById("commercialOutreachDomain")?.value.trim() || null,

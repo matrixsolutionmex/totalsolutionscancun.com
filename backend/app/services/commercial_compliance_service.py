@@ -10,6 +10,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.commercial_compliance import CommercialAuditEvent, CommercialOutreach, GlobalSuppression
+from app.models.organization import Organization
 from app.models.user import User
 
 
@@ -236,9 +237,14 @@ def public_opt_out(db: Session, *, email: str, action: str, reason: str | None =
 
 
 def create_outreach(db: Session, *, actor: User, payload: dict) -> CommercialOutreach:
-    organization_id = payload.get("organization_id") if actor.role == "ROOT" else actor.organization_id
+    requested_organization_id = payload.get("organization_id")
+    if actor.role != "ROOT" and requested_organization_id is not None and requested_organization_id != actor.organization_id:
+        raise HTTPException(status_code=403, detail="Organização fora do escopo")
+    organization_id = requested_organization_id if actor.role == "ROOT" else actor.organization_id
     if not organization_id:
         raise HTTPException(status_code=400, detail="Organização obrigatória")
+    if not db.query(Organization).filter(Organization.id == organization_id, Organization.status == "ACTIVE").first():
+        raise HTTPException(status_code=400, detail="Organização inválida")
     recipient = normalize_email(payload.get("recipient"))
     if not recipient:
         raise HTTPException(status_code=422, detail="Recipient inválido")
