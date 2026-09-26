@@ -153,6 +153,26 @@ def normalized_email(value: str) -> str:
     return email
 
 
+def find_existing_google_email_users(db: Session, email: str) -> list[User]:
+    """Find legacy and canonical accounts without ever linking them implicitly."""
+    normalized = normalized_email(email)
+    matches = (
+        db.query(User)
+        .filter(
+            User.status != "ANONYMIZED",
+            or_(
+                func.lower(func.trim(User.email)) == normalized,
+                func.lower(func.trim(User.email_pessoal)) == normalized,
+                func.lower(func.trim(User.username)) == normalized,
+            ),
+        )
+        .order_by(User.id.asc())
+        .with_for_update()
+        .all()
+    )
+    return matches
+
+
 def mask_email(email: str) -> str:
     local, _, domain = email.partition("@")
     if not domain:
@@ -1106,9 +1126,17 @@ def google_login(payload: GoogleLoginRequest, request: Request, response: Respon
         invitation = invitation_for_token(db, payload.invite_token, lock=True) if payload.invite_token else None
         if invitation and provider_email != invitation.invited_email:
             raise HTTPException(status_code=403, detail="O convite foi enviado para outro e-mail")
-        existing_email_user = db.query(User).filter(func.lower(User.email) == provider_email).first()
-        if existing_email_user and existing_email_user.status != "ANONYMIZED":
-            audit_auth_event(db, request=request, event_type="GOOGLE_LOGIN", outcome="LINK_REQUIRED", user=existing_email_user)
+        existing_email_users = find_existing_google_email_users(db, provider_email)
+        if existing_email_users:
+            existing_email_user = existing_email_users[0] if len(existing_email_users) == 1 else None
+            audit_auth_event(
+                db,
+                request=request,
+                event_type="GOOGLE_LOGIN",
+                outcome="LINK_REQUIRED",
+                user=existing_email_user,
+                detail={"matching_accounts": len(existing_email_users)},
+            )
             db.commit()
             raise HTTPException(status_code=409, detail="Conta Google precisa ser vinculada após login seguro na conta atual.")
         organization = (

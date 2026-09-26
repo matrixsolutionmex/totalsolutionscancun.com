@@ -1917,6 +1917,41 @@ def test_google_login_never_auto_links_existing_email(monkeypatch):
     session.close()
 
 
+def test_google_login_blocks_legacy_email_pessoal_without_creating_duplicate(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("AUTH_SECURITY_TEST_MODE", "true")
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "google-client-id")
+    session = create_test_session()
+    existing = make_user(session, "legacy-google", email="legacy-account@example.com")
+    existing.email = None
+    existing.email_pessoal = " Legacy.Account@Example.com "
+    session.commit()
+
+    payload = {
+        "iss": "https://accounts.google.com",
+        "aud": "google-client-id",
+        "exp": 4102444800,
+        "sub": "legacy-google-sub",
+        "email": "legacy.account@example.com",
+        "email_verified": True,
+        "name": "Legacy User",
+    }
+    request = google_request_with_nonce(payload, session)
+    with pytest.raises(HTTPException) as blocked:
+        google_login(
+            GoogleLoginRequest(id_token=json.dumps(payload)),
+            request,
+            Response(),
+            session,
+        )
+
+    assert blocked.value.status_code == 409
+    assert session.query(User).count() == 1
+    assert session.query(Organization).count() == 0
+    assert session.query(UserIdentity).count() == 0
+    session.close()
+
+
 def test_google_link_requires_matching_authenticated_account_and_is_replay_safe(monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
     monkeypatch.setenv("AUTH_SECURITY_TEST_MODE", "true")
