@@ -2074,6 +2074,14 @@ def test_google_link_frontend_is_explicit_and_localized():
     assert "Vincular conta Google" in html
 
 
+def test_google_link_frontend_sends_authenticated_csrf_header():
+    html = Path(__file__).parents[2].joinpath("frontend", "index.html").read_text(encoding="utf-8")
+    link_request = html.split('`${API_BASE}${linking ? "/auth/google/link" : "/auth/google"}`', 1)[1].split("const data = await response.json();", 1)[0]
+
+    assert 'headers: linking\n            ? authHeaders({ "Content-Type": "application/json" })' in link_request
+    assert "X-CSRF-Token" in html
+
+
 def test_google_login_intent_does_not_create_new_identity_or_organization(monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
     monkeypatch.setenv("AUTH_SECURITY_TEST_MODE", "true")
