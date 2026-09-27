@@ -11,10 +11,13 @@ from uuid import uuid4
 
 import httpx
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.payment import Payment, PlatformLedgerEntry
+from app.models.service_order import ServiceOrder
 from app.services.service_order_financial_service import record_visit_payment
+from app.services.service_order_financial_service import append_ledger_entry, sync_financial_account_projection
 
 
 STRIPE_API_URL = "https://api.stripe.com/v1"
@@ -28,6 +31,29 @@ def stripe_currency() -> str:
     return os.getenv("STRIPE_CURRENCY", "mxn").strip().lower() or "mxn"
 
 
+def stripe_expected_livemode() -> bool:
+    value = os.getenv("STRIPE_EXPECTED_LIVEMODE", "false").strip().lower()
+    if value not in {"true", "false"}:
+        raise RuntimeError("STRIPE_EXPECTED_LIVEMODE must be true or false")
+    return value == "true"
+
+
+def _validate_secret_mode(secret: str) -> None:
+    """Reject recognizable Stripe keys whose mode disagrees with deployment policy."""
+    if not secret.startswith("sk_"):
+        return
+    expected_prefix = "sk_live_" if stripe_expected_livemode() else "sk_test_"
+    if not secret.startswith(expected_prefix):
+        raise RuntimeError("Stripe secret key mode does not match STRIPE_EXPECTED_LIVEMODE")
+
+
+def _validate_livemode(value) -> None:
+    # Stripe includes livemode on real events and objects. None keeps legacy
+    # synthetic test fixtures compatible without weakening real-event checks.
+    if value is not None and bool(value) != stripe_expected_livemode():
+        raise ValueError("Stripe mode does not match STRIPE_EXPECTED_LIVEMODE")
+
+
 def _amount_minor(amount: Decimal) -> int:
     return int((Decimal(amount) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
@@ -36,6 +62,7 @@ def _stripe_request(path: str, *, data: dict[str, str], idempotency_key: str) ->
     secret = os.getenv("STRIPE_SECRET_KEY", "").strip()
     if not secret:
         raise HTTPException(status_code=503, detail="Stripe sandbox nao configurado")
+    _validate_secret_mode(secret)
     try:
         response = httpx.post(
             f"{STRIPE_API_URL}{path}",
@@ -55,6 +82,7 @@ def _stripe_retrieve_checkout_session(session_id: str) -> dict:
     secret = os.getenv("STRIPE_SECRET_KEY", "").strip()
     if not secret:
         raise HTTPException(status_code=503, detail="Stripe sandbox nao configurado")
+    _validate_secret_mode(secret)
     try:
         response = httpx.get(
             f"{STRIPE_API_URL}/checkout/sessions/{session_id}",
@@ -188,6 +216,226 @@ def verify_stripe_signature(payload: bytes, signature: str | None) -> bool:
     return any(hmac.compare_digest(expected, candidate) for candidate in values.get("v1", []))
 
 
+def _event_object(event: dict) -> dict:
+    return (event.get("data") or {}).get("object") or {}
+
+
+def _event_object_id(event: dict) -> str | None:
+    return str(_event_object(event).get("id") or "")[:255] or None
+
+
+def _event_id(event: dict) -> str:
+    event_id = str(event.get("id") or "").strip()
+    if event_id:
+        return event_id[:255]
+    # Existing unit fixtures predate Stripe's top-level id. Real Stripe
+    # deliveries always include it; this deterministic fallback is local
+    # test compatibility only and is never a provider identifier.
+    return "synthetic:" + hashlib.sha256(json.dumps(event, sort_keys=True).encode()).hexdigest()
+
+
+def _find_payment_for_event(db: Session, object_data: dict) -> Payment | None:
+    metadata = object_data.get("metadata") or {}
+    payment_id = metadata.get("payment_id") or object_data.get("client_reference_id")
+    payment = db.query(Payment).filter(
+        Payment.id == int(payment_id),
+    ).with_for_update().first() if payment_id and str(payment_id).isdigit() else None
+    if not payment and object_data.get("id"):
+        payment = db.query(Payment).filter(Payment.stripe_checkout_session_id == object_data["id"]).with_for_update().first()
+    for field in ("payment_intent", "subscription", "customer"):
+        if not payment and object_data.get(field):
+            column = getattr(Payment, f"stripe_{field}_id")
+            payment = db.query(Payment).filter(column == object_data[field]).with_for_update().first()
+    return payment
+
+
+def _register_webhook_event(db: Session, event: dict):
+    from app.models.stripe_reconciliation import StripeWebhookEvent
+
+    event_id = _event_id(event)
+    existing = db.query(StripeWebhookEvent).filter_by(event_id=event_id).with_for_update().first()
+    if existing:
+        if existing.status == "SUCCEEDED":
+            return existing, True
+        existing.status = "PROCESSING"
+        existing.attempts = (existing.attempts or 0) + 1
+        existing.last_error = None
+        db.flush()
+        return existing, False
+    object_data = _event_object(event)
+    record = StripeWebhookEvent(
+        event_id=event_id,
+        event_type=str(event.get("type") or "")[:96],
+        livemode=event.get("livemode", object_data.get("livemode")),
+        object_id=_event_object_id(event),
+        status="PROCESSING",
+        attempts=1,
+    )
+    db.add(record)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        existing = db.query(StripeWebhookEvent).filter_by(event_id=event_id).with_for_update().first()
+        if not existing:
+            raise
+        if existing.status == "SUCCEEDED":
+            return existing, True
+        existing.status = "PROCESSING"
+        existing.attempts = (existing.attempts or 0) + 1
+        existing.last_error = None
+        db.flush()
+        return existing, False
+    return record, False
+
+
+def _persist_webhook_failure(db: Session, event: dict, exc: Exception) -> None:
+    """Keep a sanitized failure record even when the webhook transaction rolls back."""
+    from app.models.stripe_reconciliation import StripeWebhookEvent
+
+    db.rollback()
+    event_id = _event_id(event)
+    record = db.query(StripeWebhookEvent).filter_by(event_id=event_id).with_for_update().first()
+    if not record:
+        object_data = _event_object(event)
+        record = StripeWebhookEvent(
+            event_id=event_id,
+            event_type=str(event.get("type") or "")[:96],
+            livemode=event.get("livemode", object_data.get("livemode")),
+            object_id=_event_object_id(event),
+            status="FAILED",
+            attempts=1,
+        )
+        db.add(record)
+    else:
+        record.status = "FAILED"
+        record.attempts = max(record.attempts or 1, 1)
+    record.last_error = _sanitized_error(exc)
+    record.processed_at = None
+    db.commit()
+
+
+def _sanitized_error(exc: Exception) -> str:
+    return str(exc)[:240] if isinstance(exc, (ValueError, RuntimeError)) else exc.__class__.__name__
+
+
+def _minor_amount(value) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ValueError("Stripe adjustment amount is invalid") from None
+
+
+def _currency_matches(payment: Payment, object_data: dict) -> bool:
+    return str(object_data.get("currency") or "").lower() == str(payment.currency or "").lower()
+
+
+def _append_adjustment_ledger(db: Session, payment: Payment, *, entry_type: str, amount: Decimal, key: str, external_reference: str) -> None:
+    order = db.query(ServiceOrder).filter(
+        ServiceOrder.id == payment.service_order_id,
+        ServiceOrder.organization_id == payment.organization_id,
+    ).first() if payment.service_order_id else None
+    if order:
+        append_ledger_entry(
+            db, order, organization_id=payment.organization_id, entry_type=entry_type,
+            amount=amount, currency=payment.currency, payment_id=payment.id,
+            external_reference=external_reference, idempotency_key=key,
+        )
+        sync_financial_account_projection(db, order, organization_id=payment.organization_id)
+        return
+    existing = db.query(PlatformLedgerEntry).filter_by(
+        payment_id=payment.id, entry_type=entry_type, reference=key,
+    ).first()
+    if not existing:
+        db.add(PlatformLedgerEntry(
+            organization_id=payment.organization_id, technician_id=payment.technician_id,
+            service_order_id=None, payment_id=payment.id, entry_type=entry_type,
+            amount=amount, currency=payment.currency, status="OPEN",
+            description=f"Stripe {entry_type.lower()}", reference=key,
+        ))
+
+
+def _apply_refund(db: Session, payment: Payment, event: dict, object_data: dict) -> Payment:
+    from app.models.stripe_reconciliation import StripePaymentAdjustment
+
+    if not _currency_matches(payment, object_data):
+        raise ValueError("Stripe refund currency mismatch")
+    gross_minor = int((Decimal(payment.gross_amount) * 100).quantize(Decimal("1")))
+    cumulative_minor = object_data.get("amount_refunded")
+    if cumulative_minor is None:
+        cumulative_minor = object_data.get("amount")
+    cumulative_minor = _minor_amount(cumulative_minor)
+    already_refunded = sum(
+        _minor_amount(Decimal(row.amount) * 100)
+        for row in db.query(StripePaymentAdjustment).filter_by(payment_id=payment.id, kind="REFUND", status="APPLIED").all()
+    )
+    new_minor = cumulative_minor - already_refunded if object_data.get("amount_refunded") is not None else cumulative_minor
+    if new_minor < 0 or already_refunded + new_minor > gross_minor:
+        raise ValueError("Stripe refund exceeds payment amount")
+    if new_minor:
+        amount = (Decimal(new_minor) / 100).quantize(Decimal("0.01"))
+        adjustment = StripePaymentAdjustment(
+            payment_id=payment.id, organization_id=payment.organization_id,
+            stripe_event_id=_event_id(event), provider_adjustment_id=str(object_data.get("id") or _event_id(event)),
+            kind="REFUND", status="APPLIED", amount=amount, currency=payment.currency,
+            ledger_idempotency_key=f"stripe-refund:{_event_id(event)}",
+        )
+        db.add(adjustment)
+        _append_adjustment_ledger(
+            db, payment, entry_type="REFUND", amount=amount,
+            key=f"stripe-refund:{_event_id(event)}", external_reference=str(object_data.get("id") or _event_id(event)),
+        )
+    total_refunded = already_refunded + new_minor
+    payment.status = "REFUNDED" if total_refunded >= gross_minor else "PARTIALLY_REFUNDED"
+    payment.updated_at = datetime.utcnow()
+    return payment
+
+
+def _apply_dispute(db: Session, payment: Payment, event: dict, object_data: dict) -> Payment:
+    from app.models.stripe_reconciliation import StripePaymentAdjustment
+
+    if not _currency_matches(payment, object_data):
+        raise ValueError("Stripe dispute currency mismatch")
+    dispute_id = str(object_data.get("id") or "")[:255]
+    if not dispute_id:
+        raise ValueError("Stripe dispute id is missing")
+    status = str(object_data.get("status") or "under_review").upper()
+    adjustment = db.query(StripePaymentAdjustment).filter_by(
+        payment_id=payment.id, kind="DISPUTE", provider_adjustment_id=dispute_id,
+    ).with_for_update().first()
+    amount = Decimal(_minor_amount(object_data.get("amount"))) / 100
+    if not adjustment:
+        adjustment = StripePaymentAdjustment(
+            payment_id=payment.id, organization_id=payment.organization_id,
+            stripe_event_id=_event_id(event), provider_adjustment_id=dispute_id,
+            kind="DISPUTE", status=status, amount=amount, currency=payment.currency,
+            ledger_idempotency_key=f"stripe-dispute:{dispute_id}",
+        )
+        db.add(adjustment)
+        _append_adjustment_ledger(
+            db, payment, entry_type="DISPUTE", amount=amount,
+            key=f"stripe-dispute:{dispute_id}", external_reference=dispute_id,
+        )
+    else:
+        adjustment.status = status
+    if status == "WON" and not db.query(StripePaymentAdjustment).filter_by(
+        payment_id=payment.id, kind="DISPUTE_REVERSAL", provider_adjustment_id=dispute_id,
+    ).first():
+        db.add(StripePaymentAdjustment(
+            payment_id=payment.id, organization_id=payment.organization_id,
+            stripe_event_id=_event_id(event), provider_adjustment_id=dispute_id,
+            kind="DISPUTE_REVERSAL", status="APPLIED", amount=adjustment.amount,
+            currency=payment.currency, ledger_idempotency_key=f"stripe-dispute-reversal:{dispute_id}",
+        ))
+        _append_adjustment_ledger(
+            db, payment, entry_type="DISPUTE_REVERSAL", amount=adjustment.amount,
+            key=f"stripe-dispute-reversal:{dispute_id}", external_reference=dispute_id,
+        )
+    payment.status = "DISPUTED" if status != "WON" else "PAID"
+    payment.updated_at = datetime.utcnow()
+    return payment
+
+
 def mark_payment_paid(db: Session, payment: Payment, *, provider_payload: dict) -> Payment:
     if payment.status in {"PAID", "PAID_CASH"}:
         return payment
@@ -220,44 +468,70 @@ def mark_payment_paid(db: Session, payment: Payment, *, provider_payload: dict) 
 def handle_stripe_event(db: Session, event: dict) -> Payment | None:
     event_type = event.get("type", "")
     object_data = (event.get("data") or {}).get("object") or {}
-    metadata = object_data.get("metadata") or {}
-    payment_id = metadata.get("payment_id") or object_data.get("client_reference_id")
-    payment = db.query(Payment).filter(Payment.id == int(payment_id)).with_for_update().first() if payment_id and str(payment_id).isdigit() else None
-    if not payment and object_data.get("id"):
-        payment = db.query(Payment).filter(Payment.stripe_checkout_session_id == object_data["id"]).with_for_update().first()
-    if not payment and object_data.get("payment_intent"):
-        payment = db.query(Payment).filter(Payment.stripe_payment_intent_id == object_data["payment_intent"]).with_for_update().first()
-    if not payment and object_data.get("subscription"):
-        payment = db.query(Payment).filter(Payment.stripe_subscription_id == object_data["subscription"]).with_for_update().first()
-    if not payment and object_data.get("customer"):
-        payment = db.query(Payment).filter(Payment.stripe_customer_id == object_data["customer"]).with_for_update().first()
-    if not payment:
-        return None
-    checkout_paid = event_type != "checkout.session.completed" or object_data.get("payment_status") == "paid"
-    if checkout_paid and event_type in {"checkout.session.completed", "invoice.paid", "payment_intent.succeeded"}:
-        if payment.payment_type == "TECHNICAL_VISIT" and payment.status not in {"PAID", "PAID_CASH"}:
-            try:
-                expected_amount = object_data.get("amount_received")
-                if expected_amount is None:
-                    expected_amount = object_data.get("amount_total")
-                expected_currency = str(object_data.get("currency") or "").lower()
-                if expected_amount is None or not expected_currency:
-                    raise ValueError("visit payment amount or currency is missing")
-                record_visit_payment(db, payment, provider_payload=object_data)
-            except (TypeError, ValueError):
+    supported_events = {
+        "checkout.session.completed", "invoice.paid", "payment_intent.succeeded",
+        "payment_intent.payment_failed", "invoice.payment_failed",
+        "charge.refunded", "charge.dispute.created", "charge.dispute.updated",
+        "charge.dispute.closed",
+    }
+    _validate_livemode(event.get("livemode", object_data.get("livemode")))
+    webhook = None
+    try:
+        webhook, duplicate = _register_webhook_event(db, event)
+        if duplicate:
+            payment = db.query(Payment).filter(Payment.id == webhook.payment_id).first() if webhook.payment_id else None
+            return payment
+        if event_type not in supported_events:
+            webhook.status = "IGNORED"
+            webhook.processed_at = datetime.utcnow()
+            db.flush()
+            return None
+        payment = _find_payment_for_event(db, object_data)
+        if not payment:
+            raise ValueError("Stripe event payment not found; retry is required")
+        metadata = object_data.get("metadata") or {}
+        metadata_organization_id = metadata.get("organization_id")
+        if metadata_organization_id and str(metadata_organization_id) != str(payment.organization_id):
+            raise ValueError("Stripe event organization does not match the stored payment")
+        webhook.payment_id = payment.id
+        webhook.organization_id = payment.organization_id
+        if event_type == "charge.refunded":
+            payment = _apply_refund(db, payment, event, object_data)
+        elif event_type.startswith("charge.dispute."):
+            payment = _apply_dispute(db, payment, event, object_data)
+        else:
+            checkout_paid = event_type != "checkout.session.completed" or object_data.get("payment_status") == "paid"
+            if checkout_paid and event_type in {"checkout.session.completed", "invoice.paid", "payment_intent.succeeded"}:
+                if payment.payment_type == "TECHNICAL_VISIT" and payment.status not in {"PAID", "PAID_CASH"}:
+                    try:
+                        expected_amount = object_data.get("amount_received")
+                        if expected_amount is None:
+                            expected_amount = object_data.get("amount_total")
+                        expected_currency = str(object_data.get("currency") or "").lower()
+                        if expected_amount is None or not expected_currency:
+                            raise ValueError("visit payment amount or currency is missing")
+                        record_visit_payment(db, payment, provider_payload=object_data)
+                    except (TypeError, ValueError):
+                        payment.status = "FAILED"
+                        payment.updated_at = datetime.utcnow()
+                        db.flush()
+                        return payment
+                if payment.payment_type.startswith("SERVICE_") and payment.status not in {"PAID", "PAID_CASH"}:
+                    from app.services.service_order_payment_plan_service import record_service_installment_payment
+                    payment = record_service_installment_payment(db, payment, provider_payload=object_data)
+                else:
+                    payment = mark_payment_paid(db, payment, provider_payload=object_data)
+            elif event_type in {"payment_intent.payment_failed", "invoice.payment_failed"} and payment.status not in {"PAID", "PAID_CASH"}:
                 payment.status = "FAILED"
                 payment.updated_at = datetime.utcnow()
-                db.flush()
-                return payment
-        if payment.payment_type.startswith("SERVICE_") and payment.status not in {"PAID", "PAID_CASH"}:
-            from app.services.service_order_payment_plan_service import record_service_installment_payment
-            return record_service_installment_payment(db, payment, provider_payload=object_data)
-        return mark_payment_paid(db, payment, provider_payload=object_data)
-    if event_type in {"payment_intent.payment_failed", "invoice.payment_failed"} and payment.status not in {"PAID", "PAID_CASH"}:
-        payment.status = "FAILED"
-        payment.updated_at = datetime.utcnow()
+        webhook.status = "SUCCEEDED"
+        webhook.processed_at = datetime.utcnow()
+        webhook.last_error = None
         db.flush()
-    return payment
+        return payment
+    except Exception as exc:
+        _persist_webhook_failure(db, event, exc)
+        raise
 
 
 def reconcile_stripe_checkout_payment(db: Session, payment: Payment) -> Payment:
@@ -267,8 +541,7 @@ def reconcile_stripe_checkout_payment(db: Session, payment: Payment) -> Payment:
     session = _stripe_retrieve_checkout_session(payment.stripe_checkout_session_id)
     if session.get("id") != payment.stripe_checkout_session_id:
         raise ValueError("Stripe session does not match the stored payment")
-    if session.get("livemode") is True:
-        raise ValueError("live Stripe session is not allowed in this environment")
+    _validate_livemode(session.get("livemode"))
     if session.get("status") != "complete" or session.get("payment_status") != "paid":
         raise ValueError("Stripe Checkout session is not paid")
     amount_total = session.get("amount_total")

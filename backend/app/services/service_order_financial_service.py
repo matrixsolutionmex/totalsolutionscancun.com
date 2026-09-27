@@ -122,8 +122,12 @@ def calculate_order_balance(db: Session, order, *, organization_id: int) -> dict
     payments = sum((_money(item.amount) for item in entries if item.entry_type in PAYMENT_TYPES), Decimal("0"))
     fees = sum((_money(item.amount) for item in entries if item.entry_type in {"PROCESSING_FEE", "PLATFORM_FEE"}), Decimal("0"))
     refunds = sum((_money(item.amount) for item in entries if item.entry_type == "REFUND"), Decimal("0"))
+    disputes = sum((_money(item.amount) for item in entries if item.entry_type == "DISPUTE"), Decimal("0"))
+    dispute_reversals = sum((_money(item.amount) for item in entries if item.entry_type == "DISPUTE_REVERSAL"), Decimal("0"))
+    net_disputes = max(Decimal("0"), disputes - dispute_reversals)
     return {"charges": charges, "payments": payments, "fees": fees, "refunds": refunds,
-            "outstanding_balance": max(Decimal("0"), charges - payments - refunds)}
+            "disputes": net_disputes,
+            "outstanding_balance": max(Decimal("0"), charges - payments - refunds + net_disputes)}
 
 
 def sync_financial_account_projection(db: Session, order, *, organization_id: int, financial_status: str | None = None):
@@ -137,6 +141,7 @@ def sync_financial_account_projection(db: Session, order, *, organization_id: in
     balance = calculate_order_balance(db, order, organization_id=organization_id)
     account.amount_due = balance["outstanding_balance"]
     account.amount_paid = balance["payments"]
+    account.amount_refunded = balance["refunds"]
     account.outstanding_balance = balance["outstanding_balance"]
     if financial_status is not None:
         account.financial_status = financial_status

@@ -1,4 +1,7 @@
+import hashlib
+import hmac
 import json
+import time
 from pathlib import Path
 from decimal import Decimal
 
@@ -15,6 +18,7 @@ from app.models.auth_security import AuthAuditEvent
 from app.models.commercial_subscription import CommercialSubscription, PlanChangeEvent
 from app.models.commercial_upgrade_intent import CommercialUpgradeIntent
 from app.models.payment import Payment, PlatformLedgerEntry
+from app.models.stripe_reconciliation import StripePaymentAdjustment, StripeWebhookEvent
 from app.models.notification import Notification, NotificationPreference, WebPushSubscription
 from app.models.lead import Lead
 from app.models.organization import Organization
@@ -46,7 +50,7 @@ from app.services.commercial_upgrade_service import (
     normalize_existing_upgrade_intents,
     activate_upgrade_from_paid_payment,
 )
-from app.services.payment_service import create_payment, create_stripe_checkout, handle_stripe_event, mark_payment_paid, record_cash_payment
+from app.services.payment_service import create_payment, create_stripe_checkout, handle_stripe_event, mark_payment_paid, record_cash_payment, verify_stripe_signature
 from app.services.customer_portal_service import service_request_public_tracking
 from app.services.service_order_financial_service import append_ledger_entry, can_dispatch_service_order, sync_financial_account_projection
 from app.services.service_order_financial_service import calculate_order_balance
@@ -66,7 +70,7 @@ from app.services.platform_admin_service import (
 @pytest.fixture()
 def commercial_db():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(bind=engine, tables=[Organization.__table__, User.__table__, Lead.__table__, OrganizationMarketplaceLink.__table__, ServiceProperty.__table__, ServiceRequest.__table__, ServiceOrder.__table__, ServiceOpportunity.__table__, ServiceOrderTracking.__table__, CommercialSubscription.__table__, PlanChangeEvent.__table__, CommercialUpgradeIntent.__table__, Payment.__table__, PlatformLedgerEntry.__table__, ServiceOrderFinancial.__table__, ServiceOrderLedgerEntry.__table__, VisitPricingSnapshot.__table__, OrganizationPaymentPolicy.__table__, AuthAuditEvent.__table__, Notification.__table__, NotificationPreference.__table__, WebPushSubscription.__table__])
+    Base.metadata.create_all(bind=engine, tables=[Organization.__table__, User.__table__, Lead.__table__, OrganizationMarketplaceLink.__table__, ServiceProperty.__table__, ServiceRequest.__table__, ServiceOrder.__table__, ServiceOpportunity.__table__, ServiceOrderTracking.__table__, CommercialSubscription.__table__, PlanChangeEvent.__table__, CommercialUpgradeIntent.__table__, Payment.__table__, PlatformLedgerEntry.__table__, StripeWebhookEvent.__table__, StripePaymentAdjustment.__table__, ServiceOrderFinancial.__table__, ServiceOrderLedgerEntry.__table__, VisitPricingSnapshot.__table__, OrganizationPaymentPolicy.__table__, AuthAuditEvent.__table__, Notification.__table__, NotificationPreference.__table__, WebPushSubscription.__table__])
     db = sessionmaker(bind=engine)()
     db.execute(text("CREATE UNIQUE INDEX uq_commercial_active_intent_org ON commercial_upgrade_intents (organization_id) WHERE status IN ('CHECKOUT_OPENED', 'PAYMENT_PENDING', 'PAYMENT_CONFIRMED', 'PAID')"))
     org = Organization(name="Commercial Org", slug="commercial-org")
@@ -1016,3 +1020,115 @@ def test_commercial_admin_controls_are_root_only_in_frontend():
     intent_render = frontend.split("async function loadCommercialUpgradeIntents", 1)[1].split("async function loadCommercialAdminMetrics", 1)[0]
     assert "${isRoot ? `<div class=\"inline-actions\">" in intent_render
     assert "data-commercial-intent-action=\"activate\"" in intent_render
+
+
+def _stripe_test_payment(db, actor, *, amount="100.00", key="stripe-live-safety"):
+    payment = create_payment(
+        db, organization_id=actor.organization_id, payment_type="SUBSCRIPTION_PLAN",
+        payment_method="STRIPE_CARD", amount=Decimal(amount), idempotency_key=key,
+    )
+    mark_payment_paid(db, payment, provider_payload={"payment_intent": f"pi_{key}"})
+    db.commit()
+    return payment
+
+
+def test_stripe_event_mode_mismatch_is_rejected_without_processing(monkeypatch, commercial_db):
+    db, actor, _, _ = commercial_db
+    monkeypatch.setenv("STRIPE_EXPECTED_LIVEMODE", "true")
+    event = {
+        "id": "evt_test_mode_mismatch", "type": "payment_intent.succeeded", "livemode": False,
+        "data": {"object": {"id": "pi_mode_mismatch", "metadata": {"payment_id": "999"}}},
+    }
+    with pytest.raises(ValueError, match="mode"):
+        handle_stripe_event(db, event)
+    assert db.query(StripeWebhookEvent).filter_by(event_id=event["id"]).count() == 0
+
+
+def test_stripe_signature_accepts_current_valid_signature_and_rejects_invalid(monkeypatch):
+    secret = "webhook-test-secret"
+    payload = b'{"id":"evt_signature"}'
+    timestamp = str(int(time.time()))
+    digest = hmac.new(secret.encode(), f"{timestamp}.".encode() + payload, hashlib.sha256).hexdigest()
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", secret)
+    assert verify_stripe_signature(payload, f"t={timestamp},v1={digest}") is True
+    assert verify_stripe_signature(payload, f"t={timestamp},v1=invalid") is False
+
+
+def test_failed_stripe_event_is_persisted_and_retryable(commercial_db):
+    db, actor, _, _ = commercial_db
+    event = {
+        "id": "evt_retryable", "type": "payment_intent.succeeded", "livemode": False,
+        "data": {"object": {"id": "pi_retryable", "metadata": {"payment_id": "999"}}},
+    }
+    with pytest.raises(ValueError, match="payment not found"):
+        handle_stripe_event(db, event)
+    failed = db.query(StripeWebhookEvent).filter_by(event_id=event["id"]).one()
+    assert failed.status == "FAILED"
+    assert failed.attempts == 1
+    payment = _stripe_test_payment(db, actor, key="stripe-retryable-payment")
+    event["data"]["object"]["metadata"]["payment_id"] = str(payment.id)
+    assert handle_stripe_event(db, event).status == "PAID"
+    db.commit()
+    retried = db.query(StripeWebhookEvent).filter_by(event_id=event["id"]).one()
+    assert retried.status == "SUCCEEDED"
+    assert retried.attempts == 2
+
+
+def test_stripe_refund_is_cumulative_and_event_idempotent(commercial_db):
+    db, actor, _, _ = commercial_db
+    payment = _stripe_test_payment(db, actor, key="stripe-refund-payment")
+    first = {
+        "id": "evt_refund_one", "type": "charge.refunded", "livemode": False,
+        "data": {"object": {"id": "re_one", "payment_intent": payment.stripe_payment_intent_id,
+            "currency": "mxn", "amount_refunded": 5000}},
+    }
+    handle_stripe_event(db, first)
+    handle_stripe_event(db, first)
+    second = {
+        "id": "evt_refund_two", "type": "charge.refunded", "livemode": False,
+        "data": {"object": {"id": "re_two", "payment_intent": payment.stripe_payment_intent_id,
+            "currency": "mxn", "amount_refunded": 10000}},
+    }
+    handle_stripe_event(db, second)
+    db.commit()
+    assert payment.status == "REFUNDED"
+    assert db.query(StripePaymentAdjustment).filter_by(payment_id=payment.id, kind="REFUND").count() == 2
+    assert db.query(PlatformLedgerEntry).filter_by(payment_id=payment.id, entry_type="REFUND").count() == 2
+
+
+def test_stripe_dispute_won_creates_one_reversal(commercial_db):
+    db, actor, _, _ = commercial_db
+    payment = _stripe_test_payment(db, actor, key="stripe-dispute-payment")
+    opened = {
+        "id": "evt_dispute_open", "type": "charge.dispute.created", "livemode": False,
+        "data": {"object": {"id": "dp_1", "payment_intent": payment.stripe_payment_intent_id,
+            "currency": "mxn", "amount": 10000, "status": "under_review"}},
+    }
+    handle_stripe_event(db, opened)
+    won = {
+        "id": "evt_dispute_won", "type": "charge.dispute.closed", "livemode": False,
+        "data": {"object": {"id": "dp_1", "payment_intent": payment.stripe_payment_intent_id,
+            "currency": "mxn", "amount": 10000, "status": "won"}},
+    }
+    handle_stripe_event(db, won)
+    handle_stripe_event(db, won)
+    db.commit()
+    assert payment.status == "PAID"
+    assert db.query(StripePaymentAdjustment).filter_by(payment_id=payment.id, kind="DISPUTE").count() == 1
+    assert db.query(StripePaymentAdjustment).filter_by(payment_id=payment.id, kind="DISPUTE_REVERSAL").count() == 1
+    assert db.query(PlatformLedgerEntry).filter_by(payment_id=payment.id, entry_type="DISPUTE").count() == 1
+    assert db.query(PlatformLedgerEntry).filter_by(payment_id=payment.id, entry_type="DISPUTE_REVERSAL").count() == 1
+
+
+def test_stripe_event_rejects_cross_tenant_metadata(commercial_db):
+    db, actor, _, other = commercial_db
+    payment = _stripe_test_payment(db, actor, key="stripe-tenant-payment")
+    event = {
+        "id": "evt_cross_tenant", "type": "payment_intent.succeeded", "livemode": False,
+        "data": {"object": {"id": payment.stripe_payment_intent_id,
+            "metadata": {"payment_id": str(payment.id), "organization_id": str(other.organization_id)}}},
+    }
+    with pytest.raises(ValueError, match="organization"):
+        handle_stripe_event(db, event)
+    failed = db.query(StripeWebhookEvent).filter_by(event_id=event["id"]).one()
+    assert failed.status == "FAILED"
