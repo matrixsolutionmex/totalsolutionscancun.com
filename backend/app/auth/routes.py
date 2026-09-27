@@ -78,7 +78,7 @@ from app.schemas.auth_schema import (
     RegisterResponse,
 )
 from app.schemas.user_schema import UserResponse
-from app.services.notification_service import create_notification, enqueue_verification_email
+from app.services.notification_service import create_notification, enqueue_password_reset_email, enqueue_verification_email
 
 
 logger = logging.getLogger(__name__)
@@ -91,6 +91,7 @@ PUBLIC_EMAIL_VERIFICATION_QUEUED_MESSAGE = "Solicitud recibida. El correo de con
 PUBLIC_EMAIL_DELIVERY_UNAVAILABLE_MESSAGE = "No fue posible enviar el correo ahora. Inténtalo nuevamente en unos minutos."
 EMAIL_VERIFICATION_TTL_MINUTES = 60
 EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS = 60
+PASSWORD_RESET_TTL_MINUTES = 30
 EMAIL_CONFIRMED_REDIRECT_PATH = "/?email_confirmed=1"
 EMAIL_VERIFICATION_SECURITY_HEADERS = {
     "Cache-Control": "no-store",
@@ -1055,20 +1056,32 @@ def request_password_recovery(payload: PasswordRecoveryRequest, request: Request
     apply_public_rate_limits(db, request, email, "password_recovery")
     verify_turnstile_or_403(db, request, token=payload.turnstile_token, expected_action="password_recovery")
     user = db.query(User).filter(or_(func.lower(User.email) == email, func.lower(User.username) == email)).first()
-    if user and not user_access_block_reason(db, user):
+    if user and user.email_verified and not user_access_block_reason(db, user):
         raw_token = secrets.token_urlsafe(48)
+        db.query(PasswordResetToken).filter(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.used_at.is_(None),
+        ).update({PasswordResetToken.used_at: datetime.utcnow()}, synchronize_session=False)
         db.add(
             PasswordResetToken(
                 organization_id=user.organization_id,
                 user_id=user.id,
                 token_hash=hash_value(raw_token),
-                expires_at=datetime.utcnow() + timedelta(minutes=30),
+                expires_at=datetime.utcnow() + timedelta(minutes=PASSWORD_RESET_TTL_MINUTES),
                 requested_ip_hash=hash_value(request_ip(request)),
                 requested_user_agent=request.headers.get("user-agent", "")[:1000],
             )
         )
+        enqueue_password_reset_email(db, user=user, raw_token=raw_token)
         audit_auth_event(db, request=request, event_type="PASSWORD_RECOVERY_REQUESTED", outcome="CREATED", user=user)
         logger.info("Password reset token generated for user_id=%s; token is intentionally not logged.", user.id)
+    elif user and not user.email_verified and (user.status or "").upper() in EMAIL_VERIFICATION_RESEND_STATUSES:
+        # Recovery must not become an alternate path around email verification.
+        # The public response remains identical to preserve anti-enumeration.
+        sent_at = user.email_verification_sent_at
+        if not sent_at or (now_utc() - sent_at).total_seconds() >= EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS:
+            issue_email_verification(db, user)
+            audit_auth_event(db, request=request, event_type="PASSWORD_RECOVERY_REQUESTED", outcome="VERIFICATION_REQUIRED", user=user)
     else:
         audit_auth_event(db, request=request, event_type="PASSWORD_RECOVERY_REQUESTED", outcome="ACCEPTED")
     db.commit()

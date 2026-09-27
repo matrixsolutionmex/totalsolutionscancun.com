@@ -3809,6 +3809,22 @@
         <button class="auth-switch" id="backToLoginFromRecoveryButton" type="button">Volver al acceso</button>
         <div class="auth-status" id="recoveryStatus" aria-live="polite"></div>
       </form>
+      <form class="login-card hidden" id="resetPasswordForm" autocomplete="off">
+        <div class="brand-lockup compact" aria-label="Total Solutions">
+          <img class="brand-logo" src="/assets/assets/favicon.svg" alt="">
+          <div class="brand-wordmark"><span>Total</span><span>Solutions</span><small>Acceso seguro</small></div>
+        </div>
+        <h1 data-i18n="resetPasswordTitle">Actualizar contraseña</h1>
+        <div class="subtitle" data-i18n="resetPasswordSubtitle">Elige una nueva contraseña para continuar.</div>
+        <div class="login-form">
+          <input id="resetPasswordValue" type="password" autocomplete="new-password" data-i18n-placeholder="newPasswordPlaceholder" placeholder="Nueva contraseña">
+          <input id="resetPasswordConfirmation" type="password" autocomplete="new-password" data-i18n-placeholder="confirmPasswordPlaceholder" placeholder="Confirmar contraseña">
+          <div class="turnstile-slot" id="passwordResetTurnstile"></div>
+          <button id="resetPasswordButton" type="submit" data-i18n="resetPasswordButton">Actualizar contraseña</button>
+        </div>
+        <button class="auth-switch" id="backToLoginFromResetButton" type="button" data-i18n="backToLogin">Volver al acceso</button>
+        <div class="auth-status" id="resetPasswordStatus" aria-live="polite"></div>
+      </form>
     </div>
   </section>
 
@@ -5009,6 +5025,7 @@
         ["email_verification_change", "changeVerificationTurnstile"],
         ["reactivation", "reactivationTurnstile"],
         ["password_recovery", "recoveryTurnstile"],
+        ["password_reset", "passwordResetTurnstile"],
         ["google_link", "googleLinkTurnstile"]
       ].forEach(([action, elementId]) => {
         const element = document.getElementById(elementId);
@@ -5100,7 +5117,7 @@
     }
 
     function showAuthGateway() {
-      ["loginForm", "registerForm", "emailVerificationForm", "reactivationForm", "recoveryForm", "mfaForm"].forEach((id) => document.getElementById(id)?.classList.add("hidden"));
+      ["loginForm", "registerForm", "emailVerificationForm", "reactivationForm", "recoveryForm", "resetPasswordForm", "mfaForm"].forEach((id) => document.getElementById(id)?.classList.add("hidden"));
       document.getElementById("authGatewayForm")?.classList.remove("hidden");
       googleLogin("continue").catch(() => {});
       ["authGatewayStatus", "loginStatus", "registerStatus", "emailVerificationStatus", "reactivationStatus", "recoveryStatus", "mfaStatus"].forEach((id) => setAuthStatus(id));
@@ -5211,6 +5228,37 @@
       document.getElementById("recoveryForm").classList.remove("hidden");
       document.getElementById("recoveryEmail").value = document.getElementById("loginUser").value.trim();
       setAuthStatus("loginStatus");
+    }
+
+    function showResetPasswordForm() {
+      ["authGatewayForm", "loginForm", "registerForm", "emailVerificationForm", "reactivationForm", "recoveryForm", "mfaForm"].forEach((id) => document.getElementById(id)?.classList.add("hidden"));
+      document.getElementById("resetPasswordForm").classList.remove("hidden");
+      setAuthStatus("resetPasswordStatus");
+    }
+
+    async function resetPasswordFromEmail(event) {
+      event.preventDefault();
+      const token = new URLSearchParams(window.location.search).get("reset_token") || "";
+      const password = document.getElementById("resetPasswordValue").value;
+      const confirmation = document.getElementById("resetPasswordConfirmation").value;
+      if (!token || password.length < 10 || password !== confirmation) {
+        setAuthStatus("resetPasswordStatus", t(password !== confirmation ? "passwordsMismatch" : "resetPasswordInvalid"), "error");
+        return;
+      }
+      const response = await fetch(`${API_BASE}/auth/password-recovery/reset`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, password, turnstile_token: turnstileToken("password_reset") })
+      });
+      resetTurnstile("password_reset");
+      if (!response.ok) {
+        setAuthStatus("resetPasswordStatus", await responseMessage(response, t("resetPasswordError")), "error");
+        return;
+      }
+      setAuthStatus("resetPasswordStatus", t("resetPasswordSuccess"), "success");
+      history.replaceState({}, "", window.location.pathname);
+      window.setTimeout(showAuthGateway, 1200);
     }
 
     function showMfaForm({ challengeToken, setupRequired, message }) {
@@ -5446,7 +5494,8 @@
         emailReviewText: "Enviamos um link de confirmação para seu e-mail. Você precisa confirmar antes que um administrador possa ativar seu acesso.",
         emailReviewQueued: "Solicitação recebida. O e-mail de confirmação está sendo processado.",
         emailReviewSent: "Link de confirmação enviado, se o e-mail estiver válido.",
-        resendEmail: "Reenviar e-mail",
+        emailVerificationRequired: "Seu e-mail precisa ser confirmado antes do login.",
+        resendEmail: "Reenviar e-mail de confirmação",
         changeEmail: "Alterar e-mail",
         changeEmailPrompt: "Informe o e-mail correto para reenviar a confirmação.",
         changeEmailSuccess: "Se a solicitação for válida, enviaremos um novo link para o e-mail informado.",
@@ -5454,6 +5503,14 @@
         resendError: "Não foi possível reenviar agora.",
         emailDeliveryUnavailable: "Não foi possível enviar o e-mail agora. Tente novamente em alguns minutos.",
         emailMissingForResend: "Informe o e-mail para reenviar a confirmação.",
+        resetPasswordTitle: "Atualizar senha",
+        resetPasswordSubtitle: "Escolha uma nova senha para continuar.",
+        newPasswordPlaceholder: "Nova senha",
+        confirmPasswordPlaceholder: "Confirmar senha",
+        resetPasswordButton: "Atualizar senha",
+        resetPasswordInvalid: "Informe duas senhas iguais com pelo menos 10 caracteres.",
+        resetPasswordError: "Não foi possível atualizar a senha. O link pode ter expirado.",
+        resetPasswordSuccess: "Senha atualizada. Você já pode entrar.",
         pendingUsersTitle: "Registros pendientes de aprobación",
         noPendingUsers: "Nenhum cadastro aguardando aprovação.",
         approve: "Aprovar",
@@ -5656,7 +5713,8 @@
         emailReviewText: "We sent a confirmation link to your email address. You must confirm it before an administrator can activate your access.",
         emailReviewQueued: "Request received. Your confirmation email is being processed.",
         emailReviewSent: "Confirmation link sent if the email is valid.",
-        resendEmail: "Resend email",
+        emailVerificationRequired: "Your email must be confirmed before sign-in.",
+        resendEmail: "Resend confirmation email",
         changeEmail: "Change email",
         changeEmailPrompt: "Enter the correct email address to resend confirmation.",
         changeEmailSuccess: "If the request is valid, we will send a new link to the informed email.",
@@ -5664,6 +5722,14 @@
         resendError: "We could not resend it right now.",
         emailDeliveryUnavailable: "We could not send the email right now. Try again in a few minutes.",
         emailMissingForResend: "Enter the email address to resend confirmation.",
+        resetPasswordTitle: "Update password",
+        resetPasswordSubtitle: "Choose a new password to continue.",
+        newPasswordPlaceholder: "New password",
+        confirmPasswordPlaceholder: "Confirm password",
+        resetPasswordButton: "Update password",
+        resetPasswordInvalid: "Enter matching passwords with at least 10 characters.",
+        resetPasswordError: "We could not update the password. The link may have expired.",
+        resetPasswordSuccess: "Password updated. You can sign in now.",
         pendingUsersTitle: "Registrations awaiting approval",
         noPendingUsers: "No registrations awaiting approval.",
         approve: "Approve",
@@ -5874,7 +5940,8 @@
         emailReviewText: "Enviamos un enlace de confirmación a tu correo electrónico. Debes confirmarlo antes de que un administrador pueda activar tu acceso.",
         emailReviewQueued: "Solicitud recibida. El correo de confirmación está siendo procesado.",
         emailReviewSent: "Enlace de confirmación enviado si el correo es válido.",
-        resendEmail: "Reenviar correo",
+        emailVerificationRequired: "Debes confirmar tu correo antes de iniciar sesión.",
+        resendEmail: "Reenviar correo de confirmación",
         changeEmail: "Cambiar correo",
         changeEmailPrompt: "Informa el correo correcto para reenviar la confirmación.",
         changeEmailSuccess: "Si la solicitud es válida, enviaremos un nuevo enlace al correo informado.",
@@ -5882,6 +5949,14 @@
         resendError: "No fue posible reenviar ahora.",
         emailDeliveryUnavailable: "No fue posible enviar el correo ahora. Inténtalo nuevamente en unos minutos.",
         emailMissingForResend: "Informa el correo para reenviar la confirmación.",
+        resetPasswordTitle: "Actualizar contraseña",
+        resetPasswordSubtitle: "Elige una nueva contraseña para continuar.",
+        newPasswordPlaceholder: "Nueva contraseña",
+        confirmPasswordPlaceholder: "Confirmar contraseña",
+        resetPasswordButton: "Actualizar contraseña",
+        resetPasswordInvalid: "Informa dos contraseñas iguales de al menos 10 caracteres.",
+        resetPasswordError: "No fue posible actualizar la contraseña. El enlace puede haber expirado.",
+        resetPasswordSuccess: "Contraseña actualizada. Ya puedes iniciar sesión.",
         pendingUsersTitle: "Registros pendientes de aprobación",
         noPendingUsers: "No hay registros pendientes de aprobación.",
         approve: "Aprobar",
@@ -10025,7 +10100,13 @@
       });
 
       if (!response.ok) {
-        setAuthStatus("loginStatus", await responseMessage(response, t("loginInvalid")), "error");
+        const errorMessage = await responseMessage(response, t("loginInvalid"));
+        if (response.status === 403 && /correo|e-mail|email/i.test(errorMessage) && /confirm|verification|verific/i.test(errorMessage)) {
+          showEmailVerificationForm({ email, resendAfterSeconds: 1 });
+          setAuthStatus("emailVerificationStatus", t("emailVerificationRequired"), "error");
+        } else {
+          setAuthStatus("loginStatus", errorMessage, "error");
+        }
         resetTurnstile("login");
         return;
       }
@@ -12411,6 +12492,7 @@
     document.getElementById("registerForm").addEventListener("submit", register);
     document.getElementById("reactivationForm").addEventListener("submit", requestReactivation);
     document.getElementById("recoveryForm").addEventListener("submit", requestPasswordRecovery);
+    document.getElementById("resetPasswordForm").addEventListener("submit", resetPasswordFromEmail);
     document.getElementById("showRegisterButton").addEventListener("click", showRegisterForm);
     document.getElementById("showReactivationButton").addEventListener("click", showReactivationForm);
     document.getElementById("showRecoveryButton").addEventListener("click", showRecoveryForm);
@@ -12420,6 +12502,7 @@
     document.getElementById("backToLoginFromEmailReviewButton").addEventListener("click", showAuthGateway);
     document.getElementById("backToLoginFromReactivationButton").addEventListener("click", showAuthGateway);
     document.getElementById("backToLoginFromRecoveryButton").addEventListener("click", showAuthGateway);
+    document.getElementById("backToLoginFromResetButton").addEventListener("click", showAuthGateway);
     document.getElementById("backToLoginFromMfaButton").addEventListener("click", showAuthGateway);
     document.getElementById("logoutButton").addEventListener("click", logout);
     document.getElementById("supportButton").addEventListener("click", openSupport);
@@ -13201,6 +13284,11 @@
 
     async function restoreSession() {
       const savedUser = localStorage.getItem("totalsolutions_user");
+      if (new URLSearchParams(window.location.search).has("reset_token")) {
+        showResetPasswordForm();
+        hideSplash();
+        return;
+      }
       if (pendingInviteToken) {
         showRegisterForm();
         hideSplash();

@@ -818,6 +818,109 @@ def test_active_unverified_user_resend_queues_new_verification(monkeypatch):
     session.close()
 
 
+def test_password_recovery_queues_reset_email_and_supersedes_previous_token(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    configure_smtp_capture(monkeypatch)
+    session = create_test_session()
+    user = make_user(session, "password-recovery", email="password-recovery@example.com")
+    user.email_verified = True
+    user.status = "ACTIVE"
+    user.is_active = True
+    session.commit()
+
+    first = request_password_recovery(
+        PasswordRecoveryRequest(email=user.email),
+        make_request("/auth/password-recovery/request"),
+        session,
+    )
+    assert first.message == auth_routes.PUBLIC_AUTH_MESSAGE
+    first_outbox = session.query(EmailOutbox).filter_by(recipient_user_id=user.id, template_type="PASSWORD_RESET").one()
+    first_token = parse_qs(urlparse(next(
+        line.strip() for line in first_outbox.body_text.splitlines() if "?reset_token=" in line
+    )).query)["reset_token"][0]
+    assert session.query(PasswordResetToken).filter_by(user_id=user.id, used_at=None).count() == 1
+
+    user.email_verification_sent_at = auth_routes.now_utc() - timedelta(seconds=90)
+    session.commit()
+    request_password_recovery(
+        PasswordRecoveryRequest(email=user.email),
+        make_request("/auth/password-recovery/request"),
+        session,
+    )
+    tokens = session.query(PasswordResetToken).filter_by(user_id=user.id).order_by(PasswordResetToken.id.asc()).all()
+    assert tokens[0].used_at is not None
+    assert tokens[1].used_at is None
+    assert tokens[0].token_hash != tokens[1].token_hash
+
+    assert notification_service.process_email_outbox(session) == 2
+    sent = CapturingSMTP.sent_messages[-1]
+    assert "Actualizar contraseña" in verification_email_html_body(sent)
+    assert first_token not in str(sent)
+    assert session.query(EmailOutbox).filter_by(template_type="PASSWORD_RESET", status="SENT").count() == 2
+    session.close()
+
+
+def test_unverified_password_recovery_resends_confirmation_without_reset_token(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    configure_smtp_capture(monkeypatch)
+    session = create_test_session()
+    user = make_user(session, "unverified-recovery", email="unverified-recovery@example.com", status="PENDING_EMAIL", is_active=False)
+    user.email_verified = False
+    user.email_verification_sent_at = auth_routes.now_utc() - timedelta(seconds=90)
+    session.commit()
+
+    response = request_password_recovery(
+        PasswordRecoveryRequest(email=user.email),
+        make_request("/auth/password-recovery/request"),
+        session,
+    )
+    assert response.message == auth_routes.PUBLIC_AUTH_MESSAGE
+    assert session.query(PasswordResetToken).filter_by(user_id=user.id).count() == 0
+    outbox = session.query(EmailOutbox).filter_by(recipient_user_id=user.id).one()
+    assert outbox.template_type == "EMAIL_VERIFICATION"
+    session.close()
+
+
+def test_password_reset_consumes_token_without_changing_email_verification(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
+    session = create_test_session()
+    user = make_user(session, "password-reset", email="password-reset@example.com")
+    user.email_verified = True
+    user.status = "ACTIVE"
+    user.is_active = True
+    old_hash = user.password_hash
+    raw_token = "qa-password-reset-token"
+    session.add(PasswordResetToken(
+        organization_id=user.organization_id,
+        user_id=user.id,
+        token_hash=hash_value(raw_token),
+        expires_at=auth_routes.now_utc() + timedelta(minutes=30),
+    ))
+    session.commit()
+
+    response = reset_password(
+        PasswordResetRequest(token=raw_token, password="new-qa-password"),
+        make_request("/auth/password-recovery/reset"),
+        session,
+    )
+    session.refresh(user)
+    token_row = session.query(PasswordResetToken).filter_by(user_id=user.id).one()
+    assert response.message == "Senha atualizada com sucesso."
+    assert user.password_hash != old_hash
+    assert user.email_verified is True
+    assert token_row.used_at is not None
+    session.close()
+
+
+def test_login_pending_email_routes_to_resend_flow_in_frontend():
+    html = Path(__file__).parents[2].joinpath("frontend", "index.html").read_text(encoding="utf-8")
+    assert 'showEmailVerificationForm({ email, resendAfterSeconds: 1 })' in html
+    assert 'emailVerificationRequired' in html
+    assert "Reenviar e-mail de confirmação" in html
+    assert "Resend confirmation email" in html
+    assert "Reenviar correo de confirmación" in html
+
+
 def test_active_unverified_user_cannot_login_or_be_reactivated(monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
     session = create_test_session()

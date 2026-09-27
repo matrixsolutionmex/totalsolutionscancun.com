@@ -18,6 +18,7 @@ from app.models.lead import Lead
 from app.models.notification import EmailOutbox, Notification, NotificationPreference, WebPushSubscription
 from app.models.organization_invitation import OrganizationInvitation
 from app.models.organization import Organization
+from app.models.auth_security import PasswordResetToken
 from app.core.auth_security import hash_value
 from app.models.service_order import ServiceOrder
 from app.models.payment import Payment
@@ -557,6 +558,54 @@ def enqueue_verification_email(db: Session, *, user: User) -> EmailOutbox:
     return outbox
 
 
+def enqueue_password_reset_email(
+    db: Session,
+    *,
+    user: User,
+    raw_token: str,
+) -> EmailOutbox:
+    """Queue a password recovery message without logging the raw token.
+
+    The token is kept only in the pending outbox payload until delivery. It is
+    cleared after a successful send, while the reset table stores only its
+    hash. This follows the existing invitation-email outbox pattern.
+    """
+    base_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    reset_url = f"{base_url}/?reset_token={raw_token}" if base_url else f"/?reset_token={raw_token}"
+    safe_url = html.escape(reset_url, quote=True)
+    name = html.escape(user.full_name or user.username or "Usuario")
+    text = (
+        f"Hola {user.full_name or user.username or 'Usuario'},\n\n"
+        "Recibimos una solicitud para actualizar tu contraseña.\n"
+        f"Abre este enlace para continuar: {reset_url}\n\n"
+        "Si no solicitaste este cambio, puedes ignorar este mensaje."
+    )
+    body_html = (
+        '<div style="font-family:Arial,sans-serif;color:#172033;line-height:1.5">'
+        f"<p>Hola {name},</p>"
+        "<p>Recibimos una solicitud para actualizar tu contraseña.</p>"
+        f'<p><a href="{safe_url}" style="display:inline-block;background:#20b957;color:#fff;padding:12px 20px;text-decoration:none;border-radius:6px">Actualizar contraseña</a></p>'
+        "<p>Si no solicitaste este cambio, puedes ignorar este mensaje.</p>"
+        "</div>"
+    )
+    outbox = EmailOutbox(
+        organization_id=user.organization_id,
+        recipient_user_id=user.id,
+        template_type="PASSWORD_RESET",
+        to_email=user.email,
+        subject="Recupera tu acceso - Total Solutions",
+        body_text=text,
+        body_html=body_html,
+        status="PENDING",
+        provider="RESEND" if _resend_api_key() else "SMTP",
+        idempotency_key=f"password_reset:{user.id}:{hash_value(raw_token)}",
+        next_attempt_at=datetime.utcnow(),
+    )
+    db.add(outbox)
+    db.flush()
+    return outbox
+
+
 def notify_assignment_change(
     db: Session,
     *,
@@ -729,7 +778,7 @@ def _prepare_invitation_email(db: Session, item: EmailOutbox) -> None:
 
 def _prepare_verification_email(db: Session, item: EmailOutbox) -> None:
     user = db.query(User).filter(User.id == item.recipient_user_id).with_for_update().first()
-    if not user or user.email_verified or user.status != "PENDING_EMAIL":
+    if not user or user.email_verified or (user.status or "").upper() in {"SUSPENDED", "ARCHIVED", "DELETED"}:
         raise RuntimeError("verification_not_pending")
 
     raw_token = secrets.token_urlsafe(48)
@@ -867,6 +916,9 @@ def process_email_outbox(db: Session, *, limit: int = 10) -> int:
                 item.body_text = ""
                 item.body_html = ""
             if item.template_type == "EMAIL_VERIFICATION":
+                item.body_text = ""
+                item.body_html = ""
+            if item.template_type == "PASSWORD_RESET":
                 item.body_text = ""
                 item.body_html = ""
             sent += 1
