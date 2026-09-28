@@ -45,6 +45,7 @@ from app.routes.service_order_completion_routes import router as service_order_c
 from app.routes.service_order_warranty_claim_routes import router as service_order_warranty_claim_router
 from app.routes.service_order_review_routes import router as service_order_review_router
 from app.routes.technician_recommendation_routes import router as technician_recommendation_router
+from app.routes.identity_verification_routes import router as identity_verification_router
 from app.services.service_order_service import ensure_service_order
 from app.services.notification_service import process_email_outbox
 from app.services.commercial_upgrade_service import normalize_existing_upgrade_intents
@@ -109,6 +110,7 @@ app.include_router(service_order_completion_router)
 app.include_router(service_order_warranty_claim_router)
 app.include_router(service_order_review_router)
 app.include_router(technician_recommendation_router)
+app.include_router(identity_verification_router)
 app.include_router(pablo_router)
 app.include_router(segmentation_referral_router)
 

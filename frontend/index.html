@@ -1329,6 +1329,97 @@
       font-size: 14px;
     }
 
+    .identity-verification-card {
+      display: grid;
+      gap: 12px;
+    }
+
+    .identity-verification-card .line,
+    .identity-info-modal-box .line {
+      overflow: visible;
+      overflow-wrap: anywhere;
+      text-overflow: clip;
+      white-space: normal;
+    }
+
+    .identity-verification-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .identity-verification-copy { min-width: 0; }
+    .identity-verification-copy strong { display: block; color: var(--text); }
+    .identity-verification-copy .line { margin-top: 4px; }
+    .identity-verification-progress { display: grid; gap: 6px; }
+    .identity-verification-progress-track {
+      height: 8px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: #e2e8f0;
+    }
+    .identity-verification-progress-bar {
+      height: 100%;
+      background: var(--green);
+      transition: width 180ms ease;
+    }
+    .identity-verification-steps {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .identity-verification-step {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      min-width: 0;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: #475569;
+      font-size: 13px;
+    }
+    .identity-verification-step.complete { color: #166534; border-color: #86efac; background: #f0fdf4; }
+    .identity-verified-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: 7px;
+      padding: 3px 7px;
+      border-radius: 999px;
+      color: #166534;
+      background: #dcfce7;
+      font-size: 11px;
+      font-weight: 800;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    .identity-info-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 80;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: rgba(15, 23, 42, 0.48);
+    }
+    .identity-info-modal[hidden] { display: none; }
+    .identity-info-modal-box {
+      width: min(100%, 460px);
+      max-height: calc(100vh - 40px);
+      display: grid;
+      gap: 14px;
+      overflow-y: auto;
+      padding: 22px;
+      border-radius: 10px;
+      background: var(--panel);
+      box-shadow: 0 20px 60px rgba(15, 23, 42, 0.22);
+    }
+
     .broker-row {
       display: grid;
       grid-template-columns: 1fr auto auto;
@@ -3541,6 +3632,22 @@
       .profile-actions {
         min-width: 0;
         max-width: 100%;
+      }
+
+      .identity-verification-header {
+        display: grid;
+      }
+
+      .identity-verification-steps {
+        grid-template-columns: 1fr;
+      }
+
+      .profile-summary {
+        grid-template-columns: 1fr;
+      }
+
+      .profile-actions {
+        justify-content: flex-start;
       }
 
       .toolbar input,
@@ -9713,6 +9820,99 @@
       ].filter(Boolean).join(" | ");
       renderAvatar(profileAvatarContent, currentUser);
       removeProfilePhotoButton.hidden = !currentUser.profile_photo_url;
+      renderIdentityBadge(identityVerificationPayload?.badge === true);
+    }
+
+    function identityStatusLabel(status) {
+      const key = {
+        NOT_STARTED: "identityStatusNotStarted",
+        IN_PROGRESS: "identityStatusInProgress",
+        PENDING_REVIEW: "identityStatusPendingReview",
+        NEEDS_ACTION: "identityStatusNeedsAction",
+        VERIFIED: "identityStatusVerified",
+        REJECTED: "identityStatusRejected",
+        EXPIRED: "identityStatusExpired",
+        SUSPENDED: "identityStatusSuspended"
+      }[status] || "identityStatusNotStarted";
+      return t(key);
+    }
+
+    function identityActionLabel(action) {
+      return t({
+        START: "identityActionStart",
+        REVIEW: "identityActionReview",
+        UPDATE_INFORMATION: "identityActionUpdateInformation",
+        CONTACT_SUPPORT: "identityActionContactSupport"
+      }[action] || "identityActionStart");
+    }
+
+    function renderIdentityBadge(visible) {
+      if (!profileIdentityBadge) return;
+      profileIdentityBadge.hidden = !visible;
+      profileIdentityBadge.textContent = visible ? `✓ ${t("identityStatusVerified")}` : "";
+      profileIdentityBadge.title = visible ? t("identityStatusVerified") : "";
+      profileIdentityBadge.setAttribute("aria-label", visible ? t("identityStatusVerified") : "");
+    }
+
+    function renderIdentityVerification(payload) {
+      identityVerificationPayload = payload;
+      if (!identityVerificationPanel) return;
+      identityVerificationPanel.hidden = !payload?.available;
+      renderIdentityBadge(payload?.badge === true);
+      if (!payload?.available) return;
+      document.getElementById("identityVerificationTitle").textContent = t("identitySecurityTitle");
+      document.getElementById("identityVerificationDescription").textContent = t("identitySecurityDescription");
+      document.getElementById("identityVerificationStatus").textContent = `${t("identityStatusLabel")}: ${identityStatusLabel(payload.status)}`;
+      document.getElementById("identityVerificationProgressLabel").textContent = t("identityProgress")(Number(payload.progress) || 0);
+      document.getElementById("identityVerificationProgressBar").style.width = `${Math.max(0, Math.min(100, Number(payload.progress) || 0))}%`;
+      const stepLabels = {
+        account: "identityStepAccount",
+        email: "identityStepEmail",
+        phone: "identityStepPhone",
+        identity: "identityStepIdentity"
+      };
+      document.getElementById("identityVerificationSteps").innerHTML = (payload.steps || []).map((step) => `
+        <li class="identity-verification-step${step.complete ? " complete" : ""}">
+          <span aria-hidden="true">${step.complete ? "✓" : "○"}</span>
+          <span>${escapeHtml(t(stepLabels[step.key] || "identityStepIdentity"))}</span>
+        </li>
+      `).join("");
+      const nextAction = payload.next_action ? identityActionLabel(payload.next_action) : "";
+      document.getElementById("identityVerificationNextAction").textContent = nextAction
+        ? t("identityNextAction").replace("${action}", nextAction)
+        : "";
+      document.getElementById("identityVerificationActionButton").textContent = identityActionLabel(payload.next_action || "START");
+      document.getElementById("identityVerificationFinanceNote").textContent = t("identityFinanceNote");
+    }
+
+    async function loadIdentityVerification() {
+      if (!currentUser?.id || !identityVerificationPanel) return;
+      try {
+        const response = await apiFetch(`${API_BASE}/identity-verification/me`, { headers: { Accept: "application/json" } });
+        if (!response.ok) throw new Error("identity verification unavailable");
+        renderIdentityVerification(await response.json());
+      } catch (_error) {
+        renderIdentityVerification({ available: false, badge: false });
+      }
+    }
+
+    function openIdentityVerificationInfo() {
+      if (!identityVerificationInfoModal) return;
+      identityVerificationModalTrigger = document.activeElement;
+      document.getElementById("identityVerificationModalTitle").textContent = t("identityModalTitle");
+      document.getElementById("identityVerificationModalMessage").textContent = t("identityModalMessage");
+      document.getElementById("identityVerificationModalClose").textContent = t("identityModalClose");
+      identityVerificationBodyOverflow = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      identityVerificationInfoModal.hidden = false;
+      document.getElementById("identityVerificationModalClose")?.focus();
+    }
+
+    function closeIdentityVerificationInfo() {
+      if (identityVerificationInfoModal) identityVerificationInfoModal.hidden = true;
+      document.body.style.overflow = identityVerificationBodyOverflow;
+      identityVerificationModalTrigger?.focus?.();
+      identityVerificationModalTrigger = null;
     }
 
     function openMyProfile() {
@@ -10044,6 +10244,7 @@
       startBrokerLeadWatch();
       startBoardClock();
       startNotificationPolling();
+      loadIdentityVerification().catch(() => {});
       loadGoogleLinkStatus().catch(() => {});
       openAdminUsersFromUrlIfPresent().catch(() => {});
       openLeadFromUrlIfPresent().catch(() => {});
@@ -12558,6 +12759,11 @@
     profilePhotoButton.addEventListener("click", () => profilePhotoInput.click());
     profilePhotoInput.addEventListener("change", uploadProfilePhoto);
     removeProfilePhotoButton.addEventListener("click", removeProfilePhoto);
+    document.getElementById("identityVerificationActionButton")?.addEventListener("click", openIdentityVerificationInfo);
+    document.getElementById("identityVerificationModalClose")?.addEventListener("click", closeIdentityVerificationInfo);
+    identityVerificationInfoModal?.addEventListener("click", (event) => {
+      if (event.target === identityVerificationInfoModal) closeIdentityVerificationInfo();
+    });
       document.getElementById("moveLeadBrokerButton").addEventListener("click", moveLeadToBroker);
       document.getElementById("reassignLeadButton").addEventListener("click", moveLeadToBroker);
       document.getElementById("leadBrokerTarget").addEventListener("change", updateLeadResponsibleSummary);
@@ -13235,6 +13441,9 @@
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && mobileDrawer?.classList.contains("open")) {
         closeMobileDrawer();
+      }
+      if (event.key === "Escape" && identityVerificationInfoModal && !identityVerificationInfoModal.hidden) {
+        closeIdentityVerificationInfo();
       }
     });
     document.querySelectorAll("[data-admin-user-tab]").forEach((button) => {
