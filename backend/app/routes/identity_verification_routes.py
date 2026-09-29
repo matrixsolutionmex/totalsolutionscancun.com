@@ -1,7 +1,7 @@
 import os
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -17,6 +17,11 @@ from app.services.identity_provider_service import (
     provider_config,
     verify_metamap_signature,
 )
+from app.services.identity_human_review_service import (
+    decide_review,
+    get_review_item,
+    list_review_queue,
+)
 
 
 router = APIRouter(prefix="/identity-verification", tags=["identity-verification"])
@@ -26,6 +31,12 @@ class IdentityVerificationStartRequest(BaseModel):
     consent: bool
     consent_version: str
     policy: str = "MEXICAN"
+
+
+class IdentityHumanReviewDecisionRequest(BaseModel):
+    decision: str = Field(min_length=1, max_length=32)
+    reason_code: str = Field(min_length=1, max_length=64)
+    idempotency_key: str = Field(min_length=1, max_length=128)
 
 
 @router.get("/provider-config")
@@ -101,3 +112,75 @@ def get_my_identity_verification(
     db: Session = Depends(get_db),
 ):
     return get_identity_verification_payload(db, actor)
+
+
+@router.get("/human-review/queue")
+def get_human_review_queue(
+    actor: User = Depends(get_actor),
+    db: Session = Depends(get_db),
+):
+    try:
+        return {"items": list_review_queue(db, reviewer=actor)}
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="human_review_not_permitted") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="human_review_unavailable") from exc
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="human_review_unavailable") from exc
+
+
+@router.get("/human-review/attempts/{attempt_id}")
+def get_human_review_attempt(
+    attempt_id: int,
+    actor: User = Depends(get_actor),
+    db: Session = Depends(get_db),
+):
+    try:
+        return get_review_item(db, attempt_id=attempt_id, reviewer=actor)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="human_review_not_permitted") from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="review_item_not_found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="review_item_not_pending") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="human_review_unavailable") from exc
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="human_review_unavailable") from exc
+
+
+@router.post("/human-review/attempts/{attempt_id}/decision")
+def post_human_review_decision(
+    attempt_id: int,
+    request: IdentityHumanReviewDecisionRequest,
+    actor: User = Depends(get_actor),
+    db: Session = Depends(get_db),
+):
+    try:
+        result = decide_review(
+            db,
+            attempt_id=attempt_id,
+            reviewer=actor,
+            decision=request.decision,
+            reason_code=request.reason_code,
+            idempotency_key=request.idempotency_key,
+        )
+        db.commit()
+        return result
+    except PermissionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=403, detail="human_review_not_permitted") from exc
+    except LookupError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="review_item_not_found") from exc
+    except RuntimeError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="human_review_unavailable") from exc
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="review_decision_not_applied") from exc
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="human_review_unavailable") from exc

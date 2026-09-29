@@ -302,7 +302,12 @@ def create_database_tables():
     # Identity verification tables are controlled migrations, never startup side effects.
     managed_tables = [
         table for table in Base.metadata.sorted_tables
-        if table.name not in {"identity_verifications", "identity_verification_attempts", "identity_verification_events"}
+        if table.name not in {
+            "identity_verifications",
+            "identity_verification_attempts",
+            "identity_verification_events",
+            "identity_human_review_decisions",
+        }
     ]
     Base.metadata.create_all(bind=engine, tables=managed_tables)
     startup_log("Tabelas verificadas/criadas com sucesso.")

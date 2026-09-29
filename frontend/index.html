@@ -1352,6 +1352,43 @@
     .identity-verification-copy { min-width: 0; }
     .identity-verification-copy strong { display: block; color: var(--text); }
     .identity-verification-copy .line { margin-top: 4px; }
+
+    .identity-human-review-panel[hidden],
+    .identity-human-review-modal[hidden] { display: none; }
+    .identity-human-review-panel { margin-top: 16px; }
+    .identity-human-review-header,
+    .identity-human-review-card-header,
+    .identity-human-review-actions,
+    .identity-human-review-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .identity-human-review-header,
+    .identity-human-review-card-header { justify-content: space-between; flex-wrap: wrap; }
+    .identity-human-review-status { min-height: 24px; color: var(--muted); }
+    .identity-human-review-status.error { color: #b91c1c; }
+    .identity-human-review-list { display: grid; gap: 12px; margin-top: 14px; }
+    .identity-human-review-card {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+    .identity-human-review-card-header strong,
+    .identity-human-review-meta span { overflow-wrap: anywhere; }
+    .identity-human-review-meta { flex-wrap: wrap; color: #64748b; font-size: 0.86rem; }
+    .identity-human-review-actions { justify-content: flex-end; flex-wrap: wrap; }
+    .identity-human-review-actions button[disabled] { cursor: not-allowed; opacity: 0.55; }
+    .identity-human-review-empty { color: #64748b; padding: 14px 0; }
+    .identity-human-review-modal .identity-info-modal-box { width: min(100%, 560px); }
+    .identity-human-review-modal select { width: 100%; min-height: 48px; }
+    @media (max-width: 600px) {
+      .identity-human-review-actions { justify-content: stretch; }
+      .identity-human-review-actions button { flex: 1 1 100%; }
+    }
     .identity-verification-progress { display: grid; gap: 6px; }
     .identity-verification-progress-track {
       height: 8px;
@@ -4154,6 +4191,35 @@
         <button class="ghost" id="identityVerificationModalClose" type="button"></button>
       </div>
     </div>
+    <section class="panel-box identity-human-review-panel" id="identityHumanReviewPanel" hidden aria-labelledby="identityHumanReviewTitle">
+      <div class="identity-human-review-header">
+        <div>
+          <div class="panel-title" id="identityHumanReviewTitle"></div>
+          <div class="line" id="identityHumanReviewDescription"></div>
+        </div>
+        <button class="ghost" id="identityHumanReviewRefresh" type="button"></button>
+      </div>
+      <div class="identity-human-review-status" id="identityHumanReviewStatus" aria-live="polite"></div>
+      <div class="identity-human-review-list" id="identityHumanReviewList"></div>
+    </section>
+    <div class="identity-info-modal identity-human-review-modal" id="identityHumanReviewModal" hidden>
+      <div class="identity-info-modal-box" role="dialog" aria-modal="true" aria-labelledby="identityHumanReviewModalTitle">
+        <div class="panel-title" id="identityHumanReviewModalTitle"></div>
+        <div class="line" id="identityHumanReviewModalMessage"></div>
+        <label class="line" for="identityHumanReviewReason" id="identityHumanReviewReasonLabel"></label>
+        <select id="identityHumanReviewReason">
+          <option value="PROVIDER_RESULT_REVIEW"></option>
+          <option value="DOCUMENT_CLARIFICATION"></option>
+          <option value="INSUFFICIENT_EVIDENCE"></option>
+          <option value="POLICY_CHECK"></option>
+        </select>
+        <div class="auth-status" id="identityHumanReviewModalStatus" aria-live="assertive"></div>
+        <div class="identity-human-review-actions">
+          <button class="ghost" id="identityHumanReviewCancel" type="button"></button>
+          <button id="identityHumanReviewConfirm" type="button"></button>
+        </div>
+      </div>
+    </div>
     <div class="panel-box" id="googleLinkPanel" hidden>
       <div class="panel-title" id="googleLinkTitle">Vincular conta Google</div>
       <div class="line" id="googleLinkDescription">Vincule a conta Google que usa o mesmo e-mail desta conta.</div>
@@ -5765,6 +5831,38 @@
         identityConsent: "Li o aviso de privacidade e autorizo esta verificação de identidade.",
         identityProviderUnavailable: "A verificação não está disponível neste ambiente.",
         identityFinanceNote: "No futuro, a verificação poderá apoiar recursos financeiros da conta. Nenhuma regra financeira é alterada aqui.",
+        identityReviewTitle: "Revisões de identidade",
+        identityReviewDescription: "Analise somente tentativas autorizadas do seu tenant.",
+        identityReviewRefresh: "Atualizar fila",
+        identityReviewLoading: "Carregando revisões...",
+        identityReviewEmpty: "Não há revisões pendentes.",
+        identityReviewUnavailable: "A fila de revisão não está disponível.",
+        identityReviewReference: "Tentativa",
+        identityReviewProvider: "Provedor",
+        identityReviewMode: "Ambiente",
+        identityReviewStatus: "Status",
+        identityReviewCreated: "Criada",
+        identityReviewUpdated: "Atualizada",
+        identityReviewState: "Revisão",
+        identityReviewApprove: "Aprovar",
+        identityReviewReject: "Rejeitar",
+        identityReviewChanges: "Solicitar alterações",
+        identityReviewApproveUnavailable: "Aprovação indisponível em sandbox",
+        identityReviewConfirmTitle: "Confirmar decisão",
+        identityReviewConfirmApprove: "A aprovação só poderá concluir após validação live do provedor.",
+        identityReviewConfirmReject: "A rejeição encerrará esta tentativa como não aprovada.",
+        identityReviewConfirmChanges: "A solicitação devolverá esta tentativa para ação necessária.",
+        identityReviewReason: "Motivo",
+        identityReviewReasonProvider: "Resultado do provedor",
+        identityReviewReasonDocument: "Esclarecimento documental",
+        identityReviewReasonEvidence: "Evidência insuficiente",
+        identityReviewReasonPolicy: "Revisão de política",
+        identityReviewCancel: "Cancelar",
+        identityReviewConfirm: "Confirmar decisão",
+        identityReviewDecisionSent: "Decisão registrada.",
+        identityReviewConflict: "Esta tentativa já foi atualizada. Recarregue a fila.",
+        identityReviewError: "Não foi possível registrar a decisão.",
+        identityReviewPending: "Pendente",
         distributeTitle: "Asignar solicitudes por servicio y ubicación",
         selectBroker: "Seleccione técnico",
         allBrokers: "Todos los técnicos",
@@ -6011,6 +6109,38 @@
         identityConsent: "I have read the privacy notice and authorize this identity verification.",
         identityProviderUnavailable: "Verification is not available in this environment.",
         identityFinanceNote: "In the future, verification may support account financial features. No financial rule is changed here.",
+        identityReviewTitle: "Identity reviews",
+        identityReviewDescription: "Review only authorized attempts from your tenant.",
+        identityReviewRefresh: "Refresh queue",
+        identityReviewLoading: "Loading reviews...",
+        identityReviewEmpty: "There are no pending reviews.",
+        identityReviewUnavailable: "The review queue is not available.",
+        identityReviewReference: "Attempt",
+        identityReviewProvider: "Provider",
+        identityReviewMode: "Environment",
+        identityReviewStatus: "Status",
+        identityReviewCreated: "Created",
+        identityReviewUpdated: "Updated",
+        identityReviewState: "Review",
+        identityReviewApprove: "Approve",
+        identityReviewReject: "Reject",
+        identityReviewChanges: "Request changes",
+        identityReviewApproveUnavailable: "Approval unavailable in sandbox",
+        identityReviewConfirmTitle: "Confirm decision",
+        identityReviewConfirmApprove: "Approval can complete only after a live provider validation.",
+        identityReviewConfirmReject: "Rejection will close this attempt as not approved.",
+        identityReviewConfirmChanges: "This request will return the attempt for required action.",
+        identityReviewReason: "Reason",
+        identityReviewReasonProvider: "Provider result",
+        identityReviewReasonDocument: "Document clarification",
+        identityReviewReasonEvidence: "Insufficient evidence",
+        identityReviewReasonPolicy: "Policy review",
+        identityReviewCancel: "Cancel",
+        identityReviewConfirm: "Confirm decision",
+        identityReviewDecisionSent: "Decision recorded.",
+        identityReviewConflict: "This attempt was already updated. Refresh the queue.",
+        identityReviewError: "The decision could not be recorded.",
+        identityReviewPending: "Pending",
         distributeTitle: "Asignar solicitudes por servicio y ubicación",
         selectBroker: "Seleccione técnico",
         allBrokers: "Todos los técnicos",
@@ -6265,6 +6395,38 @@
         identityConsent: "He leído el aviso de privacidad y autorizo esta verificación de identidad.",
         identityProviderUnavailable: "La verificación no está disponible en este entorno.",
         identityFinanceNote: "En el futuro, la verificación podrá apoyar funciones financieras de la cuenta. Aquí no cambia ninguna regla financiera.",
+        identityReviewTitle: "Revisiones de identidad",
+        identityReviewDescription: "Revisa solamente intentos autorizados de tu tenant.",
+        identityReviewRefresh: "Actualizar cola",
+        identityReviewLoading: "Cargando revisiones...",
+        identityReviewEmpty: "No hay revisiones pendientes.",
+        identityReviewUnavailable: "La cola de revisión no está disponible.",
+        identityReviewReference: "Intento",
+        identityReviewProvider: "Proveedor",
+        identityReviewMode: "Entorno",
+        identityReviewStatus: "Estado",
+        identityReviewCreated: "Creado",
+        identityReviewUpdated: "Actualizado",
+        identityReviewState: "Revisión",
+        identityReviewApprove: "Aprobar",
+        identityReviewReject: "Rechazar",
+        identityReviewChanges: "Solicitar cambios",
+        identityReviewApproveUnavailable: "Aprobación no disponible en sandbox",
+        identityReviewConfirmTitle: "Confirmar decisión",
+        identityReviewConfirmApprove: "La aprobación solo puede completarse tras una validación live del proveedor.",
+        identityReviewConfirmReject: "El rechazo cerrará este intento como no aprobado.",
+        identityReviewConfirmChanges: "La solicitud devolverá este intento para acción requerida.",
+        identityReviewReason: "Motivo",
+        identityReviewReasonProvider: "Resultado del proveedor",
+        identityReviewReasonDocument: "Aclaración documental",
+        identityReviewReasonEvidence: "Evidencia insuficiente",
+        identityReviewReasonPolicy: "Revisión de política",
+        identityReviewCancel: "Cancelar",
+        identityReviewConfirm: "Confirmar decisión",
+        identityReviewDecisionSent: "Decisión registrada.",
+        identityReviewConflict: "Este intento ya fue actualizado. Actualiza la cola.",
+        identityReviewError: "No fue posible registrar la decisión.",
+        identityReviewPending: "Pendiente",
         distributeTitle: "Asignar solicitudes por servicio y ubicación",
         selectBroker: "Seleccione técnico",
         allBrokers: "Todos los técnicos",
@@ -6387,6 +6549,17 @@
     const profileIdentityBadge = document.getElementById("profileIdentityBadge");
     const identityVerificationPanel = document.getElementById("identityVerificationPanel");
     const identityVerificationInfoModal = document.getElementById("identityVerificationInfoModal");
+    const identityHumanReviewPanel = document.getElementById("identityHumanReviewPanel");
+    const identityHumanReviewList = document.getElementById("identityHumanReviewList");
+    const identityHumanReviewModal = document.getElementById("identityHumanReviewModal");
+    const identityHumanReviewReason = document.getElementById("identityHumanReviewReason");
+    const identityHumanReviewCancel = document.getElementById("identityHumanReviewCancel");
+    const identityHumanReviewConfirm = document.getElementById("identityHumanReviewConfirm");
+    let humanReviewQueue = [];
+    let activeHumanReview = null;
+    let humanReviewModalTrigger = null;
+    let humanReviewBodyOverflow = "";
+    let humanReviewDecisionInFlight = false;
     let identityVerificationPayload = null;
     let identityVerificationModalTrigger = null;
     let identityVerificationBodyOverflow = "";
@@ -7854,6 +8027,7 @@
       setPlaceholder("#registerPasswordConfirm", t("passwordConfirmPlaceholder"));
       setText("#pendingUsersTitle", t("pendingUsersTitle"));
       if (identityVerificationPayload) renderIdentityVerification(identityVerificationPayload);
+      renderHumanReviewLabels();
 
       document.querySelectorAll(".nav .nav-main[data-view-target]").forEach((button, index) => {
         button.textContent = t("nav")[index] || button.textContent;
@@ -10045,6 +10219,199 @@
       }
     }
 
+    const HUMAN_REVIEW_DECISIONS = new Set(["APPROVE", "REJECT", "REQUEST_CHANGES"]);
+    const HUMAN_REVIEW_REASONS = new Set(["PROVIDER_RESULT_REVIEW", "DOCUMENT_CLARIFICATION", "INSUFFICIENT_EVIDENCE", "POLICY_CHECK"]);
+
+    function renderHumanReviewLabels() {
+      const labels = {
+        "#identityHumanReviewTitle": "identityReviewTitle",
+        "#identityHumanReviewDescription": "identityReviewDescription",
+        "#identityHumanReviewRefresh": "identityReviewRefresh",
+        "#identityHumanReviewReasonLabel": "identityReviewReason",
+        "#identityHumanReviewCancel": "identityReviewCancel",
+        "#identityHumanReviewConfirm": "identityReviewConfirm",
+        "#identityHumanReviewModalTitle": "identityReviewConfirmTitle"
+      };
+      Object.entries(labels).forEach(([selector, key]) => setText(selector, t(key)));
+      const options = {
+        PROVIDER_RESULT_REVIEW: "identityReviewReasonProvider",
+        DOCUMENT_CLARIFICATION: "identityReviewReasonDocument",
+        INSUFFICIENT_EVIDENCE: "identityReviewReasonEvidence",
+        POLICY_CHECK: "identityReviewReasonPolicy"
+      };
+      Object.entries(options).forEach(([value, key]) => {
+        const option = identityHumanReviewReason?.querySelector(`option[value="${value}"]`);
+        if (option) option.textContent = t(key);
+      });
+    }
+
+    function resetHumanReviewUi() {
+      humanReviewQueue = [];
+      activeHumanReview = null;
+      humanReviewDecisionInFlight = false;
+      if (identityHumanReviewPanel) identityHumanReviewPanel.hidden = true;
+      if (identityHumanReviewList) identityHumanReviewList.replaceChildren();
+      const status = document.getElementById("identityHumanReviewStatus");
+      if (status) {
+        status.textContent = "";
+        status.classList.remove("error");
+      }
+      if (identityHumanReviewModal) identityHumanReviewModal.hidden = true;
+      if (identityHumanReviewReason) identityHumanReviewReason.value = "PROVIDER_RESULT_REVIEW";
+      if (identityHumanReviewConfirm) identityHumanReviewConfirm.disabled = false;
+      if (identityHumanReviewCancel) identityHumanReviewCancel.disabled = false;
+      document.body.style.overflow = humanReviewBodyOverflow;
+      humanReviewModalTrigger = null;
+    }
+
+    function isSafeHumanReviewItem(item) {
+      if (!item || !Number.isInteger(item.id) || typeof item.reference !== "string") return false;
+      if (!["string"].includes(typeof item.provider) || typeof item.status !== "string") return false;
+      if (item.provider_mode !== "sandbox" && item.provider_mode !== "live") return false;
+      if (item.review_state !== "PENDING" && !HUMAN_REVIEW_DECISIONS.has(item.review_state)) return false;
+      if (item.reviewable !== true && item.reviewable !== false) return false;
+      if (["created_at", "updated_at", "expires_at"].some((key) => item[key] !== null && typeof item[key] !== "string")) return false;
+      return Array.isArray(item.decisions) && item.decisions.every((decision) => (
+        decision && Number.isInteger(decision.id) && HUMAN_REVIEW_DECISIONS.has(decision.decision)
+        && HUMAN_REVIEW_REASONS.has(decision.reason_code) && typeof decision.created_at === "string"
+      ));
+    }
+
+    function humanReviewDate(value) {
+      if (!value) return "";
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? "" : parsed.toLocaleString(translations[currentLanguage]?.locale || "es-MX");
+    }
+
+    function humanReviewMeta(labelKey, value) {
+      const node = document.createElement("span");
+      node.textContent = `${t(labelKey)}: ${value}`;
+      return node;
+    }
+
+    function renderHumanReviewQueue(data) {
+      resetHumanReviewUi();
+      if (!data || !Array.isArray(data.items) || !data.items.every(isSafeHumanReviewItem)) return false;
+      humanReviewQueue = data.items;
+      renderHumanReviewLabels();
+      if (humanReviewQueue.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "identity-human-review-empty";
+        empty.textContent = t("identityReviewEmpty");
+        identityHumanReviewList?.appendChild(empty);
+      }
+      humanReviewQueue.forEach((item, index) => {
+        const card = document.createElement("article");
+        card.className = "identity-human-review-card";
+        const header = document.createElement("div");
+        header.className = "identity-human-review-card-header";
+        const title = document.createElement("strong");
+        title.textContent = `${t("identityReviewReference")}: ${item.reference}`;
+        header.appendChild(title);
+        const state = document.createElement("span");
+        state.textContent = `${t("identityReviewState")}: ${item.review_state === "PENDING" ? t("identityReviewPending") : item.review_state}`;
+        header.appendChild(state);
+        card.appendChild(header);
+        const meta = document.createElement("div");
+        meta.className = "identity-human-review-meta";
+        meta.append(
+          humanReviewMeta("identityReviewProvider", item.provider),
+          humanReviewMeta("identityReviewMode", item.provider_mode),
+          humanReviewMeta("identityReviewStatus", item.status),
+          humanReviewMeta("identityReviewCreated", humanReviewDate(item.created_at)),
+          humanReviewMeta("identityReviewUpdated", humanReviewDate(item.updated_at))
+        );
+        card.appendChild(meta);
+        const actions = document.createElement("div");
+        actions.className = "identity-human-review-actions";
+        [["APPROVE", "identityReviewApprove"], ["REJECT", "identityReviewReject"], ["REQUEST_CHANGES", "identityReviewChanges"]].forEach(([decision, labelKey]) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.textContent = t(labelKey);
+          button.dataset.humanReviewIndex = String(index);
+          button.dataset.humanReviewDecision = decision;
+          const sandboxApproval = decision === "APPROVE" && item.provider_mode === "sandbox";
+          button.disabled = !item.reviewable || sandboxApproval;
+          if (sandboxApproval) button.title = t("identityReviewApproveUnavailable");
+          actions.appendChild(button);
+        });
+        card.appendChild(actions);
+        identityHumanReviewList?.appendChild(card);
+      });
+      identityHumanReviewPanel.hidden = false;
+      const status = document.getElementById("identityHumanReviewStatus");
+      if (status) status.textContent = "";
+      return true;
+    }
+
+    async function loadHumanReviewQueue() {
+      resetHumanReviewUi();
+      renderHumanReviewLabels();
+      if (!currentUser?.id || !["ROOT", "GERENTE"].includes(currentUser.role)) return;
+      try {
+        const response = await apiFetch(`${API_BASE}/identity-verification/human-review/queue`, { headers: { Accept: "application/json" } });
+        if (!response.ok) throw new Error("human review unavailable");
+        if (!renderHumanReviewQueue(await response.json())) throw new Error("invalid human review response");
+      } catch (_error) {
+        resetHumanReviewUi();
+      }
+    }
+
+    function closeHumanReviewModal() {
+      if (identityHumanReviewModal) identityHumanReviewModal.hidden = true;
+      document.body.style.overflow = humanReviewBodyOverflow;
+      humanReviewModalTrigger?.focus?.();
+      humanReviewModalTrigger = null;
+      activeHumanReview = null;
+      humanReviewDecisionInFlight = false;
+      if (identityHumanReviewConfirm) identityHumanReviewConfirm.disabled = false;
+      if (identityHumanReviewCancel) identityHumanReviewCancel.disabled = false;
+    }
+
+    function openHumanReviewModal(item, decision, trigger) {
+      if (!identityHumanReviewModal || !item || !HUMAN_REVIEW_DECISIONS.has(decision)) return;
+      if (decision === "APPROVE" && item.provider_mode !== "live") return;
+      activeHumanReview = { attemptId: item.id, decision };
+      humanReviewModalTrigger = trigger;
+      const messages = { APPROVE: "identityReviewConfirmApprove", REJECT: "identityReviewConfirmReject", REQUEST_CHANGES: "identityReviewConfirmChanges" };
+      document.getElementById("identityHumanReviewModalMessage").textContent = t(messages[decision]);
+      document.getElementById("identityHumanReviewModalStatus").textContent = "";
+      identityHumanReviewReason.value = decision === "APPROVE" ? "PROVIDER_RESULT_REVIEW" : "POLICY_CHECK";
+      identityHumanReviewConfirm.textContent = t("identityReviewConfirm");
+      identityHumanReviewConfirm.dataset.decision = decision;
+      humanReviewBodyOverflow = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      identityHumanReviewModal.hidden = false;
+      identityHumanReviewReason.focus();
+    }
+
+    async function submitHumanReviewDecision() {
+      if (!activeHumanReview || humanReviewDecisionInFlight) return;
+      const reasonCode = identityHumanReviewReason?.value;
+      if (!HUMAN_REVIEW_REASONS.has(reasonCode)) return;
+      humanReviewDecisionInFlight = true;
+      identityHumanReviewConfirm.disabled = true;
+      identityHumanReviewCancel.disabled = true;
+      const status = document.getElementById("identityHumanReviewModalStatus");
+      try {
+        const idempotencyKey = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        const response = await apiFetch(`${API_BASE}/identity-verification/human-review/attempts/${encodeURIComponent(activeHumanReview.attemptId)}/decision`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ decision: activeHumanReview.decision, reason_code: reasonCode, idempotency_key: idempotencyKey })
+        });
+        if (response.status === 409) throw new Error("conflict");
+        if (!response.ok) throw new Error("decision failed");
+        closeHumanReviewModal();
+        await loadHumanReviewQueue();
+      } catch (error) {
+        if (status) status.textContent = t(error.message === "conflict" ? "identityReviewConflict" : "identityReviewError");
+        humanReviewDecisionInFlight = false;
+        identityHumanReviewConfirm.disabled = false;
+        identityHumanReviewCancel.disabled = false;
+      }
+    }
+
     function loadMetaMapSdk() {
       if (window.customElements?.get("metamap-button")) return Promise.resolve();
       if (window.identityMetaMapScriptPromise) return window.identityMetaMapScriptPromise;
@@ -10455,6 +10822,7 @@
       startBoardClock();
       startNotificationPolling();
       loadIdentityVerification().catch(() => {});
+      loadHumanReviewQueue().catch(() => {});
       loadGoogleLinkStatus().catch(() => {});
       openAdminUsersFromUrlIfPresent().catch(() => {});
       openLeadFromUrlIfPresent().catch(() => {});
@@ -10920,6 +11288,7 @@
 
     async function logout() {
       resetIdentityVerificationUi();
+      resetHumanReviewUi();
       await stopTrackingPublisher({ notifyBackend: true, reason: "MANUAL" });
       await markOffline();
       saveThemePreference(currentTheme, null);
@@ -12961,6 +13330,18 @@
     });
     document.getElementById("createBrokerButton").addEventListener("click", createBroker);
     document.getElementById("editMyProfileButton").addEventListener("click", openMyProfile);
+    identityHumanReviewRefresh?.addEventListener("click", () => loadHumanReviewQueue().catch(() => {}));
+    identityHumanReviewCancel?.addEventListener("click", closeHumanReviewModal);
+    identityHumanReviewConfirm?.addEventListener("click", submitHumanReviewDecision);
+    identityHumanReviewModal?.addEventListener("click", (event) => {
+      if (event.target === identityHumanReviewModal) closeHumanReviewModal();
+    });
+    identityHumanReviewList?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-human-review-decision]");
+      if (!button || button.disabled) return;
+      const item = humanReviewQueue[Number(button.dataset.humanReviewIndex)];
+      openHumanReviewModal(item, button.dataset.humanReviewDecision, button);
+    });
     document.getElementById("findTechnicianButton")?.addEventListener("click", () => {
       loadTechnicianRecommendations(activeLeadServiceOrderId).catch(() => {
         const panel = document.getElementById("technicianRecommendationPanel");
@@ -13656,6 +14037,22 @@
       }
       if (event.key === "Escape" && identityVerificationInfoModal && !identityVerificationInfoModal.hidden) {
         closeIdentityVerificationInfo();
+      }
+      if (event.key === "Escape" && identityHumanReviewModal && !identityHumanReviewModal.hidden) {
+        closeHumanReviewModal();
+      }
+      if (event.key === "Tab" && identityHumanReviewModal && !identityHumanReviewModal.hidden) {
+        const focusable = [identityHumanReviewReason, identityHumanReviewCancel, identityHumanReviewConfirm].filter((node) => node && !node.disabled);
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
       }
     });
     document.querySelectorAll("[data-admin-user-tab]").forEach((button) => {
