@@ -24,6 +24,7 @@ from app.services.identity_provider_service import (
     create_attempt,
     process_metamap_event,
     provider_config,
+    rollout_config,
     verify_metamap_signature,
 )
 
@@ -163,6 +164,7 @@ def configure_sandbox(monkeypatch):
     monkeypatch.setenv("METAMAP_CLIENT_ID", "client-public-test")
     monkeypatch.setenv("METAMAP_FLOW_ID", "flow-test")
     monkeypatch.setenv("METAMAP_WEBHOOK_SECRET", "WebhookSecret123")
+    monkeypatch.setenv("IDENTITY_VERIFICATION_ROLLOUT_MODE", "all")
 
 
 def test_csp_allows_only_required_metamap_frame_origin():
@@ -178,7 +180,7 @@ def test_provider_is_disabled_without_local_flag(monkeypatch):
     monkeypatch.delenv("IDENTITY_VERIFICATION_UI_ENABLED", raising=False)
     monkeypatch.setenv("IDENTITY_PROVIDER", "metamap")
     monkeypatch.setenv("IDENTITY_PROVIDER_MODE", "sandbox")
-    assert provider_config()["enabled"] is False
+    assert provider_config(1, "TECNICO")["enabled"] is False
 
 
 def test_provider_is_disabled_when_sandbox_configuration_is_incomplete(monkeypatch):
@@ -187,7 +189,93 @@ def test_provider_is_disabled_when_sandbox_configuration_is_incomplete(monkeypat
     monkeypatch.setenv("IDENTITY_PROVIDER_MODE", "sandbox")
     monkeypatch.setenv("METAMAP_CLIENT_ID", "client-public-test")
     monkeypatch.delenv("METAMAP_FLOW_ID", raising=False)
-    assert provider_config()["enabled"] is False
+    monkeypatch.setenv("IDENTITY_VERIFICATION_ROLLOUT_MODE", "all")
+    assert provider_config(1, "TECNICO")["enabled"] is False
+
+
+@pytest.mark.parametrize("raw_ids", ["0", "-1", "12x", "1, ,2", "1,2x"])
+def test_invalid_canary_ids_fail_closed(monkeypatch, raw_ids):
+    configure_sandbox(monkeypatch)
+    monkeypatch.setenv("IDENTITY_VERIFICATION_ROLLOUT_MODE", "canary")
+    monkeypatch.setenv("IDENTITY_VERIFICATION_CANARY_USER_IDS", raw_ids)
+    assert rollout_config()[2] is False
+    assert provider_config(1, "TECNICO")["enabled"] is False
+
+
+def test_canary_ids_normalize_spaces_and_duplicates(monkeypatch):
+    configure_sandbox(monkeypatch)
+    monkeypatch.setenv("IDENTITY_VERIFICATION_ROLLOUT_MODE", "canary")
+    monkeypatch.setenv("IDENTITY_VERIFICATION_CANARY_USER_IDS", " 7, 7,8 ")
+    assert rollout_config() == ("canary", frozenset({7, 8}), True)
+    assert provider_config(7, "TECNICO")["enabled"] is True
+    assert provider_config(8, "BROKER")["enabled"] is True
+    assert provider_config(9, "TECNICO")["enabled"] is False
+    assert provider_config(9, "TECNICO")["client_id"] is None
+    assert provider_config(9, "TECNICO")["flow_id"] is None
+
+
+def test_canary_allowlist_never_reaches_frontend_source(monkeypatch):
+    source = (Path(__file__).resolve().parents[1] / "../frontend/index.html").resolve().read_text()
+    assert "IDENTITY_VERIFICATION_CANARY_USER_IDS" not in source
+
+
+@pytest.mark.parametrize("role", ["ROOT", "ADMIN"])
+def test_canary_does_not_allow_root_or_admin_bypass(monkeypatch, role):
+    configure_sandbox(monkeypatch)
+    monkeypatch.setenv("IDENTITY_VERIFICATION_ROLLOUT_MODE", "canary")
+    monkeypatch.setenv("IDENTITY_VERIFICATION_CANARY_USER_IDS", "44")
+    assert provider_config(44, role)["enabled"] is False
+
+
+def test_rollout_defaults_and_off_mode_fail_closed(monkeypatch):
+    for name in (
+        "IDENTITY_VERIFICATION_UI_ENABLED",
+        "IDENTITY_VERIFICATION_ROLLOUT_MODE",
+        "IDENTITY_VERIFICATION_CANARY_USER_IDS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    assert rollout_config() == ("off", frozenset(), True)
+    monkeypatch.setenv("IDENTITY_VERIFICATION_UI_ENABLED", "true")
+    monkeypatch.setenv("IDENTITY_VERIFICATION_ROLLOUT_MODE", "off")
+    assert provider_config(1, "TECNICO")["enabled"] is False
+
+
+def test_invalid_rollout_mode_and_removed_user_fail_closed(monkeypatch):
+    configure_sandbox(monkeypatch)
+    monkeypatch.setenv("IDENTITY_VERIFICATION_ROLLOUT_MODE", "unexpected")
+    assert provider_config(1, "TECNICO")["enabled"] is False
+    monkeypatch.setenv("IDENTITY_VERIFICATION_ROLLOUT_MODE", "canary")
+    monkeypatch.setenv("IDENTITY_VERIFICATION_CANARY_USER_IDS", "1")
+    assert provider_config(2, "TECNICO")["enabled"] is False
+
+
+def test_malformed_allowlist_fails_closed_in_every_rollout_mode(monkeypatch):
+    configure_sandbox(monkeypatch)
+    monkeypatch.setenv("IDENTITY_VERIFICATION_CANARY_USER_IDS", "12x")
+    for mode in ("off", "all"):
+        monkeypatch.setenv("IDENTITY_VERIFICATION_ROLLOUT_MODE", mode)
+        assert rollout_config()[2] is False
+        assert provider_config(1, "TECNICO")["enabled"] is False
+
+
+def test_all_mode_only_allows_identity_eligible_roles(monkeypatch):
+    configure_sandbox(monkeypatch)
+    assert provider_config(1, "TECNICO")["enabled"] is True
+    assert provider_config(2, "BROKER")["enabled"] is True
+    assert provider_config(3, "GERENTE")["enabled"] is False
+    assert provider_config(4, "ROOT")["enabled"] is False
+
+
+def test_unauthorized_user_cannot_create_attempt(db, monkeypatch):
+    configure_sandbox(monkeypatch)
+    monkeypatch.setenv("IDENTITY_VERIFICATION_ROLLOUT_MODE", "canary")
+    monkeypatch.setenv("IDENTITY_VERIFICATION_CANARY_USER_IDS", "999")
+    org = Organization(name="Blocked Org", slug="blocked-org")
+    db.add(org)
+    db.flush()
+    user = make_user(db, org.id)
+    with pytest.raises(RuntimeError, match="unavailable"):
+        create_attempt(db, user=user, organization_id=org.id, policy="MEXICAN", consent_version=CONSENT_VERSION)
 
 
 def test_attempt_requires_consent_and_stores_only_hash(db, monkeypatch):
@@ -196,7 +284,7 @@ def test_attempt_requires_consent_and_stores_only_hash(db, monkeypatch):
     db.add(org)
     db.flush()
     user = make_user(db, org.id)
-    attempt, opaque, config = create_attempt(db, user_id=user.id, organization_id=org.id, policy="MEXICAN", consent_version=CONSENT_VERSION)
+    attempt, opaque, config = create_attempt(db, user=user, organization_id=org.id, policy="MEXICAN", consent_version=CONSENT_VERSION)
     assert opaque not in attempt.attempt_key_hash
     assert config["metadata"] == {"attempt_key": opaque}
     assert config["provider"] == "metamap"
@@ -219,7 +307,7 @@ def seed_attempt(db, monkeypatch, org_name="Provider Org", slug="provider-org"):
     db.add(org)
     db.flush()
     user = make_user(db, org.id)
-    attempt, opaque, _ = create_attempt(db, user_id=user.id, organization_id=org.id, policy="MEXICAN", consent_version=CONSENT_VERSION)
+    attempt, opaque, _ = create_attempt(db, user=user, organization_id=org.id, policy="MEXICAN", consent_version=CONSENT_VERSION)
     db.commit()
     return attempt, opaque, user
 

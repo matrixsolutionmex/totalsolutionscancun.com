@@ -4,6 +4,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models.user import User
+from app.services.identity_provider_service import provider_config
 
 
 IDENTITY_VERIFICATION_STATUSES = frozenset(
@@ -54,7 +55,7 @@ def _unavailable_payload() -> dict:
 
 
 def get_identity_verification_payload(db: Session, user: User) -> dict:
-    available = identity_verification_ui_enabled()
+    available = bool(provider_config(user.id, user.role)["enabled"])
     if not available:
         return _unavailable_payload()
 

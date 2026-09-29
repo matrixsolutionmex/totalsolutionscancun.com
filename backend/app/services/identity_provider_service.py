@@ -9,26 +9,58 @@ from sqlalchemy.orm import Session
 
 from app.models.identity_provider import IdentityVerificationAttempt, IdentityVerificationEvent
 from app.models.identity_verification import IdentityVerification
+from app.models.user import User
 
 
 CONSENT_VERSION = "identity-verification-v1"
+ROLLOUT_MODES = frozenset({"off", "canary", "all"})
+IDENTITY_VERIFICATION_ELIGIBLE_ROLES = frozenset({"BROKER", "TECNICO", "NETWORK_PARTNER"})
 
 
 def provider_enabled() -> bool:
     return os.getenv("IDENTITY_VERIFICATION_UI_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def provider_config() -> dict:
+def rollout_config() -> tuple[str, frozenset[int], bool]:
+    mode = os.getenv("IDENTITY_VERIFICATION_ROLLOUT_MODE", "off").strip().lower()
+    if mode not in ROLLOUT_MODES:
+        return mode, frozenset(), False
+    raw_ids = os.getenv("IDENTITY_VERIFICATION_CANARY_USER_IDS", "")
+    if not raw_ids.strip():
+        return mode, frozenset(), True
+    normalized_ids = []
+    for token in raw_ids.split(","):
+        value = token.strip()
+        if not value or not value.isascii() or not value.isdigit() or int(value) <= 0:
+            return mode, frozenset(), False
+        normalized_ids.append(int(value))
+    return mode, frozenset(normalized_ids), True
+
+
+def user_is_rollout_eligible(*, user_id: int, role: str | None) -> bool:
+    mode, canary_user_ids, valid = rollout_config()
+    if not valid or mode == "off" or (role or "").strip().upper() not in IDENTITY_VERIFICATION_ELIGIBLE_ROLES:
+        return False
+    if mode == "all":
+        return True
+    return user_id in canary_user_ids
+
+
+def provider_config(user_id: int | None = None, user_role: str | None = None) -> dict:
     provider = os.getenv("IDENTITY_PROVIDER", "").strip().lower()
     mode = os.getenv("IDENTITY_PROVIDER_MODE", "disabled").strip().lower()
     configured = all(os.getenv(name, "").strip() for name in ("METAMAP_CLIENT_ID", "METAMAP_FLOW_ID"))
+    rollout_mode, _, rollout_valid = rollout_config()
+    rollout_allowed = user_id is not None and user_is_rollout_eligible(user_id=user_id, role=user_role)
+    fully_configured = provider_enabled() and provider == "metamap" and mode == "sandbox" and configured and rollout_valid and rollout_allowed
     return {
-        "enabled": provider_enabled() and provider == "metamap" and mode == "sandbox" and configured,
+        "enabled": fully_configured,
         "provider": provider or None,
         "mode": mode,
-        "client_id": os.getenv("METAMAP_CLIENT_ID", "").strip() if configured and provider == "metamap" else None,
-        "flow_id": os.getenv("METAMAP_FLOW_ID", "").strip() if configured and provider == "metamap" else None,
+        "client_id": os.getenv("METAMAP_CLIENT_ID", "").strip() if fully_configured else None,
+        "flow_id": os.getenv("METAMAP_FLOW_ID", "").strip() if fully_configured else None,
         "consent_version": CONSENT_VERSION,
+        "rollout_mode": rollout_mode if rollout_valid else "off",
     }
 
 
@@ -36,23 +68,25 @@ def _hash_key(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def create_attempt(db: Session, *, user_id: int, organization_id: int | None, policy: str, consent_version: str) -> tuple[IdentityVerificationAttempt, str, dict]:
-    config = provider_config()
+def create_attempt(db: Session, *, user: User, organization_id: int | None, policy: str, consent_version: str) -> tuple[IdentityVerificationAttempt, str, dict]:
+    if user.organization_id != organization_id:
+        raise ValueError("identity verification tenant mismatch")
+    config = provider_config(user.id, user.role)
     if not config["enabled"]:
         raise RuntimeError("identity provider unavailable")
     if consent_version != CONSENT_VERSION:
         raise ValueError("unsupported consent version")
     identity = db.query(IdentityVerification).filter(
-        IdentityVerification.user_id == user_id,
+        IdentityVerification.user_id == user.id,
         IdentityVerification.organization_id == organization_id,
     ).first()
     if not identity:
-        identity = IdentityVerification(user_id=user_id, organization_id=organization_id, status="NOT_STARTED")
+        identity = IdentityVerification(user_id=user.id, organization_id=organization_id, status="NOT_STARTED")
         db.add(identity)
         db.flush()
     attempt_key = token_urlsafe(32)
     attempt = IdentityVerificationAttempt(
-        user_id=user_id,
+        user_id=user.id,
         organization_id=organization_id,
         identity_verification_id=identity.id,
         attempt_key_hash=_hash_key(attempt_key),

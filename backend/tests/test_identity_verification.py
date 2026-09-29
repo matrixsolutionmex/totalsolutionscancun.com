@@ -67,6 +67,11 @@ def test_flag_off_hides_identity_ui_and_sensitive_fields(monkeypatch, db):
 
 def test_verified_badge_requires_flag_exact_status_and_same_tenant(monkeypatch, db):
     monkeypatch.setenv("IDENTITY_VERIFICATION_UI_ENABLED", "true")
+    monkeypatch.setenv("IDENTITY_PROVIDER", "metamap")
+    monkeypatch.setenv("IDENTITY_PROVIDER_MODE", "sandbox")
+    monkeypatch.setenv("METAMAP_CLIENT_ID", "client-public-test")
+    monkeypatch.setenv("METAMAP_FLOW_ID", "flow-test")
+    monkeypatch.setenv("IDENTITY_VERIFICATION_ROLLOUT_MODE", "all")
     org = Organization(name="Identity Org", slug="identity-org")
     other_org = Organization(name="Other Org", slug="other-org")
     db.add_all([org, other_org])
@@ -88,6 +93,11 @@ def test_verified_badge_requires_flag_exact_status_and_same_tenant(monkeypatch, 
 
 def test_role_does_not_grant_verified_badge(db, monkeypatch):
     monkeypatch.setenv("IDENTITY_VERIFICATION_UI_ENABLED", "true")
+    monkeypatch.setenv("IDENTITY_PROVIDER", "metamap")
+    monkeypatch.setenv("IDENTITY_PROVIDER_MODE", "sandbox")
+    monkeypatch.setenv("METAMAP_CLIENT_ID", "client-public-test")
+    monkeypatch.setenv("METAMAP_FLOW_ID", "flow-test")
+    monkeypatch.setenv("IDENTITY_VERIFICATION_ROLLOUT_MODE", "all")
     user = make_user(db, role="ROOT")
     payload = get_identity_verification_payload(db, user)
     assert payload["badge"] is False
@@ -96,6 +106,11 @@ def test_role_does_not_grant_verified_badge(db, monkeypatch):
 
 def test_enabled_flag_without_migration_fails_closed(monkeypatch):
     monkeypatch.setenv("IDENTITY_VERIFICATION_UI_ENABLED", "true")
+    monkeypatch.setenv("IDENTITY_PROVIDER", "metamap")
+    monkeypatch.setenv("IDENTITY_PROVIDER_MODE", "sandbox")
+    monkeypatch.setenv("METAMAP_CLIENT_ID", "client-public-test")
+    monkeypatch.setenv("METAMAP_FLOW_ID", "flow-test")
+    monkeypatch.setenv("IDENTITY_VERIFICATION_ROLLOUT_MODE", "all")
 
     class MissingMigrationDB:
         def query(self, _model):

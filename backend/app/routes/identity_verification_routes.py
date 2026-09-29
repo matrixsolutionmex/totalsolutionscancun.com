@@ -15,7 +15,6 @@ from app.services.identity_provider_service import (
     parse_json_body,
     process_metamap_event,
     provider_config,
-    provider_enabled,
     verify_metamap_signature,
 )
 
@@ -31,8 +30,7 @@ class IdentityVerificationStartRequest(BaseModel):
 
 @router.get("/provider-config")
 def get_provider_config(actor: User = Depends(get_actor)):
-    del actor
-    config = provider_config()
+    config = provider_config(actor.id, actor.role)
     enabled = bool(config["enabled"])
     return {
         "enabled": enabled,
@@ -50,14 +48,14 @@ def start_identity_attempt(
     actor: User = Depends(get_actor),
     db: Session = Depends(get_db),
 ):
-    if not provider_enabled() or not request.consent:
+    if not request.consent:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="consent_required")
     if request.policy not in {"MEXICAN", "FOREIGN_RESIDENT", "MANUAL_REVIEW"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported_identity_policy")
     try:
         attempt, attempt_key, config = create_attempt(
             db,
-            user_id=actor.id,
+            user=actor,
             organization_id=actor.organization_id,
             policy=request.policy,
             consent_version=request.consent_version,
