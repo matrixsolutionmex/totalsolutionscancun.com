@@ -139,3 +139,12 @@ def test_frontend_uses_read_only_status_and_has_no_identity_upload():
     assert "identityVerified" not in source or "identityStatusVerified" in source
     modal = source.split('id="identityVerificationInfoModal"', 1)[1].split("</div>", 1)[0]
     assert 'type="file"' not in modal
+
+
+def test_frontend_identity_ui_fails_closed_when_unavailable():
+    source = (Path(__file__).parents[2] / "frontend" / "index.html").read_text()
+    assert 'id="identityVerificationActionButton" type="button" hidden disabled tabindex="-1"' in source
+    assert "function resetIdentityVerificationUi()" in source
+    assert "payload?.available !== true" in source
+    assert "identityVerificationPayload?.available !== true" in source
+    assert "resetIdentityVerificationUi();" in source

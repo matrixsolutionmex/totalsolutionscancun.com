@@ -4138,7 +4138,7 @@
       </div>
       <ul class="identity-verification-steps" id="identityVerificationSteps"></ul>
       <div class="line" id="identityVerificationNextAction"></div>
-      <button class="ghost" id="identityVerificationActionButton" type="button"></button>
+      <button class="ghost" id="identityVerificationActionButton" type="button" hidden disabled tabindex="-1"></button>
       <div class="line" id="identityVerificationFinanceNote"></div>
     </div>
     <div class="identity-info-modal" id="identityVerificationInfoModal" hidden>
@@ -9976,12 +9976,38 @@
       profileIdentityBadge.setAttribute("aria-label", visible ? t("identityStatusVerified") : "");
     }
 
+    function resetIdentityVerificationUi() {
+      if (identityVerificationPanel) identityVerificationPanel.hidden = true;
+      if (identityVerificationInfoModal) identityVerificationInfoModal.hidden = true;
+      if (profileIdentityBadge) profileIdentityBadge.hidden = true;
+      const actionButton = document.getElementById("identityVerificationActionButton");
+      if (actionButton) {
+        actionButton.hidden = true;
+        actionButton.disabled = true;
+        actionButton.tabIndex = -1;
+      }
+      const consent = document.getElementById("identityVerificationConsent");
+      if (consent) consent.checked = false;
+      const providerButton = document.getElementById("identityProviderButton");
+      if (providerButton) {
+        providerButton.replaceChildren();
+        providerButton.hidden = true;
+      }
+      identityVerificationAttemptStarted = false;
+    }
+
     function renderIdentityVerification(payload) {
       identityVerificationPayload = payload;
-      if (!identityVerificationPanel) return;
-      identityVerificationPanel.hidden = !payload?.available;
-      renderIdentityBadge(payload?.badge === true);
-      if (!payload?.available) return;
+      resetIdentityVerificationUi();
+      if (!identityVerificationPanel || payload?.available !== true) return;
+      identityVerificationPanel.hidden = false;
+      const actionButton = document.getElementById("identityVerificationActionButton");
+      if (actionButton) {
+        actionButton.hidden = false;
+        actionButton.disabled = false;
+        actionButton.removeAttribute("tabindex");
+      }
+      renderIdentityBadge(payload.badge === true);
       document.getElementById("identityVerificationTitle").textContent = t("identitySecurityTitle");
       document.getElementById("identityVerificationDescription").textContent = t("identitySecurityDescription");
       document.getElementById("identityVerificationStatus").textContent = `${t("identityStatusLabel")}: ${identityStatusLabel(payload.status)}`;
@@ -10009,6 +10035,7 @@
 
     async function loadIdentityVerification() {
       if (!currentUser?.id || !identityVerificationPanel) return;
+      resetIdentityVerificationUi();
       try {
         const response = await apiFetch(`${API_BASE}/identity-verification/me`, { headers: { Accept: "application/json" } });
         if (!response.ok) throw new Error("identity verification unavailable");
@@ -10066,7 +10093,7 @@
     }
 
     function openIdentityVerificationInfo() {
-      if (!identityVerificationInfoModal) return;
+      if (!identityVerificationInfoModal || identityVerificationPayload?.available !== true) return;
       identityVerificationModalTrigger = document.activeElement;
       document.getElementById("identityVerificationModalTitle").textContent = t("identityModalTitle");
       document.getElementById("identityVerificationModalMessage").textContent = t("identityModalMessage");
@@ -10892,6 +10919,7 @@
     }
 
     async function logout() {
+      resetIdentityVerificationUi();
       await stopTrackingPublisher({ notifyBackend: true, reason: "MANUAL" });
       await markOffline();
       saveThemePreference(currentTheme, null);
