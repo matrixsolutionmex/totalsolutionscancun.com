@@ -1457,6 +1457,63 @@
       box-shadow: 0 20px 60px rgba(15, 23, 42, 0.22);
     }
 
+    .technician-earnings-panel[hidden],
+    .technician-earnings-modal[hidden] { display: none; }
+    .technician-earnings-panel { margin-top: 16px; }
+    .technician-earnings-header,
+    .technician-earnings-controls,
+    .technician-earnings-summary,
+    .technician-earning-meta,
+    .technician-earning-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .technician-earnings-header { justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+    .technician-earnings-controls { margin-top: 14px; flex-wrap: wrap; }
+    .technician-earnings-controls select,
+    .technician-earnings-controls input { min-height: 44px; max-width: 180px; }
+    .technician-earnings-summary { align-items: stretch; flex-wrap: wrap; margin-top: 14px; }
+    .technician-earnings-summary-card {
+      flex: 1 1 160px;
+      min-width: 145px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+    .technician-earnings-summary-card strong { display: block; margin-top: 5px; overflow-wrap: anywhere; }
+    .technician-earnings-summary-card small { color: var(--muted); }
+    .technician-earnings-list { display: grid; gap: 10px; margin-top: 14px; }
+    .technician-earning-card {
+      display: grid;
+      gap: 9px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+    .technician-earning-header { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .technician-earning-header strong,
+    .technician-earning-meta span { overflow-wrap: anywhere; }
+    .technician-earning-meta { flex-wrap: wrap; color: var(--muted); font-size: 0.86rem; }
+    .technician-earning-amount { font-size: 1.05rem; font-weight: 800; }
+    .technician-earning-status { font-weight: 800; overflow-wrap: anywhere; }
+    .technician-earning-status.reversed { color: #b91c1c; }
+    .technician-earnings-status { min-height: 24px; margin-top: 10px; color: var(--muted); }
+    .technician-earnings-status.error { color: #b91c1c; }
+    .technician-earnings-empty { padding: 14px 0; color: var(--muted); }
+    .technician-earnings-modal .identity-info-modal-box { width: min(100%, 560px); }
+    .technician-earning-detail-grid { display: grid; gap: 8px; }
+    .technician-earning-detail-row { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+    .technician-earning-detail-row span:last-child { text-align: right; overflow-wrap: anywhere; }
+    @media (max-width: 600px) {
+      .technician-earnings-summary-card { flex-basis: 42%; }
+      .technician-earnings-controls > * { flex: 1 1 100%; max-width: none; }
+      .technician-earning-detail-row { align-items: flex-start; flex-direction: column; gap: 3px; }
+      .technician-earning-detail-row span:last-child { text-align: left; }
+    }
+
     .broker-row {
       display: grid;
       grid-template-columns: 1fr auto auto;
@@ -4220,6 +4277,34 @@
         </div>
       </div>
     </div>
+    <section class="panel-box technician-earnings-panel" id="technicianEarningsPanel" hidden aria-labelledby="technicianEarningsTitle">
+      <div class="technician-earnings-header">
+        <div>
+          <div class="panel-title" id="technicianEarningsTitle"></div>
+          <div class="line" id="technicianEarningsDescription"></div>
+        </div>
+        <button class="ghost" id="technicianEarningsRefresh" type="button"></button>
+      </div>
+      <div class="line" id="technicianEarningsNotice" style="margin-top:10px;"></div>
+      <div class="technician-earnings-controls">
+        <label class="line"><span id="technicianEarningsMonthLabel"></span><input id="technicianEarningsMonth" type="month"></label>
+        <label class="line"><span id="technicianEarningsStatusLabel"></span><select id="technicianEarningsStatus"><option value=""></option><option value="PROCESSING"></option><option value="IN_GUARANTEE"></option><option value="AVAILABLE_FOR_PAYMENT"></option><option value="PAYMENT_REQUESTED"></option><option value="PAID"></option><option value="HELD"></option><option value="REVERSED"></option></select></label>
+      </div>
+      <div class="technician-earnings-summary" id="technicianEarningsSummary"></div>
+      <div class="technician-earnings-status" id="technicianEarningsStatusMessage" aria-live="polite"></div>
+      <div class="technician-earnings-list" id="technicianEarningsList"></div>
+      <div class="technician-earning-actions" id="technicianEarningsPagination" hidden>
+        <button class="ghost" id="technicianEarningsPrevious" type="button"></button>
+        <button class="ghost" id="technicianEarningsNext" type="button"></button>
+      </div>
+    </section>
+    <div class="identity-info-modal technician-earnings-modal" id="technicianEarningsModal" hidden>
+      <div class="identity-info-modal-box" role="dialog" aria-modal="true" aria-labelledby="technicianEarningsModalTitle">
+        <div class="panel-title" id="technicianEarningsModalTitle"></div>
+        <div class="technician-earning-detail-grid" id="technicianEarningsModalDetails"></div>
+        <button class="ghost" id="technicianEarningsModalClose" type="button"></button>
+      </div>
+    </div>
     <div class="panel-box" id="googleLinkPanel" hidden>
       <div class="panel-title" id="googleLinkTitle">Vincular conta Google</div>
       <div class="line" id="googleLinkDescription">Vincule a conta Google que usa o mesmo e-mail desta conta.</div>
@@ -5863,6 +5948,41 @@
         identityReviewConflict: "Esta tentativa já foi atualizada. Recarregue a fila.",
         identityReviewError: "Não foi possível registrar a decisão.",
         identityReviewPending: "Pendente",
+        technicianEarningsTitle: "Ganhos por serviços",
+        technicianEarningsDescription: "Extrato mensal dos valores relacionados aos serviços realizados.",
+        technicianEarningsNotice: "Este extrato registra valores relacionados aos serviços realizados. Não representa uma conta bancária ou carteira de fundos custodiados.",
+        technicianEarningsRefresh: "Atualizar extrato",
+        technicianEarningsMonth: "Mês",
+        technicianEarningsAllMonths: "Todos os meses",
+        technicianEarningsStatusFilter: "Status",
+        technicianEarningsAllStatuses: "Todos os status",
+        technicianEarningsLoading: "Carregando extrato...",
+        technicianEarningsEmpty: "Nenhum ganho registrado para este período.",
+        technicianEarningsUnavailable: "O extrato não está disponível.",
+        technicianEarningsTotal: "Total líquido",
+        technicianEarningsCount: "Lançamentos",
+        technicianEarningsProcessing: "Em processamento",
+        technicianEarningsGuarantee: "Em garantia",
+        technicianEarningsAvailable: "Disponível para pagamento",
+        technicianEarningsRequested: "Pagamento solicitado",
+        technicianEarningsPaid: "Pago",
+        technicianEarningsHeld: "Retido",
+        technicianEarningsReversed: "Revertido",
+        technicianEarningsReference: "Serviço",
+        technicianEarningsDate: "Data",
+        technicianEarningsCurrency: "Moeda",
+        technicianEarningsGross: "Valor bruto",
+        technicianEarningsFees: "Taxas",
+        technicianEarningsProcessingFee: "Custo de processamento",
+        technicianEarningsNet: "Valor líquido",
+        technicianEarningsPolicy: "Versão da política",
+        technicianEarningsReason: "Motivo controlado",
+        technicianEarningsDetails: "Ver detalhes",
+        technicianEarningsDetailsTitle: "Detalhes do lançamento",
+        technicianEarningsClose: "Fechar",
+        technicianEarningsInvalid: "Não foi possível carregar este extrato.",
+        technicianEarningsPrevious: "Anterior",
+        technicianEarningsNext: "Próxima",
         distributeTitle: "Asignar solicitudes por servicio y ubicación",
         selectBroker: "Seleccione técnico",
         allBrokers: "Todos los técnicos",
@@ -6141,6 +6261,41 @@
         identityReviewConflict: "This attempt was already updated. Refresh the queue.",
         identityReviewError: "The decision could not be recorded.",
         identityReviewPending: "Pending",
+        technicianEarningsTitle: "Service earnings",
+        technicianEarningsDescription: "Monthly statement of values related to completed services.",
+        technicianEarningsNotice: "This statement records values related to completed services. It is not a bank account or a custodial funds wallet.",
+        technicianEarningsRefresh: "Refresh statement",
+        technicianEarningsMonth: "Month",
+        technicianEarningsAllMonths: "All months",
+        technicianEarningsStatusFilter: "Status",
+        technicianEarningsAllStatuses: "All statuses",
+        technicianEarningsLoading: "Loading statement...",
+        technicianEarningsEmpty: "No earnings recorded for this period.",
+        technicianEarningsUnavailable: "The statement is unavailable.",
+        technicianEarningsTotal: "Net total",
+        technicianEarningsCount: "Entries",
+        technicianEarningsProcessing: "Processing",
+        technicianEarningsGuarantee: "In guarantee",
+        technicianEarningsAvailable: "Available for payment",
+        technicianEarningsRequested: "Payment requested",
+        technicianEarningsPaid: "Paid",
+        technicianEarningsHeld: "Held",
+        technicianEarningsReversed: "Reversed",
+        technicianEarningsReference: "Service",
+        technicianEarningsDate: "Date",
+        technicianEarningsCurrency: "Currency",
+        technicianEarningsGross: "Gross amount",
+        technicianEarningsFees: "Fees",
+        technicianEarningsProcessingFee: "Processing cost",
+        technicianEarningsNet: "Net amount",
+        technicianEarningsPolicy: "Policy version",
+        technicianEarningsReason: "Controlled reason",
+        technicianEarningsDetails: "View details",
+        technicianEarningsDetailsTitle: "Entry details",
+        technicianEarningsClose: "Close",
+        technicianEarningsInvalid: "Unable to load this statement.",
+        technicianEarningsPrevious: "Previous",
+        technicianEarningsNext: "Next",
         distributeTitle: "Asignar solicitudes por servicio y ubicación",
         selectBroker: "Seleccione técnico",
         allBrokers: "Todos los técnicos",
@@ -6427,6 +6582,41 @@
         identityReviewConflict: "Este intento ya fue actualizado. Actualiza la cola.",
         identityReviewError: "No fue posible registrar la decisión.",
         identityReviewPending: "Pendiente",
+        technicianEarningsTitle: "Ganancias por servicios",
+        technicianEarningsDescription: "Extracto mensual de los valores relacionados con los servicios realizados.",
+        technicianEarningsNotice: "Este extracto registra valores relacionados con los servicios realizados. No representa una cuenta bancaria ni una cartera de fondos custodiados.",
+        technicianEarningsRefresh: "Actualizar extracto",
+        technicianEarningsMonth: "Mes",
+        technicianEarningsAllMonths: "Todos los meses",
+        technicianEarningsStatusFilter: "Estado",
+        technicianEarningsAllStatuses: "Todos los estados",
+        technicianEarningsLoading: "Cargando extracto...",
+        technicianEarningsEmpty: "No hay ganancias registradas para este período.",
+        technicianEarningsUnavailable: "El extracto no está disponible.",
+        technicianEarningsTotal: "Total neto",
+        technicianEarningsCount: "Lanzamientos",
+        technicianEarningsProcessing: "En procesamiento",
+        technicianEarningsGuarantee: "En garantía",
+        technicianEarningsAvailable: "Disponible para pago",
+        technicianEarningsRequested: "Pago solicitado",
+        technicianEarningsPaid: "Pagado",
+        technicianEarningsHeld: "Retenido",
+        technicianEarningsReversed: "Revertido",
+        technicianEarningsReference: "Servicio",
+        technicianEarningsDate: "Fecha",
+        technicianEarningsCurrency: "Moneda",
+        technicianEarningsGross: "Importe bruto",
+        technicianEarningsFees: "Comisiones",
+        technicianEarningsProcessingFee: "Costo de procesamiento",
+        technicianEarningsNet: "Importe neto",
+        technicianEarningsPolicy: "Versión de política",
+        technicianEarningsReason: "Motivo controlado",
+        technicianEarningsDetails: "Ver detalles",
+        technicianEarningsDetailsTitle: "Detalles del lanzamiento",
+        technicianEarningsClose: "Cerrar",
+        technicianEarningsInvalid: "No fue posible cargar este extracto.",
+        technicianEarningsPrevious: "Anterior",
+        technicianEarningsNext: "Siguiente",
         distributeTitle: "Asignar solicitudes por servicio y ubicación",
         selectBroker: "Seleccione técnico",
         allBrokers: "Todos los técnicos",
@@ -6555,6 +6745,20 @@
     const identityHumanReviewReason = document.getElementById("identityHumanReviewReason");
     const identityHumanReviewCancel = document.getElementById("identityHumanReviewCancel");
     const identityHumanReviewConfirm = document.getElementById("identityHumanReviewConfirm");
+    const technicianEarningsPanel = document.getElementById("technicianEarningsPanel");
+    const technicianEarningsSummary = document.getElementById("technicianEarningsSummary");
+    const technicianEarningsList = document.getElementById("technicianEarningsList");
+    const technicianEarningsModal = document.getElementById("technicianEarningsModal");
+    const technicianEarningsModalDetails = document.getElementById("technicianEarningsModalDetails");
+    const technicianEarningsModalClose = document.getElementById("technicianEarningsModalClose");
+    const technicianEarningsPagination = document.getElementById("technicianEarningsPagination");
+    const technicianEarningsPrevious = document.getElementById("technicianEarningsPrevious");
+    const technicianEarningsNext = document.getElementById("technicianEarningsNext");
+    let technicianEarnings = [];
+    let technicianEarningsSummaryPayload = null;
+    let technicianEarningsOffset = 0;
+    let technicianEarningsModalTrigger = null;
+    let technicianEarningsBodyOverflow = "";
     let humanReviewQueue = [];
     let activeHumanReview = null;
     let humanReviewModalTrigger = null;
@@ -8028,6 +8232,11 @@
       setText("#pendingUsersTitle", t("pendingUsersTitle"));
       if (identityVerificationPayload) renderIdentityVerification(identityVerificationPayload);
       renderHumanReviewLabels();
+      renderTechnicianEarningsLabels();
+      if (technicianEarningsPanel && !technicianEarningsPanel.hidden) {
+        renderTechnicianEarningsSummary();
+        renderTechnicianEarningsList();
+      }
 
       document.querySelectorAll(".nav .nav-main[data-view-target]").forEach((button, index) => {
         button.textContent = t("nav")[index] || button.textContent;
@@ -10412,6 +10621,235 @@
       }
     }
 
+    const TECHNICIAN_EARNING_STATUSES = [
+      "PROCESSING", "IN_GUARANTEE", "AVAILABLE_FOR_PAYMENT", "PAYMENT_REQUESTED", "PAID", "HELD", "REVERSED"
+    ];
+
+    function technicianEarningStatusLabel(status) {
+      return t({
+        PROCESSING: "technicianEarningsProcessing",
+        IN_GUARANTEE: "technicianEarningsGuarantee",
+        AVAILABLE_FOR_PAYMENT: "technicianEarningsAvailable",
+        PAYMENT_REQUESTED: "technicianEarningsRequested",
+        PAID: "technicianEarningsPaid",
+        HELD: "technicianEarningsHeld",
+        REVERSED: "technicianEarningsReversed"
+      }[status] || "technicianEarningsStatusFilter");
+    }
+
+    function isSafeTechnicianEarning(item) {
+      return item && Number.isInteger(item.id) && Number.isInteger(item.service_order_id)
+        && typeof item.currency === "string" && /^[A-Z]{3}$/.test(item.currency)
+        && TECHNICIAN_EARNING_STATUSES.includes(item.status)
+        && ["gross_amount", "platform_fee_amount", "processing_fee_amount", "net_amount", "policy_version"].every((key) => typeof item[key] === "string")
+        && ["created_at", "updated_at"].every((key) => item[key] === null || typeof item[key] === "string");
+    }
+
+    function technicianEarningMoney(value, currency) {
+      try {
+        return new Intl.NumberFormat(translations[currentLanguage]?.locale || "pt-BR", {
+          style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2
+        }).format(value);
+      } catch (_error) {
+        return `${value} ${currency}`;
+      }
+    }
+
+    function technicianEarningDate(value) {
+      if (!value) return "";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString(translations[currentLanguage]?.locale || "es-MX");
+    }
+
+    function resetTechnicianEarningsUi() {
+      technicianEarnings = [];
+      technicianEarningsSummaryPayload = null;
+      technicianEarningsOffset = 0;
+      if (technicianEarningsPanel) technicianEarningsPanel.hidden = true;
+      technicianEarningsSummary?.replaceChildren();
+      technicianEarningsList?.replaceChildren();
+      const status = document.getElementById("technicianEarningsStatusMessage");
+      if (status) { status.textContent = ""; status.classList.remove("error"); }
+      if (technicianEarningsModal) technicianEarningsModal.hidden = true;
+      technicianEarningsModalTrigger = null;
+      document.body.style.overflow = technicianEarningsBodyOverflow;
+    }
+
+    function renderTechnicianEarningsLabels() {
+      setText("#technicianEarningsTitle", t("technicianEarningsTitle"));
+      setText("#technicianEarningsDescription", t("technicianEarningsDescription"));
+      setText("#technicianEarningsNotice", t("technicianEarningsNotice"));
+      setText("#technicianEarningsRefresh", t("technicianEarningsRefresh"));
+      setText("#technicianEarningsMonthLabel", t("technicianEarningsMonth"));
+      setText("#technicianEarningsStatusLabel", t("technicianEarningsStatusFilter"));
+      setText("#technicianEarningsPrevious", t("technicianEarningsPrevious"));
+      setText("#technicianEarningsNext", t("technicianEarningsNext"));
+      setText("#technicianEarningsModalTitle", t("technicianEarningsDetailsTitle"));
+      setText("#technicianEarningsModalClose", t("technicianEarningsClose"));
+      const statusFilter = document.getElementById("technicianEarningsStatus");
+      if (statusFilter) {
+        statusFilter.options[0].textContent = t("technicianEarningsAllStatuses");
+        TECHNICIAN_EARNING_STATUSES.forEach((status, index) => { statusFilter.options[index + 1].textContent = technicianEarningStatusLabel(status); });
+      }
+    }
+
+    function renderTechnicianEarningsSummary() {
+      if (!technicianEarningsSummary) return;
+      technicianEarningsSummary.replaceChildren();
+      const summary = technicianEarningsSummaryPayload;
+      if (!summary || (summary.currency !== null && typeof summary.currency !== "string") || (summary.net_total !== null && typeof summary.net_total !== "string")) return;
+      const currencies = [...new Set(technicianEarnings.map((item) => item.currency))];
+      const cards = [];
+      if (currencies.length <= 1 && summary.net_total !== null && summary.currency) cards.push([t("technicianEarningsTotal"), technicianEarningMoney(summary.net_total, summary.currency)]);
+      cards.push([t("technicianEarningsCount"), String(summary.items)]);
+      (summary.by_currency || []).forEach((group) => {
+        cards.push([`${t("technicianEarningsTotal")} · ${group.currency}`, technicianEarningMoney(group.net_total, group.currency)]);
+      });
+      TECHNICIAN_EARNING_STATUSES.forEach((status) => {
+        const count = technicianEarnings.filter((item) => item.status === status).length;
+        if (count) cards.push([technicianEarningStatusLabel(status), String(count)]);
+      });
+      cards.forEach(([label, value]) => {
+        const card = document.createElement("div");
+        card.className = "technician-earnings-summary-card";
+        const small = document.createElement("small");
+        small.textContent = label;
+        const strong = document.createElement("strong");
+        strong.textContent = value;
+        card.append(small, strong);
+        technicianEarningsSummary.appendChild(card);
+      });
+    }
+
+    function appendEarningDetailRow(container, label, value) {
+      const row = document.createElement("div");
+      row.className = "technician-earning-detail-row";
+      const labelNode = document.createElement("span");
+      labelNode.textContent = label;
+      const valueNode = document.createElement("span");
+      valueNode.textContent = value;
+      row.append(labelNode, valueNode);
+      container.appendChild(row);
+    }
+
+    function openTechnicianEarningDetails(item, trigger) {
+      if (!technicianEarningsModal || !isSafeTechnicianEarning(item)) return;
+      technicianEarningsModalTrigger = trigger;
+      technicianEarningsModalDetails.replaceChildren();
+      const money = (value) => technicianEarningMoney(value, item.currency);
+      appendEarningDetailRow(technicianEarningsModalDetails, t("technicianEarningsReference"), `#${item.service_order_id}`);
+      appendEarningDetailRow(technicianEarningsModalDetails, t("technicianEarningsDate"), technicianEarningDate(item.created_at));
+      appendEarningDetailRow(technicianEarningsModalDetails, t("technicianEarningsStatusFilter"), technicianEarningStatusLabel(item.status));
+      appendEarningDetailRow(technicianEarningsModalDetails, t("technicianEarningsCurrency"), item.currency);
+      appendEarningDetailRow(technicianEarningsModalDetails, t("technicianEarningsGross"), money(item.gross_amount));
+      appendEarningDetailRow(technicianEarningsModalDetails, t("technicianEarningsFees"), money(item.platform_fee_amount));
+      appendEarningDetailRow(technicianEarningsModalDetails, t("technicianEarningsProcessingFee"), money(item.processing_fee_amount));
+      appendEarningDetailRow(technicianEarningsModalDetails, t("technicianEarningsNet"), money(item.net_amount));
+      appendEarningDetailRow(technicianEarningsModalDetails, t("technicianEarningsPolicy"), item.policy_version);
+      technicianEarningsBodyOverflow = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      technicianEarningsModal.hidden = false;
+      technicianEarningsModalClose?.focus();
+    }
+
+    function closeTechnicianEarningDetails() {
+      if (technicianEarningsModal) technicianEarningsModal.hidden = true;
+      document.body.style.overflow = technicianEarningsBodyOverflow;
+      technicianEarningsModalTrigger?.focus?.();
+      technicianEarningsModalTrigger = null;
+    }
+
+    function renderTechnicianEarningsList() {
+      if (!technicianEarningsList) return;
+      technicianEarningsList.replaceChildren();
+      if (!technicianEarnings.length) {
+        const empty = document.createElement("div");
+        empty.className = "technician-earnings-empty";
+        empty.textContent = t("technicianEarningsEmpty");
+        technicianEarningsList.appendChild(empty);
+      }
+      technicianEarnings.forEach((item) => {
+        const card = document.createElement("article");
+        card.className = "technician-earning-card";
+        const header = document.createElement("div");
+        header.className = "technician-earning-header";
+        const title = document.createElement("strong");
+        title.textContent = `${t("technicianEarningsReference")} #${item.service_order_id}`;
+        const state = document.createElement("span");
+        state.className = `technician-earning-status${item.status === "REVERSED" ? " reversed" : ""}`;
+        state.textContent = technicianEarningStatusLabel(item.status);
+        header.append(title, state);
+        const amount = document.createElement("div");
+        amount.className = "technician-earning-amount";
+        amount.textContent = technicianEarningMoney(item.net_amount, item.currency);
+        const meta = document.createElement("div");
+        meta.className = "technician-earning-meta";
+        [
+          `${t("technicianEarningsCurrency")}: ${item.currency}`,
+          `${t("technicianEarningsDate")}: ${technicianEarningDate(item.created_at)}`,
+          `${t("technicianEarningsPolicy")}: ${item.policy_version}`
+        ].forEach((value) => { const node = document.createElement("span"); node.textContent = value; meta.appendChild(node); });
+        const actions = document.createElement("div");
+        actions.className = "technician-earning-actions";
+        const details = document.createElement("button");
+        details.type = "button";
+        details.className = "ghost";
+        details.textContent = t("technicianEarningsDetails");
+        details.addEventListener("click", () => openTechnicianEarningDetails(item, details));
+        actions.appendChild(details);
+        card.append(header, amount, meta, actions);
+        technicianEarningsList.appendChild(card);
+      });
+      if (technicianEarningsPagination) technicianEarningsPagination.hidden = technicianEarningsOffset === 0 && technicianEarnings.length < 50;
+      if (technicianEarningsPrevious) technicianEarningsPrevious.disabled = technicianEarningsOffset === 0;
+      if (technicianEarningsNext) technicianEarningsNext.disabled = technicianEarnings.length < 50;
+    }
+
+    function isSafeTechnicianEarningsResponse(data, summary) {
+      return data && Array.isArray(data.items) && data.items.every(isSafeTechnicianEarning)
+        && Number.isInteger(data.limit) && Number.isInteger(data.offset)
+        && summary && (summary.currency === null || /^[A-Z]{3}$/.test(summary.currency))
+        && (summary.net_total === null || typeof summary.net_total === "string") && Number.isInteger(summary.items)
+        && Array.isArray(summary.by_currency) && summary.by_currency.every((group) => (
+          group && typeof group.currency === "string" && /^[A-Z]{3}$/.test(group.currency)
+          && typeof group.net_total === "string" && Number.isInteger(group.items)
+        ));
+    }
+
+    async function loadTechnicianEarnings({ offset = technicianEarningsOffset } = {}) {
+      resetTechnicianEarningsUi();
+      renderTechnicianEarningsLabels();
+      if (!currentUser?.id || !["BROKER", "TECNICO", "TÉCNICO"].includes(currentUser.role)) return;
+      const statusFilter = document.getElementById("technicianEarningsStatus")?.value || "";
+      const month = document.getElementById("technicianEarningsMonth")?.value || "";
+      const query = new URLSearchParams({ limit: "50", offset: String(offset) });
+      if (statusFilter) query.set("status", statusFilter);
+      if (month) query.set("month", month);
+      const status = document.getElementById("technicianEarningsStatusMessage");
+      if (status) status.textContent = t("technicianEarningsLoading");
+      try {
+        const [listResponse, summaryResponse] = await Promise.all([
+          apiFetch(`${API_BASE}/technician/earnings/me?${query.toString()}`, { headers: { Accept: "application/json" } }),
+          apiFetch(`${API_BASE}/technician/earnings/me/summary`, { headers: { Accept: "application/json" } })
+        ]);
+        if (!listResponse.ok || !summaryResponse.ok) throw new Error("unavailable");
+        const data = await listResponse.json();
+        const summary = await summaryResponse.json();
+        if (!isSafeTechnicianEarningsResponse(data, summary)) throw new Error("invalid");
+        technicianEarnings = data.items;
+        technicianEarningsSummaryPayload = summary;
+        technicianEarningsOffset = data.offset;
+        renderTechnicianEarningsLabels();
+        renderTechnicianEarningsSummary();
+        renderTechnicianEarningsList();
+        technicianEarningsPanel.hidden = false;
+        if (status) status.textContent = "";
+      } catch (_error) {
+        resetTechnicianEarningsUi();
+        if (status) { status.textContent = t("technicianEarningsUnavailable"); status.classList.add("error"); }
+      }
+    }
+
     function loadMetaMapSdk() {
       if (window.customElements?.get("metamap-button")) return Promise.resolve();
       if (window.identityMetaMapScriptPromise) return window.identityMetaMapScriptPromise;
@@ -10823,7 +11261,9 @@
       startNotificationPolling();
       loadIdentityVerification().catch(() => {});
       loadHumanReviewQueue().catch(() => {});
+      loadTechnicianEarnings().catch(() => {});
       loadGoogleLinkStatus().catch(() => {});
+      loadMembershipFoundation().catch(() => {});
       openAdminUsersFromUrlIfPresent().catch(() => {});
       openLeadFromUrlIfPresent().catch(() => {});
     }
@@ -11289,6 +11729,7 @@
     async function logout() {
       resetIdentityVerificationUi();
       resetHumanReviewUi();
+      resetTechnicianEarningsUi();
       await stopTrackingPublisher({ notifyBackend: true, reason: "MANUAL" });
       await markOffline();
       saveThemePreference(currentTheme, null);
@@ -13342,6 +13783,15 @@
       const item = humanReviewQueue[Number(button.dataset.humanReviewIndex)];
       openHumanReviewModal(item, button.dataset.humanReviewDecision, button);
     });
+    technicianEarningsRefresh?.addEventListener("click", () => loadTechnicianEarnings({ offset: 0 }).catch(() => {}));
+    document.getElementById("technicianEarningsMonth")?.addEventListener("change", () => loadTechnicianEarnings({ offset: 0 }).catch(() => {}));
+    document.getElementById("technicianEarningsStatus")?.addEventListener("change", () => loadTechnicianEarnings({ offset: 0 }).catch(() => {}));
+    technicianEarningsPrevious?.addEventListener("click", () => loadTechnicianEarnings({ offset: Math.max(0, technicianEarningsOffset - 50) }).catch(() => {}));
+    technicianEarningsNext?.addEventListener("click", () => loadTechnicianEarnings({ offset: technicianEarningsOffset + 50 }).catch(() => {}));
+    technicianEarningsModalClose?.addEventListener("click", closeTechnicianEarningDetails);
+    technicianEarningsModal?.addEventListener("click", (event) => {
+      if (event.target === technicianEarningsModal) closeTechnicianEarningDetails();
+    });
     document.getElementById("findTechnicianButton")?.addEventListener("click", () => {
       loadTechnicianRecommendations(activeLeadServiceOrderId).catch(() => {
         const panel = document.getElementById("technicianRecommendationPanel");
@@ -14040,6 +14490,9 @@
       }
       if (event.key === "Escape" && identityHumanReviewModal && !identityHumanReviewModal.hidden) {
         closeHumanReviewModal();
+      }
+      if (event.key === "Escape" && technicianEarningsModal && !technicianEarningsModal.hidden) {
+        closeTechnicianEarningDetails();
       }
       if (event.key === "Tab" && identityHumanReviewModal && !identityHumanReviewModal.hidden) {
         const focusable = [identityHumanReviewReason, identityHumanReviewCancel, identityHumanReviewConfirm].filter((node) => node && !node.disabled);
