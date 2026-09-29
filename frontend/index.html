@@ -4111,6 +4111,7 @@
           </button>
           <div>
             <div id="profileName">root</div>
+            <span id="profileIdentityBadge" class="identity-verified-badge" hidden></span>
             <div class="line" id="profileDetails">Administrador</div>
           </div>
         </div>
@@ -4120,6 +4121,38 @@
         </div>
       </div>
       <input hidden id="profilePhotoInput" type="file" accept="image/jpeg,image/png,image/webp">
+    </div>
+    <div class="panel-box identity-verification-card" id="identityVerificationPanel" hidden>
+      <div class="identity-verification-header">
+        <div class="identity-verification-copy">
+          <div class="panel-title" id="identityVerificationTitle">Seguridad de tu perfil</div>
+          <div class="line" id="identityVerificationDescription"></div>
+        </div>
+        <span id="identityVerificationStatus" class="line"></span>
+      </div>
+      <div class="identity-verification-progress">
+        <div class="line" id="identityVerificationProgressLabel"></div>
+        <div class="identity-verification-progress-track" aria-hidden="true">
+          <div class="identity-verification-progress-bar" id="identityVerificationProgressBar" style="width: 0%"></div>
+        </div>
+      </div>
+      <ul class="identity-verification-steps" id="identityVerificationSteps"></ul>
+      <div class="line" id="identityVerificationNextAction"></div>
+      <button class="ghost" id="identityVerificationActionButton" type="button"></button>
+      <div class="line" id="identityVerificationFinanceNote"></div>
+    </div>
+    <div class="identity-info-modal" id="identityVerificationInfoModal" hidden>
+      <div class="identity-info-modal-box" role="dialog" aria-modal="true" aria-labelledby="identityVerificationModalTitle">
+        <div class="panel-title" id="identityVerificationModalTitle"></div>
+        <div class="line" id="identityVerificationModalMessage"></div>
+        <label class="line" id="identityVerificationConsentRow" hidden style="display:flex;gap:8px;align-items:flex-start;margin-top:12px;">
+          <input id="identityVerificationConsent" type="checkbox">
+          <span id="identityVerificationConsentLabel"></span>
+        </label>
+        <div id="identityProviderButton" hidden style="margin-top:16px;"></div>
+        <div class="auth-status" id="identityVerificationProviderStatus" aria-live="polite"></div>
+        <button class="ghost" id="identityVerificationModalClose" type="button"></button>
+      </div>
     </div>
     <div class="panel-box" id="googleLinkPanel" hidden>
       <div class="panel-title" id="googleLinkTitle">Vincular conta Google</div>
@@ -5705,6 +5738,33 @@
         photoUploadFailed: "Não foi possível enviar a foto.",
         photoRemoveFailed: "Não foi possível remover a foto.",
         photoRemoveConfirm: "Remover a foto do perfil?",
+        identitySecurityTitle: "Segurança do seu perfil",
+        identitySecurityDescription: "Acompanhe as etapas de uma futura verificação segura de identidade.",
+        identityStatusLabel: "Status",
+        identityStatusNotStarted: "Ainda não iniciada",
+        identityStatusInProgress: "Em andamento",
+        identityStatusPendingReview: "Em revisão",
+        identityStatusNeedsAction: "Requer ação",
+        identityStatusVerified: "Identidade verificada",
+        identityStatusRejected: "Não aprovada",
+        identityStatusExpired: "Expirada",
+        identityStatusSuspended: "Suspensa",
+        identityProgress: (value) => `${value}% concluído`,
+        identityStepAccount: "Conta",
+        identityStepEmail: "E-mail",
+        identityStepPhone: "Telefone",
+        identityStepIdentity: "Identidade",
+        identityNextAction: "Próximo passo: ${action}",
+        identityActionStart: "Preparar verificação",
+        identityActionReview: "Revisar informações",
+        identityActionUpdateInformation: "Atualizar informações",
+        identityActionContactSupport: "Falar com suporte",
+        identityModalTitle: "Verificação de identidade",
+        identityModalMessage: "Estamos preparando uma verificação segura de identidade. Avisaremos quando você puder concluir este processo.",
+        identityModalClose: "Fechar",
+        identityConsent: "Li o aviso de privacidade e autorizo esta verificação de identidade.",
+        identityProviderUnavailable: "A verificação não está disponível neste ambiente.",
+        identityFinanceNote: "No futuro, a verificação poderá apoiar recursos financeiros da conta. Nenhuma regra financeira é alterada aqui.",
         distributeTitle: "Asignar solicitudes por servicio y ubicación",
         selectBroker: "Seleccione técnico",
         allBrokers: "Todos los técnicos",
@@ -5924,6 +5984,33 @@
         photoUploadFailed: "Could not upload the photo.",
         photoRemoveFailed: "Could not remove the photo.",
         photoRemoveConfirm: "Remove profile photo?",
+        identitySecurityTitle: "Profile security",
+        identitySecurityDescription: "Follow the steps for a future secure identity verification.",
+        identityStatusLabel: "Status",
+        identityStatusNotStarted: "Not started",
+        identityStatusInProgress: "In progress",
+        identityStatusPendingReview: "Under review",
+        identityStatusNeedsAction: "Action required",
+        identityStatusVerified: "Identity verified",
+        identityStatusRejected: "Not approved",
+        identityStatusExpired: "Expired",
+        identityStatusSuspended: "Suspended",
+        identityProgress: (value) => `${value}% complete`,
+        identityStepAccount: "Account",
+        identityStepEmail: "Email",
+        identityStepPhone: "Phone",
+        identityStepIdentity: "Identity",
+        identityNextAction: "Next step: ${action}",
+        identityActionStart: "Prepare verification",
+        identityActionReview: "Review information",
+        identityActionUpdateInformation: "Update information",
+        identityActionContactSupport: "Contact support",
+        identityModalTitle: "Identity verification",
+        identityModalMessage: "We are preparing a secure identity verification. We will let you know when you can complete this process.",
+        identityModalClose: "Close",
+        identityConsent: "I have read the privacy notice and authorize this identity verification.",
+        identityProviderUnavailable: "Verification is not available in this environment.",
+        identityFinanceNote: "In the future, verification may support account financial features. No financial rule is changed here.",
         distributeTitle: "Asignar solicitudes por servicio y ubicación",
         selectBroker: "Seleccione técnico",
         allBrokers: "Todos los técnicos",
@@ -6151,6 +6238,33 @@
         photoUploadFailed: "No fue posible subir la foto.",
         photoRemoveFailed: "No fue posible eliminar la foto.",
         photoRemoveConfirm: "¿Eliminar la foto del perfil?",
+        identitySecurityTitle: "Seguridad de tu perfil",
+        identitySecurityDescription: "Acompaña las etapas de una futura verificación segura de identidad.",
+        identityStatusLabel: "Estado",
+        identityStatusNotStarted: "Aún no iniciada",
+        identityStatusInProgress: "En proceso",
+        identityStatusPendingReview: "En revisión",
+        identityStatusNeedsAction: "Requiere acción",
+        identityStatusVerified: "Identidad verificada",
+        identityStatusRejected: "No aprobada",
+        identityStatusExpired: "Expirada",
+        identityStatusSuspended: "Suspendida",
+        identityProgress: (value) => `${value}% completado`,
+        identityStepAccount: "Cuenta",
+        identityStepEmail: "Correo",
+        identityStepPhone: "Teléfono",
+        identityStepIdentity: "Identidad",
+        identityNextAction: "Siguiente paso: ${action}",
+        identityActionStart: "Preparar verificación",
+        identityActionReview: "Revisar información",
+        identityActionUpdateInformation: "Actualizar información",
+        identityActionContactSupport: "Contactar soporte",
+        identityModalTitle: "Verificación de identidad",
+        identityModalMessage: "Estamos preparando una verificación segura de identidad. Te avisaremos cuando puedas completar este proceso.",
+        identityModalClose: "Cerrar",
+        identityConsent: "He leído el aviso de privacidad y autorizo esta verificación de identidad.",
+        identityProviderUnavailable: "La verificación no está disponible en este entorno.",
+        identityFinanceNote: "En el futuro, la verificación podrá apoyar funciones financieras de la cuenta. Aquí no cambia ninguna regla financiera.",
         distributeTitle: "Asignar solicitudes por servicio y ubicación",
         selectBroker: "Seleccione técnico",
         allBrokers: "Todos los técnicos",
@@ -6270,6 +6384,13 @@
     const profilePhotoInput = document.getElementById("profilePhotoInput");
     const profilePhotoButton = document.getElementById("profilePhotoButton");
     const removeProfilePhotoButton = document.getElementById("removeProfilePhotoButton");
+    const profileIdentityBadge = document.getElementById("profileIdentityBadge");
+    const identityVerificationPanel = document.getElementById("identityVerificationPanel");
+    const identityVerificationInfoModal = document.getElementById("identityVerificationInfoModal");
+    let identityVerificationPayload = null;
+    let identityVerificationModalTrigger = null;
+    let identityVerificationBodyOverflow = "";
+    let identityVerificationAttemptStarted = false;
     const leadModal = document.getElementById("leadModal");
     const leadPipeline = document.getElementById("leadPipeline");
     const userModal = document.getElementById("userModal");
@@ -7732,6 +7853,7 @@
       setPlaceholder("#registerPassword", t("login_password_placeholder"));
       setPlaceholder("#registerPasswordConfirm", t("passwordConfirmPlaceholder"));
       setText("#pendingUsersTitle", t("pendingUsersTitle"));
+      if (identityVerificationPayload) renderIdentityVerification(identityVerificationPayload);
 
       document.querySelectorAll(".nav .nav-main[data-view-target]").forEach((button, index) => {
         button.textContent = t("nav")[index] || button.textContent;
@@ -9896,15 +10018,76 @@
       }
     }
 
+    function loadMetaMapSdk() {
+      if (window.customElements?.get("metamap-button")) return Promise.resolve();
+      if (window.identityMetaMapScriptPromise) return window.identityMetaMapScriptPromise;
+      window.identityMetaMapScriptPromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = "https://web-button.metamap.com/button.js";
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.appendChild(script);
+      });
+      return window.identityMetaMapScriptPromise;
+    }
+
+    async function prepareMetaMapVerification() {
+      const consent = document.getElementById("identityVerificationConsent");
+      const buttonHost = document.getElementById("identityProviderButton");
+      const statusNode = document.getElementById("identityVerificationProviderStatus");
+      if (!consent?.checked || identityVerificationAttemptStarted) return;
+      try {
+        const response = await apiFetch(`${API_BASE}/identity-verification/attempts`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ consent: true, consent_version: "identity-verification-v1", policy: "MEXICAN" })
+        });
+        if (!response.ok) throw new Error("identity provider unavailable");
+        const attempt = await response.json();
+        await loadMetaMapSdk();
+        const button = document.createElement("metamap-button");
+        button.setAttribute("clientid", attempt.client_id);
+        button.setAttribute("flowid", attempt.flow_id);
+        button.setAttribute("metadata", JSON.stringify(attempt.metadata));
+        button.addEventListener("metamap:userFinishedSdk", () => {
+          statusNode.textContent = t("identityStatusPendingReview");
+          loadIdentityVerification();
+        });
+        button.addEventListener("metamap:exitedSdk", () => {
+          statusNode.textContent = t("identityStatusInProgress");
+        });
+        buttonHost.replaceChildren(button);
+        buttonHost.hidden = false;
+        identityVerificationAttemptStarted = true;
+      } catch (_error) {
+        statusNode.textContent = t("identityProviderUnavailable");
+        consent.checked = false;
+      }
+    }
+
     function openIdentityVerificationInfo() {
       if (!identityVerificationInfoModal) return;
       identityVerificationModalTrigger = document.activeElement;
       document.getElementById("identityVerificationModalTitle").textContent = t("identityModalTitle");
       document.getElementById("identityVerificationModalMessage").textContent = t("identityModalMessage");
       document.getElementById("identityVerificationModalClose").textContent = t("identityModalClose");
+      document.getElementById("identityVerificationConsentLabel").textContent = t("identityConsent");
+      document.getElementById("identityVerificationProviderStatus").textContent = "";
+      document.getElementById("identityVerificationConsent").checked = false;
+      document.getElementById("identityProviderButton").replaceChildren();
+      document.getElementById("identityProviderButton").hidden = true;
+      identityVerificationAttemptStarted = false;
       identityVerificationBodyOverflow = document.body.style.overflow;
       document.body.style.overflow = "hidden";
       identityVerificationInfoModal.hidden = false;
+      apiFetch(`${API_BASE}/identity-verification/provider-config`, { headers: { Accept: "application/json" } })
+        .then((response) => response.ok ? response.json() : null)
+        .then((config) => {
+          const available = Boolean(config?.enabled);
+          document.getElementById("identityVerificationConsentRow").hidden = !available;
+          if (!available) document.getElementById("identityVerificationProviderStatus").textContent = t("identityProviderUnavailable");
+        })
+        .catch(() => { document.getElementById("identityVerificationProviderStatus").textContent = t("identityProviderUnavailable"); });
       document.getElementById("identityVerificationModalClose")?.focus();
     }
 
@@ -12760,6 +12943,7 @@
     profilePhotoInput.addEventListener("change", uploadProfilePhoto);
     removeProfilePhotoButton.addEventListener("click", removeProfilePhoto);
     document.getElementById("identityVerificationActionButton")?.addEventListener("click", openIdentityVerificationInfo);
+    document.getElementById("identityVerificationConsent")?.addEventListener("change", prepareMetaMapVerification);
     document.getElementById("identityVerificationModalClose")?.addEventListener("click", closeIdentityVerificationInfo);
     identityVerificationInfoModal?.addEventListener("click", (event) => {
       if (event.target === identityVerificationInfoModal) closeIdentityVerificationInfo();

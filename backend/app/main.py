@@ -16,7 +16,7 @@ from app.core.organization import get_or_create_default_organization
 from app.core.storage import UPLOADS_DIR
 from app.auth.routes import router as auth_router
 from app.database.connection import Base, SessionLocal, engine
-from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, service_order_tracking, deletion_request, notification, user_lifecycle, auth_security, organization, organization_invitation, referral_attribution, service_property, service_request, service_opportunity, organization_marketplace_link, commercial_subscription, commercial_upgrade_intent, user_commercial_profile, pricing_rate, payment, service_order_financial, service_order_ledger_entry, visit_pricing_snapshot, organization_payment_policy, service_order_diagnosis, service_order_quote, service_order_payment_plan, service_order_installment_release_event, service_order_completion, service_order_warranty_claim, service_order_review, technician_skill, segmentation_referral, professional_application, professional_network, commercial_compliance
+from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, service_order_tracking, deletion_request, notification, user_lifecycle, auth_security, organization, organization_invitation, referral_attribution, service_property, service_request, service_opportunity, organization_marketplace_link, commercial_subscription, commercial_upgrade_intent, user_commercial_profile, pricing_rate, payment, service_order_financial, service_order_ledger_entry, visit_pricing_snapshot, organization_payment_policy, service_order_diagnosis, service_order_quote, service_order_payment_plan, service_order_installment_release_event, service_order_completion, service_order_warranty_claim, service_order_review, technician_skill, segmentation_referral, professional_application, professional_network, commercial_compliance, identity_provider
 from app.models.lead import Lead
 from app.models.service_order import ServiceOrder
 from app.models.user import User
@@ -142,12 +142,12 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://unpkg.com https://challenges.cloudflare.com https://accounts.google.com; "
+        "script-src 'self' 'unsafe-inline' https://unpkg.com https://challenges.cloudflare.com https://accounts.google.com https://web-button.metamap.com; "
         "style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
         "img-src 'self' data: blob: https://unpkg.com https://*.tile.openstreetmap.org https://lh3.googleusercontent.com; "
-        "connect-src 'self' https://unpkg.com https://*.tile.openstreetmap.org https://nominatim.openstreetmap.org https://challenges.cloudflare.com https://accounts.google.com; "
-        "frame-src https://challenges.cloudflare.com https://accounts.google.com; "
+        "connect-src 'self' https://unpkg.com https://*.tile.openstreetmap.org https://nominatim.openstreetmap.org https://challenges.cloudflare.com https://accounts.google.com https://web-button.metamap.com https://api.prod.metamap.com; "
+        "frame-src https://challenges.cloudflare.com https://accounts.google.com https://signup.metamap.com; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; form-action 'self'",
     )
@@ -299,7 +299,12 @@ def ensure_root_user(db, default_organization_id):
 @app.on_event("startup")
 def create_database_tables():
     startup_log("Iniciando preparacao do banco de dados.")
-    Base.metadata.create_all(bind=engine)
+    # Identity verification tables are controlled migrations, never startup side effects.
+    managed_tables = [
+        table for table in Base.metadata.sorted_tables
+        if table.name not in {"identity_verifications", "identity_verification_attempts", "identity_verification_events"}
+    ]
+    Base.metadata.create_all(bind=engine, tables=managed_tables)
     startup_log("Tabelas verificadas/criadas com sucesso.")
 
     db = SessionLocal()
