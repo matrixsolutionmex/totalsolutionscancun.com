@@ -11317,6 +11317,13 @@
       renderTechnicianCompensationLabels();
       resetTechnicianCompensationUi();
       if (authPublicConfig.technician_compensation_enabled !== true) return;
+      try {
+        const availability = await apiFetch(`${API_BASE}/technician-compensation/availability`, { headers: { Accept: "application/json" } });
+        const payload = await availability.json();
+        if (!availability.ok || payload?.enabled !== true) return;
+      } catch (_error) {
+        return;
+      }
       await Promise.all([loadTechnicianCompensationAdmin(), loadTechnicianCompensationTechnician()]);
     }
 

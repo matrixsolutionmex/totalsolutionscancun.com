@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.models.organization_membership import OrganizationMembership
+from app.models.organization import Organization
 from app.models.service_order import ServiceOrder
 from app.models.service_order_quote import ServiceOrderQuote
 from app.models.technician_compensation import (
@@ -24,6 +25,7 @@ from app.models.user import User
 MONEY = Decimal("0.01")
 POLICY_EVENT_TYPES = {"POLICY_CREATED", "POLICY_ACTIVATED"}
 SNAPSHOT_EVENT_TYPES = {"SNAPSHOT_PROPOSED", "SNAPSHOT_FROZEN", "SNAPSHOT_VOIDED"}
+ROLLOUT_MODES = {"off", "canary", "all"}
 
 
 class CompensationError(ValueError):
@@ -37,6 +39,42 @@ def compensation_policy_enabled() -> bool:
     if value not in {"", "0", "1", "false", "true", "no", "yes", "off", "on"}:
         raise CompensationError("COMPENSATION_POLICY_CONFIGURATION_INVALID")
     return value in {"1", "true", "yes", "on"}
+
+
+def _rollout_organization_ids() -> set[int] | None:
+    raw = os.getenv("TECHNICIAN_COMPENSATION_POLICY_CANARY_ORGANIZATION_IDS", "")
+    tokens = [token.strip() for token in raw.split(",") if token.strip()]
+    if not tokens:
+        return None
+    try:
+        organization_ids = {int(token) for token in tokens}
+    except (TypeError, ValueError):
+        return None
+    if any(organization_id <= 0 for organization_id in organization_ids):
+        return None
+    return organization_ids
+
+
+def compensation_policy_enabled_for_organization(db: Session, organization_id: int | None) -> bool:
+    """Resolve rollout server-side; malformed configuration always disables it."""
+    try:
+        if not compensation_policy_enabled() or not organization_id:
+            return False
+        mode = os.getenv("TECHNICIAN_COMPENSATION_POLICY_ROLLOUT_MODE", "off").strip().lower()
+        if mode not in ROLLOUT_MODES or mode == "off":
+            return False
+        organization = db.query(Organization).filter(
+            Organization.id == organization_id,
+            Organization.status == "ACTIVE",
+        ).first()
+        if not organization:
+            return False
+        if mode == "all":
+            return True
+        organization_ids = _rollout_organization_ids()
+        return organization_ids is not None and organization.id in organization_ids
+    except Exception:
+        return False
 
 
 def _money(value) -> Decimal:
@@ -66,8 +104,8 @@ def _require_admin(actor: User, organization_id: int) -> None:
         raise CompensationError("ACTOR_NOT_ACTIVE")
 
 
-def _require_feature() -> None:
-    if not compensation_policy_enabled():
+def _require_feature(db: Session, organization_id: int | None) -> None:
+    if not compensation_policy_enabled_for_organization(db, organization_id):
         raise CompensationError("COMPENSATION_POLICY_UNAVAILABLE")
 
 
@@ -204,7 +242,7 @@ def create_policy(db: Session, *, actor: User, organization_id: int, currency: s
                   effective_from: datetime, idempotency_key: str,
                   technician_share_bps: int = 7500, organization_share_bps: int = 2500,
                   default_guarantee_days: int = 7) -> TechnicianCompensationPolicy:
-    _require_feature()
+    _require_feature(db, organization_id)
     _require_admin(actor, organization_id)
     currency = _currency(currency)
     if technician_share_bps + organization_share_bps != 10000 or min(technician_share_bps, organization_share_bps) < 0:
@@ -231,10 +269,10 @@ def create_policy(db: Session, *, actor: User, organization_id: int, currency: s
 
 
 def activate_policy(db: Session, *, actor: User, policy_id: int) -> TechnicianCompensationPolicy:
-    _require_feature()
     row = db.query(TechnicianCompensationPolicy).filter_by(id=policy_id).with_for_update().first()
     if not row:
         raise CompensationError("POLICY_NOT_FOUND")
+    _require_feature(db, row.organization_id)
     _require_admin(actor, row.organization_id)
     if row.status == "ACTIVE":
         return row
@@ -258,10 +296,10 @@ def activate_policy(db: Session, *, actor: User, policy_id: int) -> TechnicianCo
 
 
 def preview_order(db: Session, *, actor: User, order_id: int, category_by_item_id: dict[int, str] | None = None) -> dict:
-    _require_feature()
     order = db.query(ServiceOrder).filter_by(id=order_id, organization_id=actor.organization_id).first()
     if not order:
         raise CompensationError("ORDER_NOT_FOUND")
+    _require_feature(db, order.organization_id)
     _require_admin(actor, order.organization_id)
     _assigned_active_technician(db, order)
     quote = _approved_quote(db, order)
@@ -270,10 +308,10 @@ def preview_order(db: Session, *, actor: User, order_id: int, category_by_item_i
 
 
 def quote_items_for_order(db: Session, *, actor: User, order_id: int) -> list[dict]:
-    _require_feature()
     order = db.query(ServiceOrder).filter_by(id=order_id, organization_id=actor.organization_id).first()
     if not order:
         raise CompensationError("ORDER_NOT_FOUND")
+    _require_feature(db, order.organization_id)
     _require_admin(actor, order.organization_id)
     quote = _approved_quote(db, order)
     return [{
@@ -304,10 +342,10 @@ def _calculation_payload(calculation: dict, policy: TechnicianCompensationPolicy
 
 def propose_snapshot(db: Session, *, actor: User, order_id: int, idempotency_key: str,
                      category_by_item_id: dict[int, str] | None = None) -> ServiceOrderCompensationSnapshot:
-    _require_feature()
     order = db.query(ServiceOrder).filter_by(id=order_id, organization_id=actor.organization_id).with_for_update().first()
     if not order:
         raise CompensationError("ORDER_NOT_FOUND")
+    _require_feature(db, order.organization_id)
     _require_admin(actor, order.organization_id)
     technician = _assigned_active_technician(db, order)
     if not idempotency_key.strip():
@@ -351,10 +389,10 @@ def propose_snapshot(db: Session, *, actor: User, order_id: int, idempotency_key
 
 
 def freeze_snapshot(db: Session, *, actor: User, snapshot_id: int) -> ServiceOrderCompensationSnapshot:
-    _require_feature()
     row = db.query(ServiceOrderCompensationSnapshot).filter_by(id=snapshot_id).with_for_update().first()
     if not row:
         raise CompensationError("SNAPSHOT_NOT_FOUND")
+    _require_feature(db, row.organization_id)
     _require_admin(actor, row.organization_id)
     if actor.id == row.technician_user_id:
         raise CompensationError("APPROVER_CANNOT_BE_TECHNICIAN")
@@ -374,10 +412,10 @@ def freeze_snapshot(db: Session, *, actor: User, snapshot_id: int) -> ServiceOrd
 
 
 def get_snapshot(db: Session, *, actor: User, snapshot_id: int) -> ServiceOrderCompensationSnapshot:
-    _require_feature()
     row = db.query(ServiceOrderCompensationSnapshot).filter_by(id=snapshot_id).first()
     if not row or row.organization_id != actor.organization_id:
         raise CompensationError("SNAPSHOT_NOT_FOUND")
+    _require_feature(db, row.organization_id)
     if actor.id != row.technician_user_id and actor.role not in {"ROOT", "GERENTE"}:
         raise CompensationError("SNAPSHOT_NOT_FOUND")
     return row
@@ -401,7 +439,7 @@ def technician_snapshot_payload(row: ServiceOrderCompensationSnapshot) -> dict:
 
 
 def list_technician_snapshots(db: Session, *, actor: User) -> list[ServiceOrderCompensationSnapshot]:
-    _require_feature()
+    _require_feature(db, actor.organization_id)
     if actor.role not in {"BROKER", "TECNICO", "TÉCNICO"}:
         raise CompensationError("TECHNICIAN_REQUIRED")
     if not actor.organization_id or not actor.is_active or str(actor.status or "").upper() != "ACTIVE":
@@ -415,7 +453,7 @@ def list_technician_snapshots(db: Session, *, actor: User) -> list[ServiceOrderC
 
 def ensure_technician_acceptance_allowed(db: Session, *, order: ServiceOrder, technician_user_id: int) -> None:
     """When enabled, acceptance requires a current immutable frozen snapshot."""
-    if not compensation_policy_enabled():
+    if not compensation_policy_enabled_for_organization(db, order.organization_id):
         return
     remunerated_quote = db.query(ServiceOrderQuote.id).filter_by(
         service_order_id=order.id, organization_id=order.organization_id, status="APPROVED",

@@ -22,6 +22,7 @@ from app.models.user import User
 from app.services.technician_compensation_service import (
     CompensationError,
     activate_policy,
+    compensation_policy_enabled_for_organization,
     create_policy,
     freeze_snapshot,
     preview_order,
@@ -42,6 +43,12 @@ def db():
     finally:
         session.close()
         engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def compensation_rollout_defaults(monkeypatch):
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ROLLOUT_MODE", "all")
+    monkeypatch.delenv("TECHNICIAN_COMPENSATION_POLICY_CANARY_ORGANIZATION_IDS", raising=False)
 
 
 def make_user(db, org, username, *, role="TECNICO"):
@@ -102,6 +109,48 @@ def test_feature_is_off_by_default(monkeypatch, db):
     org, manager, _, _ = make_fixture(db)
     with pytest.raises(CompensationError, match="COMPENSATION_POLICY_UNAVAILABLE"):
         create_policy(db, actor=manager, organization_id=org.id, currency="MXN", effective_from=datetime.utcnow(), idempotency_key="off")
+
+
+def test_rollout_is_organization_scoped_and_fail_closed(monkeypatch, db):
+    org, manager, _, order = make_fixture(db)
+    other_org = Organization(name="other", slug="other", status="ACTIVE")
+    db.add(other_org)
+    db.flush()
+
+    monkeypatch.delenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", raising=False)
+    assert compensation_policy_enabled_for_organization(db, org.id) is False
+
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
+    monkeypatch.delenv("TECHNICIAN_COMPENSATION_POLICY_ROLLOUT_MODE", raising=False)
+    assert compensation_policy_enabled_for_organization(db, org.id) is False
+
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ROLLOUT_MODE", "canary")
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_CANARY_ORGANIZATION_IDS", f"  {org.id}, {org.id} ")
+    assert compensation_policy_enabled_for_organization(db, org.id) is True
+    assert compensation_policy_enabled_for_organization(db, other_org.id) is False
+    with pytest.raises(CompensationError, match="COMPENSATION_POLICY_UNAVAILABLE"):
+        create_policy(db, actor=manager, organization_id=other_org.id, currency="MXN", effective_from=datetime.utcnow(), idempotency_key="outside")
+
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ROLLOUT_MODE", "invalid")
+    assert compensation_policy_enabled_for_organization(db, org.id) is False
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ROLLOUT_MODE", "canary")
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_CANARY_ORGANIZATION_IDS", "0,abc")
+    assert compensation_policy_enabled_for_organization(db, org.id) is False
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ROLLOUT_MODE", "all")
+    assert compensation_policy_enabled_for_organization(db, other_org.id) is True
+    assert order.organization_id == org.id
+
+
+def test_marketplace_gate_only_applies_inside_canary(monkeypatch, db):
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
+    org, _, technician, order = make_fixture(db)
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ROLLOUT_MODE", "canary")
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_CANARY_ORGANIZATION_IDS", str(org.id + 1))
+    ensure_technician_acceptance_allowed(db, order=order, technician_user_id=technician.id)
+
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_CANARY_ORGANIZATION_IDS", str(org.id))
+    with pytest.raises(CompensationError, match="COMPENSATION_SNAPSHOT_REQUIRED"):
+        ensure_technician_acceptance_allowed(db, order=order, technician_user_id=technician.id)
 
 
 def test_preview_uses_labor_only_and_keeps_decimal_values(monkeypatch, db):
@@ -227,6 +276,5 @@ def test_public_config_and_frontend_gate_keep_compensation_off(monkeypatch):
     assert public_config().technician_compensation_enabled is True
 
     frontend = (Path(__file__).resolve().parents[2] / "frontend" / "index.html").read_text()
-    guard = "if (authPublicConfig.technician_compensation_enabled !== true) return;"
-    assert guard in frontend
-    assert f"{guard}\n      await Promise.all([loadTechnicianCompensationAdmin(), loadTechnicianCompensationTechnician()]);" in frontend
+    assert "/technician-compensation/availability" in frontend
+    assert "payload?.enabled !== true" in frontend

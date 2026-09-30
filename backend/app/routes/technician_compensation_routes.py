@@ -10,7 +10,7 @@ from app.models.technician_compensation import TechnicianCompensationPolicy
 from app.services.technician_compensation_service import (
     CompensationError,
     activate_policy,
-    compensation_policy_enabled,
+    compensation_policy_enabled_for_organization,
     create_policy,
     freeze_snapshot,
     get_snapshot,
@@ -58,8 +58,7 @@ def _call(function, *args, **kwargs):
 
 @router.get("/policies")
 def list_policies(db: Session = Depends(get_db), actor=Depends(get_current_user)):
-    _call(compensation_policy_enabled)
-    if not compensation_policy_enabled():
+    if not compensation_policy_enabled_for_organization(db, actor.organization_id):
         raise HTTPException(status_code=503, detail="compensation_policy_unavailable")
     if actor.role not in {"ROOT", "GERENTE"}:
         raise HTTPException(status_code=403, detail="admin_required")
@@ -72,10 +71,14 @@ def list_policies(db: Session = Depends(get_db), actor=Depends(get_current_user)
 @router.get("/policies/active")
 def active_policy(currency: str = "MXN", db: Session = Depends(get_db), actor=Depends(get_current_user)):
     from app.services.technician_compensation_service import _active_policy, _currency
-    enabled = _call(compensation_policy_enabled)
-    if not enabled:
+    if not compensation_policy_enabled_for_organization(db, actor.organization_id):
         raise HTTPException(status_code=503, detail="compensation_policy_unavailable")
     return policy_payload(_call(_active_policy, db, actor.organization_id, _currency(currency)))
+
+
+@router.get("/availability")
+def compensation_availability(db: Session = Depends(get_db), actor=Depends(get_current_user)):
+    return {"enabled": compensation_policy_enabled_for_organization(db, actor.organization_id)}
 
 
 @router.post("/policies", status_code=201)
