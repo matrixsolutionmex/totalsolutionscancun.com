@@ -78,6 +78,7 @@ class PublicAuthConfig(BaseModel):
     turnstile_required: bool = False
     google_client_id: str | None = None
     public_signup_enabled: bool = True
+    technician_compensation_enabled: bool = False
 
 
 class MfaVerifyRequest(BaseModel):

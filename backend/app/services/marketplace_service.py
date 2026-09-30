@@ -332,6 +332,11 @@ def _claim_for_user(
             setattr(order, field, getattr(opportunity, field))
     order.responsible_user_id = target.id
     order.updated_at = now
+    try:
+        from app.services.technician_compensation_service import ensure_technician_acceptance_allowed
+        ensure_technician_acceptance_allowed(db, order=order, technician_user_id=target.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     db.add(LeadEvent(organization_id=opportunity.organization_id, lead_id=lead.id, actor_id=actor.id,
                      actor_name=actor.full_name or actor.username, event_type="MARKETPLACE_OPPORTUNITY_CLAIMED",
                      message=f"Oportunidade {opportunity.public_id} aceita para o usuário autorizado"))

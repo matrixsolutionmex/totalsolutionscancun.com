@@ -48,6 +48,7 @@ class ServiceOrderQuoteItem(Base):
     unit = Column(String(32), nullable=False, default="unidad")
     unit_price = Column(Numeric(12, 2), nullable=False)
     subtotal = Column(Numeric(12, 2), nullable=False)
+    compensation_category = Column(String(24), nullable=True)
     sort_order = Column(Integer, nullable=False, default=0)
 
     quote = relationship("ServiceOrderQuote", back_populates="items")

@@ -16,7 +16,7 @@ from app.core.organization import get_or_create_default_organization
 from app.core.storage import UPLOADS_DIR
 from app.auth.routes import router as auth_router
 from app.database.connection import Base, SessionLocal, engine
-from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, service_order_tracking, deletion_request, notification, user_lifecycle, auth_security, organization, organization_invitation, referral_attribution, service_property, service_request, service_opportunity, organization_marketplace_link, commercial_subscription, commercial_upgrade_intent, user_commercial_profile, pricing_rate, payment, service_order_financial, service_order_ledger_entry, visit_pricing_snapshot, organization_payment_policy, service_order_diagnosis, service_order_quote, service_order_payment_plan, service_order_installment_release_event, service_order_completion, service_order_warranty_claim, service_order_review, technician_skill, segmentation_referral, professional_application, professional_network, commercial_compliance, identity_provider, technician_earning
+from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, service_order_tracking, deletion_request, notification, user_lifecycle, auth_security, organization, organization_invitation, referral_attribution, service_property, service_request, service_opportunity, organization_marketplace_link, commercial_subscription, commercial_upgrade_intent, user_commercial_profile, pricing_rate, payment, service_order_financial, service_order_ledger_entry, visit_pricing_snapshot, organization_payment_policy, service_order_diagnosis, service_order_quote, service_order_payment_plan, service_order_installment_release_event, service_order_completion, service_order_warranty_claim, service_order_review, technician_skill, segmentation_referral, professional_application, professional_network, commercial_compliance, identity_provider, technician_earning, technician_compensation
 from app.models.lead import Lead
 from app.models.service_order import ServiceOrder
 from app.models.user import User
@@ -47,6 +47,7 @@ from app.routes.service_order_review_routes import router as service_order_revie
 from app.routes.technician_recommendation_routes import router as technician_recommendation_router
 from app.routes.identity_verification_routes import router as identity_verification_router
 from app.routes.technician_earning_routes import router as technician_earning_router
+from app.routes.technician_compensation_routes import router as technician_compensation_router
 from app.routes.organization_membership_routes import router as organization_membership_router
 from app.services.service_order_service import ensure_service_order
 from app.services.notification_service import process_email_outbox
@@ -72,6 +73,9 @@ STARTUP_MANUAL_MIGRATION_TABLES = frozenset({
     "stripe_payment_adjustments",
     "technician_earnings",
     "technician_earning_events",
+    "technician_compensation_policies",
+    "service_order_compensation_snapshots",
+    "technician_compensation_events",
     "network_fee_policies",
     "organization_memberships",
     "technician_transfer_requests",
@@ -137,6 +141,7 @@ app.include_router(service_order_review_router)
 app.include_router(technician_recommendation_router)
 app.include_router(identity_verification_router)
 app.include_router(technician_earning_router)
+app.include_router(technician_compensation_router)
 app.include_router(organization_membership_router)
 app.include_router(pablo_router)
 app.include_router(segmentation_referral_router)

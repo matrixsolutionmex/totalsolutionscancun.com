@@ -1504,6 +1504,33 @@
     .technician-earnings-status.error { color: #b91c1c; }
     .technician-earnings-empty { padding: 14px 0; color: var(--muted); }
     .technician-earnings-modal .identity-info-modal-box { width: min(100%, 560px); }
+    .technician-compensation-panel[hidden],
+    .technician-compensation-modal[hidden] { display: none; }
+    .technician-compensation-panel { margin-top: 16px; }
+    .technician-compensation-header,
+    .technician-compensation-actions,
+    .technician-compensation-policy-row,
+    .technician-compensation-preview-grid { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+    .technician-compensation-header { justify-content: space-between; }
+    .technician-compensation-policy-row { justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--line); }
+    .technician-compensation-policy-row:last-child { border-bottom: 0; }
+    .technician-compensation-policy-meta,
+    .technician-compensation-preview-grid { color: var(--muted); font-size: 13px; }
+    .technician-compensation-preview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 14px; }
+    .technician-compensation-preview-grid > div { min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: 6px; }
+    .technician-compensation-preview-grid strong { display: block; margin-top: 4px; color: var(--text); overflow-wrap: anywhere; }
+    .technician-compensation-items { display: grid; gap: 8px; margin-top: 12px; }
+    .technician-compensation-item { display: grid; grid-template-columns: minmax(0, 1fr) minmax(130px, 180px); gap: 10px; align-items: center; padding: 10px; border: 1px solid var(--line); border-radius: 6px; }
+    .technician-compensation-item select { min-height: 42px; }
+    .technician-compensation-status { min-height: 24px; color: var(--muted); }
+    .technician-compensation-status.error { color: #b91c1c; }
+    .technician-compensation-empty { padding: 14px 0; color: var(--muted); }
+    .technician-compensation-modal .identity-info-modal-box { width: min(100%, 620px); }
+    .technician-compensation-modal .identity-info-modal-box > * { min-width: 0; }
+    @media (max-width: 760px) {
+      .technician-compensation-preview-grid { grid-template-columns: 1fr; }
+      .technician-compensation-item { grid-template-columns: 1fr; }
+    }
     .technician-earning-detail-grid { display: grid; gap: 8px; }
     .technician-earning-detail-row { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
     .technician-earning-detail-row span:last-child { text-align: right; overflow-wrap: anywhere; }
@@ -4305,6 +4332,57 @@
         <button class="ghost" id="technicianEarningsModalClose" type="button"></button>
       </div>
     </div>
+    <section class="panel-box technician-compensation-panel" id="technicianCompensationAdminPanel" hidden aria-labelledby="technicianCompensationAdminTitle">
+      <div class="technician-compensation-header">
+        <div>
+          <div class="panel-title" id="technicianCompensationAdminTitle"></div>
+          <div class="line" id="technicianCompensationAdminDescription"></div>
+        </div>
+        <button class="ghost" id="technicianCompensationRefresh" type="button"></button>
+      </div>
+      <div class="technician-compensation-status" id="technicianCompensationAdminStatus" aria-live="polite"></div>
+      <form class="admin-grid" id="technicianCompensationPolicyForm">
+        <label><span id="technicianCompensationCurrencyLabel"></span><input id="technicianCompensationCurrency" value="MXN" maxlength="3" required></label>
+        <label><span id="technicianCompensationTechShareLabel"></span><input id="technicianCompensationTechShare" type="number" min="0" max="100" step="0.01" value="75" required></label>
+        <label><span id="technicianCompensationGuaranteeLabel"></span><input id="technicianCompensationGuarantee" type="number" min="0" max="3650" value="7" required></label>
+        <button type="submit" id="technicianCompensationCreatePolicy"></button>
+      </form>
+      <div class="panel-title" id="technicianCompensationHistoryTitle" style="margin-top:16px;"></div>
+      <div id="technicianCompensationPolicyList"></div>
+      <div class="panel-title" id="technicianCompensationPreviewTitle" style="margin-top:18px;"></div>
+      <form class="admin-grid" id="technicianCompensationOrderForm">
+        <label><span id="technicianCompensationOrderLabel"></span><input id="technicianCompensationOrderId" type="number" min="1" required></label>
+        <button type="submit" id="technicianCompensationLoadItems"></button>
+      </form>
+      <div class="technician-compensation-items" id="technicianCompensationItems"></div>
+      <div class="technician-compensation-actions" style="margin-top:12px;">
+        <button type="button" id="technicianCompensationPreviewButton" disabled></button>
+        <button type="button" class="ghost" id="technicianCompensationProposeButton" disabled></button>
+        <button type="button" class="ghost" id="technicianCompensationFreezeButton" disabled></button>
+      </div>
+      <div class="technician-compensation-preview-grid" id="technicianCompensationPreview" hidden></div>
+    </section>
+    <section class="panel-box technician-compensation-panel" id="technicianCompensationTechnicianPanel" hidden aria-labelledby="technicianCompensationTechnicianTitle">
+      <div class="technician-compensation-header">
+        <div>
+          <div class="panel-title" id="technicianCompensationTechnicianTitle"></div>
+          <div class="line" id="technicianCompensationTechnicianDescription"></div>
+        </div>
+        <button class="ghost" id="technicianCompensationTechnicianRefresh" type="button"></button>
+      </div>
+      <div class="technician-compensation-status" id="technicianCompensationTechnicianStatus" aria-live="polite"></div>
+      <div id="technicianCompensationTechnicianList"></div>
+    </section>
+    <div class="identity-info-modal technician-compensation-modal" id="technicianCompensationConfirmModal" hidden>
+      <div class="identity-info-modal-box" role="dialog" aria-modal="true" aria-labelledby="technicianCompensationConfirmTitle">
+        <div class="panel-title" id="technicianCompensationConfirmTitle"></div>
+        <div class="line" id="technicianCompensationConfirmMessage"></div>
+        <div class="technician-compensation-actions" style="margin-top:16px;">
+          <button class="ghost" type="button" id="technicianCompensationConfirmCancel"></button>
+          <button type="button" id="technicianCompensationConfirmAction"></button>
+        </div>
+      </div>
+    </div>
     <div class="panel-box" id="googleLinkPanel" hidden>
       <div class="panel-title" id="googleLinkTitle">Vincular conta Google</div>
       <div class="line" id="googleLinkDescription">Vincule a conta Google que usa o mesmo e-mail desta conta.</div>
@@ -5233,7 +5311,7 @@
     const FRONTEND_BUILD_SHA = "unknown";
     let accessToken = localStorage.getItem("totalsolutions_access_token") || "";
     let csrfToken = document.cookie.split("; ").find((row) => row.startsWith("ts_csrf="))?.split("=")[1] || "";
-    let authPublicConfig = { turnstile_required: false, turnstile_site_key: null, google_client_id: null, public_signup_enabled: true };
+    let authPublicConfig = { turnstile_required: false, turnstile_site_key: null, google_client_id: null, public_signup_enabled: true, technician_compensation_enabled: false };
     let turnstileWidgets = {};
     let pendingVerificationEmail = "";
     const pendingVerificationEmailStorageKey = "totalsolutions_pending_verification_email";
@@ -5282,7 +5360,7 @@
           authPublicConfig = await response.json();
         }
       } catch (_error) {
-        authPublicConfig = { turnstile_required: false, turnstile_site_key: null, google_client_id: null, public_signup_enabled: true };
+        authPublicConfig = { turnstile_required: false, turnstile_site_key: null, google_client_id: null, public_signup_enabled: true, technician_compensation_enabled: false };
       }
       updateGoogleProviderButton();
       updateAppleProviderButton();
@@ -6003,6 +6081,48 @@
         technicianEarningsInvalid: "Não foi possível carregar este extrato.",
         technicianEarningsPrevious: "Anterior",
         technicianEarningsNext: "Próxima",
+        compensationPolicyTitle: "Política de remuneração",
+        compensationPolicyDescription: "Configure a política versionada e congele o valor antes do aceite.",
+        compensationPolicyRefresh: "Atualizar política",
+        compensationPolicyCurrency: "Moeda",
+        compensationPolicyTechShare: "Parcela do técnico (%)",
+        compensationPolicyGuarantee: "Garantia (dias)",
+        compensationPolicyCreate: "Criar rascunho",
+        compensationPolicyHistory: "Histórico de versões",
+        compensationPolicyPreview: "Preview da remuneração",
+        compensationPolicyOrder: "ID da OS",
+        compensationPolicyLoadItems: "Carregar itens",
+        compensationPolicyCalculate: "Calcular preview",
+        compensationPolicyPropose: "Criar snapshot",
+        compensationPolicyFreeze: "Congelar snapshot",
+        compensationPolicyActive: "Ativa",
+        compensationPolicyDraft: "Rascunho",
+        compensationPolicyRetired: "Retirada",
+        compensationPolicyLabor: "Mão de obra",
+        compensationPolicyMaterial: "Material",
+        compensationPolicyTax: "Imposto",
+        compensationPolicyReimbursement: "Reembolso",
+        compensationPolicyOther: "Outro",
+        compensationPolicyAmount: "Valor",
+        compensationPolicyOrganization: "Organização",
+        compensationPolicyInstallments: "Parcelas proporcionais",
+        compensationPolicyProcessing: "Taxa de processamento absorvida pela organização",
+        compensationPolicyDiscount: "Desconto absorvido pela organização",
+        compensationPolicyUnavailable: "A política não está disponível.",
+        compensationPolicyInvalid: "A resposta da política é inválida.",
+        compensationPolicyConfirmTitle: "Confirmar ativação",
+        compensationPolicyConfirmMessage: "A versão será ativada e a versão anterior ficará somente no histórico.",
+        compensationPolicyConfirm: "Confirmar",
+        compensationPolicyCancel: "Cancelar",
+        compensationPolicyTechnicianTitle: "Remuneração deste serviço",
+        compensationPolicyTechnicianDescription: "Termos congelados antes do aceite da OS.",
+        compensationPolicyTechnicianRefresh: "Atualizar remuneração",
+        compensationPolicyTechnicianNotice: "Este valor não é pagamento nem saldo bancário.",
+        compensationPolicyFrozen: "Congelado",
+        compensationPolicyNoSnapshot: "Nenhum valor congelado disponível.",
+        compensationPolicySnapshotCreated: "Snapshot criado. Revise e congele para liberar a visualização do técnico.",
+        compensationPolicySnapshotFrozen: "Snapshot congelado.",
+        compensationPolicyActionError: "Não foi possível concluir esta ação.",
         distributeTitle: "Asignar solicitudes por servicio y ubicación",
         selectBroker: "Seleccione técnico",
         allBrokers: "Todos los técnicos",
@@ -6316,6 +6436,48 @@
         technicianEarningsInvalid: "Unable to load this statement.",
         technicianEarningsPrevious: "Previous",
         technicianEarningsNext: "Next",
+        compensationPolicyTitle: "Compensation policy",
+        compensationPolicyDescription: "Configure the versioned policy and freeze the amount before acceptance.",
+        compensationPolicyRefresh: "Refresh policy",
+        compensationPolicyCurrency: "Currency",
+        compensationPolicyTechShare: "Technician share (%)",
+        compensationPolicyGuarantee: "Guarantee (days)",
+        compensationPolicyCreate: "Create draft",
+        compensationPolicyHistory: "Version history",
+        compensationPolicyPreview: "Compensation preview",
+        compensationPolicyOrder: "Service order ID",
+        compensationPolicyLoadItems: "Load items",
+        compensationPolicyCalculate: "Calculate preview",
+        compensationPolicyPropose: "Create snapshot",
+        compensationPolicyFreeze: "Freeze snapshot",
+        compensationPolicyActive: "Active",
+        compensationPolicyDraft: "Draft",
+        compensationPolicyRetired: "Retired",
+        compensationPolicyLabor: "Labor",
+        compensationPolicyMaterial: "Material",
+        compensationPolicyTax: "Tax",
+        compensationPolicyReimbursement: "Reimbursement",
+        compensationPolicyOther: "Other",
+        compensationPolicyAmount: "Amount",
+        compensationPolicyOrganization: "Organization",
+        compensationPolicyInstallments: "Proportional installments",
+        compensationPolicyProcessing: "Processing fee absorbed by the organization",
+        compensationPolicyDiscount: "Discount absorbed by the organization",
+        compensationPolicyUnavailable: "The policy is unavailable.",
+        compensationPolicyInvalid: "The policy response is invalid.",
+        compensationPolicyConfirmTitle: "Confirm activation",
+        compensationPolicyConfirmMessage: "This version will become active and the previous version will remain in history.",
+        compensationPolicyConfirm: "Confirm",
+        compensationPolicyCancel: "Cancel",
+        compensationPolicyTechnicianTitle: "Compensation for this service",
+        compensationPolicyTechnicianDescription: "Terms frozen before service acceptance.",
+        compensationPolicyTechnicianRefresh: "Refresh compensation",
+        compensationPolicyTechnicianNotice: "This amount is not a payment or bank balance.",
+        compensationPolicyFrozen: "Frozen",
+        compensationPolicyNoSnapshot: "No frozen amount is available.",
+        compensationPolicySnapshotCreated: "Snapshot created. Review and freeze it for technician visibility.",
+        compensationPolicySnapshotFrozen: "Snapshot frozen.",
+        compensationPolicyActionError: "This action could not be completed.",
         distributeTitle: "Asignar solicitudes por servicio y ubicación",
         selectBroker: "Seleccione técnico",
         allBrokers: "Todos los técnicos",
@@ -6637,6 +6799,48 @@
         technicianEarningsInvalid: "No fue posible cargar este extracto.",
         technicianEarningsPrevious: "Anterior",
         technicianEarningsNext: "Siguiente",
+        compensationPolicyTitle: "Política de remuneración",
+        compensationPolicyDescription: "Configura la política versionada y congela el importe antes de la aceptación.",
+        compensationPolicyRefresh: "Actualizar política",
+        compensationPolicyCurrency: "Moneda",
+        compensationPolicyTechShare: "Parte del técnico (%)",
+        compensationPolicyGuarantee: "Garantía (días)",
+        compensationPolicyCreate: "Crear borrador",
+        compensationPolicyHistory: "Historial de versiones",
+        compensationPolicyPreview: "Vista previa de remuneración",
+        compensationPolicyOrder: "ID de la OS",
+        compensationPolicyLoadItems: "Cargar ítems",
+        compensationPolicyCalculate: "Calcular vista previa",
+        compensationPolicyPropose: "Crear snapshot",
+        compensationPolicyFreeze: "Congelar snapshot",
+        compensationPolicyActive: "Activa",
+        compensationPolicyDraft: "Borrador",
+        compensationPolicyRetired: "Retirada",
+        compensationPolicyLabor: "Mano de obra",
+        compensationPolicyMaterial: "Material",
+        compensationPolicyTax: "Impuesto",
+        compensationPolicyReimbursement: "Reembolso",
+        compensationPolicyOther: "Otro",
+        compensationPolicyAmount: "Importe",
+        compensationPolicyOrganization: "Organización",
+        compensationPolicyInstallments: "Cuotas proporcionales",
+        compensationPolicyProcessing: "La organización absorbe la tasa de procesamiento",
+        compensationPolicyDiscount: "La organización absorbe el descuento",
+        compensationPolicyUnavailable: "La política no está disponible.",
+        compensationPolicyInvalid: "La respuesta de la política no es válida.",
+        compensationPolicyConfirmTitle: "Confirmar activación",
+        compensationPolicyConfirmMessage: "La versión quedará activa y la anterior permanecerá en el historial.",
+        compensationPolicyConfirm: "Confirmar",
+        compensationPolicyCancel: "Cancelar",
+        compensationPolicyTechnicianTitle: "Remuneración de este servicio",
+        compensationPolicyTechnicianDescription: "Términos congelados antes de aceptar la OS.",
+        compensationPolicyTechnicianRefresh: "Actualizar remuneración",
+        compensationPolicyTechnicianNotice: "Este importe no es un pago ni un saldo bancario.",
+        compensationPolicyFrozen: "Congelado",
+        compensationPolicyNoSnapshot: "No hay un importe congelado disponible.",
+        compensationPolicySnapshotCreated: "Snapshot creado. Revísalo y congélalo para mostrarlo al técnico.",
+        compensationPolicySnapshotFrozen: "Snapshot congelado.",
+        compensationPolicyActionError: "No fue posible completar esta acción.",
         distributeTitle: "Asignar solicitudes por servicio y ubicación",
         selectBroker: "Seleccione técnico",
         allBrokers: "Todos los técnicos",
@@ -6774,6 +6978,19 @@
     const technicianEarningsPagination = document.getElementById("technicianEarningsPagination");
     const technicianEarningsPrevious = document.getElementById("technicianEarningsPrevious");
     const technicianEarningsNext = document.getElementById("technicianEarningsNext");
+    const technicianCompensationAdminPanel = document.getElementById("technicianCompensationAdminPanel");
+    const technicianCompensationTechnicianPanel = document.getElementById("technicianCompensationTechnicianPanel");
+    const technicianCompensationPolicyList = document.getElementById("technicianCompensationPolicyList");
+    const technicianCompensationItems = document.getElementById("technicianCompensationItems");
+    const technicianCompensationPreview = document.getElementById("technicianCompensationPreview");
+    const technicianCompensationConfirmModal = document.getElementById("technicianCompensationConfirmModal");
+    let technicianCompensationPolicies = [];
+    let technicianCompensationQuoteItems = [];
+    let technicianCompensationPreviewPayload = null;
+    let technicianCompensationSnapshot = null;
+    let technicianCompensationConfirmAction = null;
+    let technicianCompensationConfirmTrigger = null;
+    let technicianCompensationBodyOverflow = "";
     let technicianEarnings = [];
     let technicianEarningsSummaryPayload = null;
     let technicianEarningsOffset = 0;
@@ -10871,6 +11088,278 @@
       }
     }
 
+    const COMPENSATION_ITEM_CATEGORIES = ["LABOR", "MATERIAL", "TAX", "REIMBURSEMENT", "OTHER"];
+    const COMPENSATION_CATEGORY_LABELS = {
+      LABOR: "compensationPolicyLabor", MATERIAL: "compensationPolicyMaterial",
+      TAX: "compensationPolicyTax", REIMBURSEMENT: "compensationPolicyReimbursement",
+      OTHER: "compensationPolicyOther"
+    };
+
+    function compensationMoney(value, currency) {
+      try {
+        return new Intl.NumberFormat(translations[currentLanguage]?.locale || "pt-BR", { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
+      } catch (_error) {
+        return `${value} ${currency}`;
+      }
+    }
+
+    function resetTechnicianCompensationUi() {
+      technicianCompensationPolicies = [];
+      technicianCompensationQuoteItems = [];
+      technicianCompensationPreviewPayload = null;
+      technicianCompensationSnapshot = null;
+      technicianCompensationAdminPanel.hidden = true;
+      technicianCompensationTechnicianPanel.hidden = true;
+      technicianCompensationPolicyList.replaceChildren();
+      technicianCompensationItems.replaceChildren();
+      technicianCompensationPreview.replaceChildren();
+      technicianCompensationPreview.hidden = true;
+      ["technicianCompensationAdminStatus", "technicianCompensationTechnicianStatus"].forEach((id) => {
+        const node = document.getElementById(id);
+        if (node) { node.textContent = ""; node.classList.remove("error"); }
+      });
+      ["technicianCompensationPreviewButton", "technicianCompensationProposeButton", "technicianCompensationFreezeButton"].forEach((id) => {
+        const node = document.getElementById(id);
+        if (node) node.disabled = true;
+      });
+      if (technicianCompensationConfirmModal) technicianCompensationConfirmModal.hidden = true;
+      document.body.style.overflow = technicianCompensationBodyOverflow;
+      technicianCompensationConfirmAction = null;
+      technicianCompensationConfirmTrigger = null;
+    }
+
+    function renderTechnicianCompensationLabels() {
+      const labels = {
+        technicianCompensationAdminTitle: "compensationPolicyTitle",
+        technicianCompensationAdminDescription: "compensationPolicyDescription",
+        technicianCompensationRefresh: "compensationPolicyRefresh",
+        technicianCompensationCurrencyLabel: "compensationPolicyCurrency",
+        technicianCompensationTechShareLabel: "compensationPolicyTechShare",
+        technicianCompensationGuaranteeLabel: "compensationPolicyGuarantee",
+        technicianCompensationCreatePolicy: "compensationPolicyCreate",
+        technicianCompensationHistoryTitle: "compensationPolicyHistory",
+        technicianCompensationPreviewTitle: "compensationPolicyPreview",
+        technicianCompensationOrderLabel: "compensationPolicyOrder",
+        technicianCompensationLoadItems: "compensationPolicyLoadItems",
+        technicianCompensationPreviewButton: "compensationPolicyCalculate",
+        technicianCompensationProposeButton: "compensationPolicyPropose",
+        technicianCompensationFreezeButton: "compensationPolicyFreeze",
+        technicianCompensationTechnicianTitle: "compensationPolicyTechnicianTitle",
+        technicianCompensationTechnicianDescription: "compensationPolicyTechnicianDescription",
+        technicianCompensationTechnicianRefresh: "compensationPolicyTechnicianRefresh",
+        technicianCompensationConfirmTitle: "compensationPolicyConfirmTitle",
+        technicianCompensationConfirmCancel: "compensationPolicyCancel",
+        technicianCompensationConfirmAction: "compensationPolicyConfirm"
+      };
+      Object.entries(labels).forEach(([id, key]) => setText(`#${id}`, t(key)));
+    }
+
+    function safeCompensationPolicies(data) {
+      return data && Array.isArray(data.items) && data.items.every((item) => item && Number.isInteger(item.id)
+        && Number.isInteger(item.version) && ["DRAFT", "ACTIVE", "RETIRED"].includes(item.status)
+        && /^[A-Z]{3}$/.test(item.currency) && typeof item.technician_share_bps === "number"
+        && typeof item.organization_share_bps === "number" && typeof item.effective_from === "string");
+    }
+
+    function renderTechnicianCompensationPolicies() {
+      technicianCompensationPolicyList.replaceChildren();
+      if (!technicianCompensationPolicies.length) {
+        const empty = document.createElement("div");
+        empty.className = "technician-compensation-empty";
+        empty.textContent = t("compensationPolicyUnavailable");
+        technicianCompensationPolicyList.appendChild(empty);
+        return;
+      }
+      technicianCompensationPolicies.forEach((policy) => {
+        const row = document.createElement("div");
+        row.className = "technician-compensation-policy-row";
+        const details = document.createElement("div");
+        details.className = "technician-compensation-policy-meta";
+        details.textContent = `v${policy.version} · ${policy.currency} · ${policy.technician_share_bps / 100}% / ${policy.organization_share_bps / 100}% · ${policy.status} · ${policy.effective_from}`;
+        const actions = document.createElement("div");
+        if (policy.status === "DRAFT") {
+          const activate = document.createElement("button");
+          activate.type = "button";
+          activate.className = "ghost";
+          activate.textContent = t("compensationPolicyConfirm");
+          activate.addEventListener("click", () => openTechnicianCompensationConfirm(policy, activate));
+          actions.appendChild(activate);
+        }
+        row.append(details, actions);
+        technicianCompensationPolicyList.appendChild(row);
+      });
+    }
+
+    function renderTechnicianCompensationItems() {
+      technicianCompensationItems.replaceChildren();
+      technicianCompensationQuoteItems.forEach((item) => {
+        const row = document.createElement("label");
+        row.className = "technician-compensation-item";
+        const text = document.createElement("span");
+        text.textContent = `${item.description || t("compensationPolicyOther")} · ${item.quantity} ${item.unit} · ${item.subtotal}`;
+        const select = document.createElement("select");
+        select.dataset.compensationItemId = String(item.id);
+        select.required = true;
+        COMPENSATION_ITEM_CATEGORIES.forEach((category) => {
+          const option = document.createElement("option");
+          option.value = category;
+          option.textContent = t(COMPENSATION_CATEGORY_LABELS[category]);
+          option.selected = item.compensation_category === category;
+          select.appendChild(option);
+        });
+        row.append(text, select);
+        technicianCompensationItems.appendChild(row);
+      });
+      const hasItems = technicianCompensationQuoteItems.length > 0;
+      document.getElementById("technicianCompensationPreviewButton").disabled = !hasItems;
+    }
+
+    function compensationCategoryMap() {
+      return Object.fromEntries([...technicianCompensationItems.querySelectorAll("select[data-compensation-item-id]")].map((select) => [select.dataset.compensationItemId, select.value]));
+    }
+
+    function renderTechnicianCompensationPreview(data) {
+      const fields = [
+        ["compensationPolicyLabor", compensationMoney(data.labor_base_amount, data.currency)],
+        ["compensationPolicyMaterial", compensationMoney(data.material_amount, data.currency)],
+        ["compensationPolicyTax", compensationMoney(data.tax_amount, data.currency)],
+        ["compensationPolicyReimbursement", compensationMoney(data.reimbursement_amount, data.currency)],
+        ["compensationPolicyDiscount", compensationMoney(data.discount_amount, data.currency)],
+        ["compensationPolicyAmount", compensationMoney(data.technician_amount, data.currency)],
+        ["compensationPolicyOrganization", compensationMoney(data.organization_amount, data.currency)],
+        ["compensationPolicyGuarantee", `${data.guarantee_days} ${t("compensationPolicyGuarantee")}`],
+        ["compensationPolicyCurrency", `${data.currency} · v${data.policy_version}`]
+      ];
+      technicianCompensationPreview.replaceChildren();
+      fields.forEach(([labelKey, value]) => {
+        const cell = document.createElement("div");
+        const label = document.createElement("span");
+        label.textContent = t(labelKey);
+        const strong = document.createElement("strong");
+        strong.textContent = value;
+        cell.append(label, strong);
+        technicianCompensationPreview.appendChild(cell);
+      });
+      technicianCompensationPreview.hidden = false;
+    }
+
+    function openTechnicianCompensationConfirm(policy, trigger) {
+      technicianCompensationConfirmAction = async () => {
+        const response = await apiFetch(`${API_BASE}/technician-compensation/policies/${encodeURIComponent(policy.id)}/activate`, { method: "POST", headers: { Accept: "application/json" } });
+        if (!response.ok) throw new Error("activation_failed");
+        closeTechnicianCompensationConfirm();
+        await loadTechnicianCompensationAdmin();
+      };
+      technicianCompensationConfirmTrigger = trigger;
+      document.getElementById("technicianCompensationConfirmMessage").textContent = t("compensationPolicyConfirmMessage");
+      document.getElementById("technicianCompensationConfirmAction").focus();
+      technicianCompensationBodyOverflow = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      technicianCompensationConfirmModal.hidden = false;
+    }
+
+    function closeTechnicianCompensationConfirm() {
+      technicianCompensationConfirmModal.hidden = true;
+      document.body.style.overflow = technicianCompensationBodyOverflow;
+      technicianCompensationConfirmTrigger?.focus?.();
+      technicianCompensationConfirmTrigger = null;
+      technicianCompensationConfirmAction = null;
+    }
+
+    async function loadTechnicianCompensationAdmin() {
+      if (!currentUser?.id || !["ROOT", "GERENTE"].includes(currentUser.role)) return;
+      const status = document.getElementById("technicianCompensationAdminStatus");
+      try {
+        const response = await apiFetch(`${API_BASE}/technician-compensation/policies`, { headers: { Accept: "application/json" } });
+        if (!response.ok) throw new Error("unavailable");
+        const data = await response.json();
+        if (!safeCompensationPolicies(data)) throw new Error("invalid");
+        technicianCompensationPolicies = data.items;
+        renderTechnicianCompensationPolicies();
+        technicianCompensationAdminPanel.hidden = false;
+        if (status) status.textContent = "";
+      } catch (_error) {
+        technicianCompensationAdminPanel.hidden = true;
+        if (status) { status.textContent = t("compensationPolicyUnavailable"); status.classList.add("error"); }
+      }
+    }
+
+    async function loadTechnicianCompensationTechnician() {
+      if (!currentUser?.id || !["BROKER", "TECNICO", "TÉCNICO"].includes(currentUser.role)) return;
+      const status = document.getElementById("technicianCompensationTechnicianStatus");
+      try {
+        const response = await apiFetch(`${API_BASE}/technician-compensation/me/snapshots`, { headers: { Accept: "application/json" } });
+        if (!response.ok) throw new Error("unavailable");
+        const data = await response.json();
+        if (!data || !Array.isArray(data.items) || !data.items.every((item) => item && item.status === "FROZEN" && /^[A-Z]{3}$/.test(item.currency) && typeof item.technician_amount === "string")) throw new Error("invalid");
+        const list = document.getElementById("technicianCompensationTechnicianList");
+        list.replaceChildren();
+        if (!data.items.length) {
+          const empty = document.createElement("div"); empty.className = "technician-compensation-empty"; empty.textContent = t("compensationPolicyNoSnapshot"); list.appendChild(empty);
+        }
+        data.items.forEach((item) => {
+          const card = document.createElement("article");
+          card.className = "technician-compensation-policy-row";
+          const body = document.createElement("div");
+          body.textContent = `${t("compensationPolicyAmount")}: ${compensationMoney(item.technician_amount, item.currency)} · ${t("compensationPolicyLabor")}: ${compensationMoney(item.labor_base_amount, item.currency)} · ${t("compensationPolicyGuarantee")}: ${item.guarantee_days} · v${item.policy_version}`;
+          const notice = document.createElement("small"); notice.textContent = t("compensationPolicyTechnicianNotice");
+          card.append(body, notice); list.appendChild(card);
+        });
+        technicianCompensationTechnicianPanel.hidden = false;
+        if (status) status.textContent = "";
+      } catch (_error) {
+        technicianCompensationTechnicianPanel.hidden = true;
+        if (status) { status.textContent = t("compensationPolicyUnavailable"); status.classList.add("error"); }
+      }
+    }
+
+    async function loadTechnicianCompensation() {
+      renderTechnicianCompensationLabels();
+      resetTechnicianCompensationUi();
+      if (authPublicConfig.technician_compensation_enabled !== true) return;
+      await Promise.all([loadTechnicianCompensationAdmin(), loadTechnicianCompensationTechnician()]);
+    }
+
+    async function loadTechnicianCompensationItems(event) {
+      event.preventDefault();
+      const orderId = document.getElementById("technicianCompensationOrderId").value;
+      const response = await apiFetch(`${API_BASE}/technician-compensation/orders/${encodeURIComponent(orderId)}/quote-items`, { headers: { Accept: "application/json" } });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !Array.isArray(data.items)) throw new Error(data.detail || "items_unavailable");
+      technicianCompensationQuoteItems = data.items;
+      renderTechnicianCompensationItems();
+    }
+
+    async function previewTechnicianCompensation() {
+      const orderId = document.getElementById("technicianCompensationOrderId").value;
+      const response = await apiFetch(`${API_BASE}/technician-compensation/orders/${encodeURIComponent(orderId)}/preview`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ category_by_item_id: compensationCategoryMap(), idempotency_key: `preview-${Date.now()}` }) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "preview_failed");
+      technicianCompensationPreviewPayload = data;
+      renderTechnicianCompensationPreview(data);
+      document.getElementById("technicianCompensationProposeButton").disabled = false;
+    }
+
+    async function proposeTechnicianCompensationSnapshot() {
+      const orderId = document.getElementById("technicianCompensationOrderId").value;
+      const response = await apiFetch(`${API_BASE}/technician-compensation/orders/${encodeURIComponent(orderId)}/snapshots`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ category_by_item_id: compensationCategoryMap(), idempotency_key: `snapshot-${Date.now()}-${Math.random().toString(16).slice(2)}` }) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "snapshot_failed");
+      technicianCompensationSnapshot = data;
+      document.getElementById("technicianCompensationFreezeButton").disabled = data.status !== "PROPOSED";
+      document.getElementById("technicianCompensationAdminStatus").textContent = t("compensationPolicySnapshotCreated");
+    }
+
+    async function freezeTechnicianCompensationSnapshot() {
+      if (!technicianCompensationSnapshot?.id) return;
+      const response = await apiFetch(`${API_BASE}/technician-compensation/snapshots/${encodeURIComponent(technicianCompensationSnapshot.id)}/freeze`, { method: "POST", headers: { Accept: "application/json" } });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "freeze_failed");
+      technicianCompensationSnapshot = data;
+      document.getElementById("technicianCompensationFreezeButton").disabled = true;
+      document.getElementById("technicianCompensationAdminStatus").textContent = t("compensationPolicySnapshotFrozen");
+    }
+
     function loadMetaMapSdk() {
       if (window.customElements?.get("metamap-button")) return Promise.resolve();
       if (window.identityMetaMapScriptPromise) return window.identityMetaMapScriptPromise;
@@ -11283,6 +11772,7 @@
       loadIdentityVerification().catch(() => {});
       loadHumanReviewQueue().catch(() => {});
       loadTechnicianEarnings().catch(() => {});
+      loadTechnicianCompensation().catch(() => {});
       loadGoogleLinkStatus().catch(() => {});
       loadMembershipFoundation().catch(() => {});
       openAdminUsersFromUrlIfPresent().catch(() => {});
@@ -13863,6 +14353,50 @@
     technicianEarningsModal?.addEventListener("click", (event) => {
       if (event.target === technicianEarningsModal) closeTechnicianEarningDetails();
     });
+    document.getElementById("technicianCompensationRefresh")?.addEventListener("click", () => loadTechnicianCompensationAdmin().catch(() => {}));
+    document.getElementById("technicianCompensationTechnicianRefresh")?.addEventListener("click", () => loadTechnicianCompensationTechnician().catch(() => {}));
+    document.getElementById("technicianCompensationPolicyForm")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const status = document.getElementById("technicianCompensationAdminStatus");
+      try {
+        const techShare = Math.round(Number(document.getElementById("technicianCompensationTechShare").value) * 100);
+        const response = await apiFetch(`${API_BASE}/technician-compensation/policies`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ currency: document.getElementById("technicianCompensationCurrency").value.trim().toUpperCase(), technician_share_bps: techShare, organization_share_bps: 10000 - techShare, default_guarantee_days: Number(document.getElementById("technicianCompensationGuarantee").value), effective_from: new Date().toISOString(), idempotency_key: `policy-${Date.now()}-${Math.random().toString(16).slice(2)}` }) });
+        if (!response.ok) throw new Error("policy_failed");
+        event.currentTarget.reset();
+        document.getElementById("technicianCompensationCurrency").value = "MXN";
+        document.getElementById("technicianCompensationTechShare").value = "75";
+        document.getElementById("technicianCompensationGuarantee").value = "7";
+        await loadTechnicianCompensationAdmin();
+      } catch (_error) {
+        if (status) { status.textContent = t("compensationPolicyActionError"); status.classList.add("error"); }
+      }
+    });
+    document.getElementById("technicianCompensationOrderForm")?.addEventListener("submit", (event) => loadTechnicianCompensationItems(event).catch((error) => {
+      const status = document.getElementById("technicianCompensationAdminStatus");
+      if (status) { status.textContent = error.message || t("compensationPolicyActionError"); status.classList.add("error"); }
+    }));
+    document.getElementById("technicianCompensationPreviewButton")?.addEventListener("click", () => previewTechnicianCompensation().catch((error) => {
+      const status = document.getElementById("technicianCompensationAdminStatus");
+      if (status) { status.textContent = error.message || t("compensationPolicyActionError"); status.classList.add("error"); }
+    }));
+    document.getElementById("technicianCompensationProposeButton")?.addEventListener("click", () => proposeTechnicianCompensationSnapshot().catch((error) => {
+      const status = document.getElementById("technicianCompensationAdminStatus");
+      if (status) { status.textContent = error.message || t("compensationPolicyActionError"); status.classList.add("error"); }
+    }));
+    document.getElementById("technicianCompensationFreezeButton")?.addEventListener("click", () => freezeTechnicianCompensationSnapshot().catch((error) => {
+      const status = document.getElementById("technicianCompensationAdminStatus");
+      if (status) { status.textContent = error.message || t("compensationPolicyActionError"); status.classList.add("error"); }
+    }));
+    document.getElementById("technicianCompensationConfirmCancel")?.addEventListener("click", closeTechnicianCompensationConfirm);
+    document.getElementById("technicianCompensationConfirmAction")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      if (!technicianCompensationConfirmAction) return;
+      button.disabled = true;
+      try { await technicianCompensationConfirmAction(); } catch (_error) { button.disabled = false; }
+    });
+    technicianCompensationConfirmModal?.addEventListener("click", (event) => {
+      if (event.target === technicianCompensationConfirmModal) closeTechnicianCompensationConfirm();
+    });
     document.getElementById("findTechnicianButton")?.addEventListener("click", () => {
       loadTechnicianRecommendations(activeLeadServiceOrderId).catch(() => {
         const panel = document.getElementById("technicianRecommendationPanel");
@@ -14564,6 +15098,9 @@
       }
       if (event.key === "Escape" && technicianEarningsModal && !technicianEarningsModal.hidden) {
         closeTechnicianEarningDetails();
+      }
+      if (event.key === "Escape" && technicianCompensationConfirmModal && !technicianCompensationConfirmModal.hidden) {
+        closeTechnicianCompensationConfirm();
       }
       if (event.key === "Tab" && identityHumanReviewModal && !identityHumanReviewModal.hidden) {
         const focusable = [identityHumanReviewReason, identityHumanReviewCancel, identityHumanReviewConfirm].filter((node) => node && !node.disabled);

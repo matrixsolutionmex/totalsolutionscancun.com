@@ -124,11 +124,14 @@ def safe_response(response: Response | None) -> Response:
 
 @router.get("/public-config", response_model=PublicAuthConfig)
 def public_config():
+    from app.services.technician_compensation_service import compensation_policy_enabled
+
     return PublicAuthConfig(
         turnstile_site_key=public_turnstile_site_key() or None,
         turnstile_required=turnstile_configured(),
         google_client_id=os.getenv("GOOGLE_CLIENT_ID", "").strip() or None,
         public_signup_enabled=os.getenv("PUBLIC_SIGNUP_ENABLED", "true").strip().lower() != "false",
+        technician_compensation_enabled=compensation_policy_enabled(),
     )
 
 
