@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -27,10 +27,15 @@ from app.services.technician_compensation_service import (
     freeze_snapshot,
     preview_order,
     propose_snapshot,
+    resolve_policy_for_order,
     ensure_technician_acceptance_allowed,
     list_technician_snapshots,
     technician_snapshot_payload,
 )
+
+
+def utcnow():
+    return datetime.now(timezone.utc)
 
 
 @pytest.fixture()
@@ -75,7 +80,7 @@ def make_fixture(db):
     order = ServiceOrder(
         organization_id=org.id, lead_id=1, order_number="COMP-1",
         responsible_user_id=technician.id, status="ASSIGNED", warranty_days=0,
-        created_at=datetime.utcnow(),
+        created_at=utcnow(),
     )
     db.add(order)
     db.flush()
@@ -83,7 +88,7 @@ def make_fixture(db):
         service_order_id=order.id, organization_id=org.id, version=1, status="APPROVED",
         subtotal=Decimal("1400.00"), discount_amount=Decimal("100.00"), tax_amount=Decimal("50.00"),
         total=Decimal("1350.00"), currency="MXN", created_by_user_id=manager.id,
-        approved_at=datetime.utcnow(), approved_total=Decimal("1350.00"),
+        approved_at=utcnow(), approved_total=Decimal("1350.00"),
     )
     quote.items = [
         ServiceOrderQuoteItem(organization_id=org.id, description="labor", quantity=1, unit="service", unit_price=Decimal("1000.00"), subtotal=Decimal("1000.00"), compensation_category="LABOR"),
@@ -97,9 +102,13 @@ def make_fixture(db):
 def make_active_policy(db, manager, org):
     row = create_policy(
         db, actor=manager, organization_id=org.id, currency="MXN",
-        effective_from=datetime.utcnow() - timedelta(minutes=1), idempotency_key="policy-v1",
+        effective_from=utcnow() + timedelta(minutes=1), idempotency_key="policy-v1",
     )
     activate_policy(db, actor=manager, policy_id=row.id)
+    order = db.query(ServiceOrder).filter_by(organization_id=org.id).first()
+    quote = db.query(ServiceOrderQuote).filter_by(service_order_id=order.id).first()
+    order.created_at = row.effective_from + timedelta(seconds=1)
+    quote.approved_at = order.created_at
     db.commit()
     return row
 
@@ -108,7 +117,7 @@ def test_feature_is_off_by_default(monkeypatch, db):
     monkeypatch.delenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", raising=False)
     org, manager, _, _ = make_fixture(db)
     with pytest.raises(CompensationError, match="COMPENSATION_POLICY_UNAVAILABLE"):
-        create_policy(db, actor=manager, organization_id=org.id, currency="MXN", effective_from=datetime.utcnow(), idempotency_key="off")
+        create_policy(db, actor=manager, organization_id=org.id, currency="MXN", effective_from=utcnow(), idempotency_key="off")
 
 
 def test_rollout_is_organization_scoped_and_fail_closed(monkeypatch, db):
@@ -129,7 +138,7 @@ def test_rollout_is_organization_scoped_and_fail_closed(monkeypatch, db):
     assert compensation_policy_enabled_for_organization(db, org.id) is True
     assert compensation_policy_enabled_for_organization(db, other_org.id) is False
     with pytest.raises(CompensationError, match="COMPENSATION_POLICY_UNAVAILABLE"):
-        create_policy(db, actor=manager, organization_id=other_org.id, currency="MXN", effective_from=datetime.utcnow(), idempotency_key="outside")
+        create_policy(db, actor=manager, organization_id=other_org.id, currency="MXN", effective_from=utcnow(), idempotency_key="outside")
 
     monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ROLLOUT_MODE", "invalid")
     assert compensation_policy_enabled_for_organization(db, org.id) is False
@@ -144,6 +153,8 @@ def test_rollout_is_organization_scoped_and_fail_closed(monkeypatch, db):
 def test_marketplace_gate_only_applies_inside_canary(monkeypatch, db):
     monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
     org, _, technician, order = make_fixture(db)
+    manager = db.query(User).filter_by(organization_id=org.id, role="GERENTE").first()
+    make_active_policy(db, manager, org)
     monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ROLLOUT_MODE", "canary")
     monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_CANARY_ORGANIZATION_IDS", str(org.id + 1))
     ensure_technician_acceptance_allowed(db, order=order, technician_user_id=technician.id)
@@ -217,7 +228,7 @@ def test_policy_requires_exact_share_total(monkeypatch, db):
     monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
     org, manager, _, _ = make_fixture(db)
     with pytest.raises(CompensationError, match="SHARE_TOTAL_INVALID"):
-        create_policy(db, actor=manager, organization_id=org.id, currency="MXN", effective_from=datetime.utcnow(), idempotency_key="bad", technician_share_bps=7000, organization_share_bps=2000)
+        create_policy(db, actor=manager, organization_id=org.id, currency="MXN", effective_from=utcnow(), idempotency_key="bad", technician_share_bps=7000, organization_share_bps=2000)
 
 
 def test_startup_excludes_compensation_tables():
@@ -265,6 +276,127 @@ def test_unquoted_assignment_is_not_blocked_by_compensation_gate(monkeypatch, db
     db.query(ServiceOrderQuote).delete()
     db.commit()
     ensure_technician_acceptance_allowed(db, order=order, technician_user_id=technician.id)
+
+
+def test_effective_from_requires_timezone_aware_utc(monkeypatch, db):
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
+    org, manager, _, _ = make_fixture(db)
+    with pytest.raises(CompensationError, match="EFFECTIVE_FROM_TIMEZONE_REQUIRED"):
+        create_policy(
+            db, actor=manager, organization_id=org.id, currency="MXN",
+            effective_from=datetime.utcnow(), idempotency_key="naive-cutoff",
+        )
+
+
+def test_cutoff_boundaries_keep_old_orders_legacy(monkeypatch, db):
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
+    org, manager, technician, order = make_fixture(db)
+    cutoff = utcnow() + timedelta(minutes=5)
+    policy = create_policy(
+        db, actor=manager, organization_id=org.id, currency="MXN",
+        effective_from=cutoff, idempotency_key="cutoff-v1",
+    )
+    activate_policy(db, actor=manager, policy_id=policy.id)
+    quote = db.query(ServiceOrderQuote).filter_by(service_order_id=order.id).first()
+
+    order.created_at = policy.effective_from - timedelta(seconds=1)
+    quote.approved_at = order.created_at
+    db.commit()
+    assert resolve_policy_for_order(db, order) is None
+    ensure_technician_acceptance_allowed(db, order=order, technician_user_id=technician.id)
+
+    order.created_at = policy.effective_from
+    quote.approved_at = order.created_at
+    db.commit()
+    assert resolve_policy_for_order(db, order).id == policy.id
+    with pytest.raises(CompensationError, match="COMPENSATION_SNAPSHOT_REQUIRED"):
+        ensure_technician_acceptance_allowed(db, order=order, technician_user_id=technician.id)
+
+    order.created_at = policy.effective_from + timedelta(seconds=1)
+    quote.approved_at = order.created_at
+    db.commit()
+    assert resolve_policy_for_order(db, order).id == policy.id
+
+
+def test_first_policy_cannot_be_backdated(monkeypatch, db):
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
+    org, manager, _, _ = make_fixture(db)
+    policy = create_policy(
+        db, actor=manager, organization_id=org.id, currency="MXN",
+        effective_from=utcnow() - timedelta(seconds=1), idempotency_key="backdated",
+    )
+    with pytest.raises(CompensationError, match="POLICY_EFFECTIVE_FROM_PAST"):
+        activate_policy(db, actor=manager, policy_id=policy.id)
+
+
+def test_retired_versions_resolve_by_order_cutoff(monkeypatch, db):
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
+    org, manager, _, order = make_fixture(db)
+    first_cutoff = utcnow() + timedelta(minutes=5)
+    first = create_policy(
+        db, actor=manager, organization_id=org.id, currency="MXN",
+        effective_from=first_cutoff, idempotency_key="version-one",
+    )
+    activate_policy(db, actor=manager, policy_id=first.id)
+    quote = db.query(ServiceOrderQuote).filter_by(service_order_id=order.id).first()
+    order.created_at = first.effective_from + timedelta(seconds=1)
+    quote.approved_at = order.created_at
+    db.commit()
+
+    second_cutoff = first_cutoff + timedelta(days=1)
+    second = create_policy(
+        db, actor=manager, organization_id=org.id, currency="MXN",
+        effective_from=second_cutoff, idempotency_key="version-two",
+    )
+    activate_policy(db, actor=manager, policy_id=second.id)
+    db.commit()
+    assert db.get(TechnicianCompensationPolicy, first.id).status == "RETIRED"
+
+    assert resolve_policy_for_order(db, order).id == first.id
+    order.created_at = second.effective_from
+    quote.approved_at = order.created_at
+    db.commit()
+    assert resolve_policy_for_order(db, order).id == second.id
+
+
+def test_pre_policy_snapshot_is_not_created(monkeypatch, db):
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
+    org, manager, _, order = make_fixture(db)
+    policy = create_policy(
+        db, actor=manager, organization_id=org.id, currency="MXN",
+        effective_from=utcnow() + timedelta(minutes=5), idempotency_key="future-only",
+    )
+    activate_policy(db, actor=manager, policy_id=policy.id)
+    order.created_at = policy.effective_from - timedelta(seconds=1)
+    quote = db.query(ServiceOrderQuote).filter_by(service_order_id=order.id).first()
+    quote.approved_at = order.created_at
+    db.commit()
+    with pytest.raises(CompensationError, match="PRE_POLICY_LEGACY"):
+        propose_snapshot(db, actor=manager, order_id=order.id, idempotency_key="retroactive")
+    assert db.query(ServiceOrderCompensationSnapshot).count() == 0
+
+
+def test_snapshot_from_previous_cutoff_is_rejected_for_new_order_period(monkeypatch, db):
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
+    org, manager, technician, order = make_fixture(db)
+    first = make_active_policy(db, manager, org)
+    proposed = propose_snapshot(db, actor=manager, order_id=order.id, idempotency_key="old-period")
+    freeze_snapshot(db, actor=manager, snapshot_id=proposed.id)
+    db.commit()
+
+    second = create_policy(
+        db, actor=manager, organization_id=org.id, currency="MXN",
+        effective_from=first.effective_from.replace(tzinfo=timezone.utc) + timedelta(days=1),
+        idempotency_key="new-period",
+    )
+    activate_policy(db, actor=manager, policy_id=second.id)
+    quote = db.query(ServiceOrderQuote).filter_by(service_order_id=order.id).first()
+    order.created_at = second.effective_from + timedelta(seconds=1)
+    quote.approved_at = order.created_at
+    db.commit()
+
+    with pytest.raises(CompensationError, match="COMPENSATION_SNAPSHOT_REQUIRED"):
+        ensure_technician_acceptance_allowed(db, order=order, technician_user_id=technician.id)
 
 
 def test_public_config_and_frontend_gate_keep_compensation_off(monkeypatch):

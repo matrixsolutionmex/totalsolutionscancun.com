@@ -1,6 +1,6 @@
 import hashlib
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -26,6 +26,7 @@ MONEY = Decimal("0.01")
 POLICY_EVENT_TYPES = {"POLICY_CREATED", "POLICY_ACTIVATED"}
 SNAPSHOT_EVENT_TYPES = {"SNAPSHOT_PROPOSED", "SNAPSHOT_FROZEN", "SNAPSHOT_VOIDED"}
 ROLLOUT_MODES = {"off", "canary", "all"}
+PUBLISHED_POLICY_STATUSES = {"ACTIVE", "RETIRED"}
 
 
 class CompensationError(ValueError):
@@ -89,6 +90,22 @@ def _currency(value: str) -> str:
     if len(normalized) != 3 or not normalized.isalpha():
         raise CompensationError("CURRENCY_INVALID")
     return normalized
+
+
+def _utc_datetime(value: datetime, *, field: str) -> datetime:
+    """Require an explicit UTC-capable timestamp and return UTC without tz storage."""
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        raise CompensationError(f"{field}_TIMEZONE_REQUIRED")
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _stored_utc(value: datetime | None) -> datetime | None:
+    """Migration 089 stores UTC timestamps in TIMESTAMP WITHOUT TIME ZONE."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def _hash_key(value: str) -> str:
@@ -178,6 +195,27 @@ def _active_policy(db: Session, organization_id: int, currency: str) -> Technici
     return row
 
 
+def resolve_policy_for_order(db: Session, order: ServiceOrder) -> TechnicianCompensationPolicy | None:
+    """Resolve the published policy covering the OS creation cutoff."""
+    if not order.organization_id or not order.created_at:
+        raise CompensationError("ORDER_DATE_INVALID")
+    quote = _approved_quote(db, order)
+    order_currency = getattr(order, "pricing_currency", None)
+    if order_currency and _currency(order_currency) != _currency(quote.currency):
+        raise CompensationError("CURRENCY_MISMATCH")
+    created_at = _stored_utc(order.created_at)
+    rows = db.query(TechnicianCompensationPolicy).filter(
+        TechnicianCompensationPolicy.organization_id == order.organization_id,
+        TechnicianCompensationPolicy.currency == _currency(quote.currency),
+        TechnicianCompensationPolicy.status.in_(PUBLISHED_POLICY_STATUSES),
+    ).order_by(TechnicianCompensationPolicy.effective_from.desc(), TechnicianCompensationPolicy.version.desc()).all()
+    for row in rows:
+        effective_from = _stored_utc(row.effective_from)
+        if effective_from is not None and effective_from <= created_at:
+            return row
+    return None
+
+
 def _assigned_active_technician(db: Session, order: ServiceOrder) -> User:
     if not order.responsible_user_id:
         raise CompensationError("TECHNICIAN_NOT_ASSIGNED")
@@ -245,6 +283,7 @@ def create_policy(db: Session, *, actor: User, organization_id: int, currency: s
     _require_feature(db, organization_id)
     _require_admin(actor, organization_id)
     currency = _currency(currency)
+    effective_from = _utc_datetime(effective_from, field="EFFECTIVE_FROM")
     if technician_share_bps + organization_share_bps != 10000 or min(technician_share_bps, organization_share_bps) < 0:
         raise CompensationError("SHARE_TOTAL_INVALID")
     if default_guarantee_days < 0 or not idempotency_key.strip():
@@ -278,6 +317,20 @@ def activate_policy(db: Session, *, actor: User, policy_id: int) -> TechnicianCo
         return row
     if row.status != "DRAFT":
         raise CompensationError("POLICY_NOT_DRAFT")
+    now = datetime.now(timezone.utc)
+    effective_from = _stored_utc(row.effective_from)
+    published = db.query(TechnicianCompensationPolicy).filter(
+        TechnicianCompensationPolicy.organization_id == row.organization_id,
+        TechnicianCompensationPolicy.currency == row.currency,
+        TechnicianCompensationPolicy.status.in_(PUBLISHED_POLICY_STATUSES),
+        TechnicianCompensationPolicy.id != row.id,
+    ).order_by(TechnicianCompensationPolicy.effective_from.desc()).all()
+    if effective_from is None:
+        raise CompensationError("EFFECTIVE_FROM_TIMEZONE_REQUIRED")
+    if not published and effective_from < now.replace(tzinfo=None):
+        raise CompensationError("POLICY_EFFECTIVE_FROM_PAST")
+    if published and effective_from <= _stored_utc(published[0].effective_from):
+        raise CompensationError("POLICY_EFFECTIVE_FROM_NOT_AFTER_PREVIOUS")
     active = db.query(TechnicianCompensationPolicy).filter(
         TechnicianCompensationPolicy.organization_id == row.organization_id,
         TechnicianCompensationPolicy.currency == row.currency,
@@ -303,7 +356,9 @@ def preview_order(db: Session, *, actor: User, order_id: int, category_by_item_i
     _require_admin(actor, order.organization_id)
     _assigned_active_technician(db, order)
     quote = _approved_quote(db, order)
-    policy = _active_policy(db, order.organization_id, _currency(quote.currency))
+    policy = resolve_policy_for_order(db, order)
+    if not policy:
+        raise CompensationError("PRE_POLICY_LEGACY")
     return _calculation_payload(_calculate(db, order, policy, category_by_item_id), policy, order)
 
 
@@ -355,7 +410,9 @@ def propose_snapshot(db: Session, *, actor: User, order_id: int, idempotency_key
     if existing:
         return existing
     quote = _approved_quote(db, order)
-    policy = _active_policy(db, order.organization_id, _currency(quote.currency))
+    policy = resolve_policy_for_order(db, order)
+    if not policy:
+        raise CompensationError("PRE_POLICY_LEGACY")
     if order.created_at and order.created_at < policy.effective_from:
         raise CompensationError("ORDER_BEFORE_POLICY_EFFECTIVE_DATE")
     calculation = _calculate(db, order, policy, category_by_item_id)
@@ -460,11 +517,17 @@ def ensure_technician_acceptance_allowed(db: Session, *, order: ServiceOrder, te
     ).first()
     if not remunerated_quote:
         return
+    policy = resolve_policy_for_order(db, order)
+    if not policy:
+        return
     snapshot = db.query(ServiceOrderCompensationSnapshot).filter(
         ServiceOrderCompensationSnapshot.organization_id == order.organization_id,
         ServiceOrderCompensationSnapshot.service_order_id == order.id,
         ServiceOrderCompensationSnapshot.technician_user_id == technician_user_id,
         ServiceOrderCompensationSnapshot.status == "FROZEN",
+        ServiceOrderCompensationSnapshot.policy_id == policy.id,
+        ServiceOrderCompensationSnapshot.policy_version == policy.version,
+        ServiceOrderCompensationSnapshot.currency == policy.currency,
     ).first()
     if not snapshot:
         raise CompensationError("COMPENSATION_SNAPSHOT_REQUIRED")
