@@ -4312,6 +4312,26 @@
       <div class="turnstile-slot" id="googleLinkTurnstile"></div>
       <div class="auth-status" id="googleLinkStatus" aria-live="polite"></div>
     </div>
+    <div class="panel-box" id="membershipFoundationPanel" hidden>
+      <div class="panel-title">Vínculos y red profesional</div>
+      <div class="line" id="membershipCurrentSummary">Cargando vínculos...</div>
+      <div class="broker-list" id="membershipList"></div>
+      <form class="admin-grid" id="membershipTransferForm" style="margin-top: 12px;">
+        <select id="membershipTargetOrganization" required>
+          <option value="">Seleccione una organización de destino</option>
+        </select>
+        <select id="membershipTransferType">
+          <option value="NETWORK_MEMBERSHIP">Participar en la Red Total Solutions</option>
+          <option value="EXCLUSIVE_TRANSFER">Solicitar transferencia exclusiva</option>
+        </select>
+        <input id="membershipTransferReason" maxlength="2000" placeholder="Motivo de la solicitud">
+        <input id="membershipTermsVersion" maxlength="64" placeholder="Versión de términos, si aplica">
+        <label class="checkbox-line"><input id="membershipAcceptTerms" type="checkbox"> Acepto los términos mostrados por el administrador</label>
+        <button type="submit">Solicitar vínculo</button>
+      </form>
+      <div class="auth-status" id="membershipStatus" aria-live="polite"></div>
+      <div class="line" id="membershipRequests"></div>
+    </div>
     <div class="panel-box manager-only">
       <div class="panel-title">Asignar solicitudes por servicio y ubicación</div>
       <div class="admin-grid">
@@ -10320,6 +10340,7 @@
       document.getElementById("profileName").textContent = currentUser.full_name || currentUser.username;
       document.getElementById("profileDetails").textContent = [
         displayRole(currentUser.role),
+        currentUser.organization_name || currentUser.company || "",
         currentUser.creci ? `CRECI: ${currentUser.creci}` : "",
         currentUser.telefone || ""
       ].filter(Boolean).join(" | ");
@@ -11286,6 +11307,55 @@
           setAuthStatus("googleLinkStatus", t("googleLinkError"), "error");
         });
       }
+    }
+
+    function membershipStatusLabel(row) {
+      return `${escapeHtml(row.organization_name || `Organização ${row.organization_id}`)} · ${escapeHtml(row.role)} · ${escapeHtml(row.status)}${row.is_primary ? " · principal" : ""}`;
+    }
+
+    async function loadMembershipFoundation() {
+      const panel = document.getElementById("membershipFoundationPanel");
+      const list = document.getElementById("membershipList");
+      const summary = document.getElementById("membershipCurrentSummary");
+      const target = document.getElementById("membershipTargetOrganization");
+      if (!panel || !currentUser?.id) return;
+      const [membershipsResponse, requestsResponse, organizationsResponse] = await Promise.all([
+        apiFetch(`${API_BASE}/me/memberships`),
+        apiFetch(`${API_BASE}/me/transfer-requests`),
+        apiFetch(`${API_BASE}/network/organizations`)
+      ]);
+      if (!membershipsResponse.ok || !requestsResponse.ok || !organizationsResponse.ok) return;
+      const memberships = await membershipsResponse.json();
+      const requests = await requestsResponse.json();
+      const organizations = await organizationsResponse.json();
+      panel.hidden = false;
+      const rows = memberships.items || [];
+      summary.textContent = rows.length ? "Seus vínculos ativos e operacionais" : "Nenhum vínculo ativo encontrado";
+      list.innerHTML = rows.length ? rows.map((row) => `<div class="broker-row"><span><strong>${membershipStatusLabel(row)}</strong><small>${row.is_operational ? "Operacional" : "Não operacional"}</small></span></div>`).join("") : `<div class="empty-state">Nenhum vínculo ativo.</div>`;
+      target.replaceChildren(new Option("Seleccione una organización de destino", ""));
+      (Array.isArray(organizations) ? organizations : []).forEach((organization) => target.appendChild(new Option(organization.name, String(organization.id))));
+      const requestRows = requests.items || [];
+      document.getElementById("membershipRequests").textContent = requestRows.length ? `Solicitudes: ${requestRows.map((row) => `${row.requested_transfer_type} · ${row.status}`).join(" | ")}` : "Nenhuma solicitação pendente.";
+    }
+
+    async function submitMembershipTransfer(event) {
+      event.preventDefault();
+      const status = document.getElementById("membershipStatus");
+      const response = await apiFetch(`${API_BASE}/me/transfer-requests`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to_organization_id: Number(document.getElementById("membershipTargetOrganization").value),
+          requested_transfer_type: document.getElementById("membershipTransferType").value,
+          reason: document.getElementById("membershipTransferReason").value.trim() || null,
+          terms_version: document.getElementById("membershipTermsVersion").value.trim() || null,
+          accept_terms: document.getElementById("membershipAcceptTerms").checked
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      status.textContent = response.ok ? "Solicitação registrada para revisão." : (data.detail || "Não foi possível registrar a solicitação.");
+      status.className = `auth-status ${response.ok ? "success" : "error"}`;
+      if (response.ok) loadMembershipFoundation().catch(() => {});
     }
 
     function startBrokerLeadWatch() {
@@ -13771,6 +13841,7 @@
     });
     document.getElementById("createBrokerButton").addEventListener("click", createBroker);
     document.getElementById("editMyProfileButton").addEventListener("click", openMyProfile);
+    document.getElementById("membershipTransferForm")?.addEventListener("submit", submitMembershipTransfer);
     identityHumanReviewRefresh?.addEventListener("click", () => loadHumanReviewQueue().catch(() => {}));
     identityHumanReviewCancel?.addEventListener("click", closeHumanReviewModal);
     identityHumanReviewConfirm?.addEventListener("click", submitHumanReviewDecision);
