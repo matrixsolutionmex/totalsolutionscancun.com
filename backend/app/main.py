@@ -62,6 +62,29 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 email_worker_started = False
 
+# These schemas are controlled by explicit migrations and must never be startup side effects.
+STARTUP_MANUAL_MIGRATION_TABLES = frozenset({
+    "identity_verifications",
+    "identity_verification_attempts",
+    "identity_verification_events",
+    "identity_human_review_decisions",
+    "stripe_webhook_events",
+    "stripe_payment_adjustments",
+    "technician_earnings",
+    "technician_earning_events",
+    "network_fee_policies",
+    "organization_memberships",
+    "technician_transfer_requests",
+})
+
+
+def startup_managed_tables():
+    """Return only schemas allowed to be created by application startup."""
+    return [
+        table for table in Base.metadata.sorted_tables
+        if table.name not in STARTUP_MANUAL_MIGRATION_TABLES
+    ]
+
 
 def startup_log(message: str):
     logger.info(message)
@@ -303,19 +326,7 @@ def ensure_root_user(db, default_organization_id):
 @app.on_event("startup")
 def create_database_tables():
     startup_log("Iniciando preparacao do banco de dados.")
-    # Identity verification tables are controlled migrations, never startup side effects.
-    managed_tables = [
-        table for table in Base.metadata.sorted_tables
-        if table.name not in {
-            "identity_verifications",
-            "identity_verification_attempts",
-            "identity_verification_events",
-            "identity_human_review_decisions",
-            "technician_earnings",
-            "technician_earning_events",
-        }
-    ]
-    Base.metadata.create_all(bind=engine, tables=managed_tables)
+    Base.metadata.create_all(bind=engine, tables=startup_managed_tables())
     startup_log("Tabelas verificadas/criadas com sucesso.")
 
     db = SessionLocal()

@@ -12,6 +12,7 @@ from app.models.user import User
 from app.services.organization_membership_service import (
     approve_exclusive_transfer,
     get_active_memberships,
+    membership_schema_available,
     transfer_blockers,
 )
 
@@ -29,6 +30,11 @@ class TransferRequestInput(BaseModel):
 
 class ReviewInput(BaseModel):
     review_notes: str | None = Field(default=None, max_length=2000)
+
+
+def require_network_schema(db: Session) -> None:
+    if not membership_schema_available(db):
+        raise HTTPException(status_code=503, detail="Membership operacional indisponível")
 
 
 def membership_payload(row: OrganizationMembership) -> dict:
@@ -72,18 +78,21 @@ def transfer_payload(row: TechnicianTransferRequest, blockers: list[dict] | None
 
 @router.get("/me/memberships")
 def my_memberships(db: Session = Depends(get_db), actor: User = Depends(get_current_user)):
+    require_network_schema(db)
     return {"items": [membership_payload(row) for row in get_active_memberships(db, actor.id)]}
 
 
 @router.get("/network/organizations")
 def network_organizations(db: Session = Depends(get_db), actor: User = Depends(get_current_user)):
     """Return safe organization choices without exposing operational or billing data."""
+    require_network_schema(db)
     rows = db.query(Organization).filter(Organization.status == "ACTIVE").order_by(Organization.name.asc()).all()
     return [{"id": row.id, "name": row.name, "slug": row.slug} for row in rows if row.id != actor.organization_id]
 
 
 @router.post("/me/transfer-requests", status_code=201)
 def create_transfer_request(payload: TransferRequestInput, db: Session = Depends(get_db), actor: User = Depends(get_current_user)):
+    require_network_schema(db)
     transfer_type = payload.requested_transfer_type.strip().upper()
     if transfer_type not in TRANSFER_TYPES:
         raise HTTPException(status_code=422, detail="Tipo de transferência inválido")
@@ -118,12 +127,14 @@ def create_transfer_request(payload: TransferRequestInput, db: Session = Depends
 
 @router.get("/me/transfer-requests")
 def my_transfer_requests(db: Session = Depends(get_db), actor: User = Depends(get_current_user)):
+    require_network_schema(db)
     rows = db.query(TechnicianTransferRequest).filter(TechnicianTransferRequest.user_id == actor.id).order_by(TechnicianTransferRequest.created_at.desc()).all()
     return {"items": [transfer_payload(row, transfer_blockers(db, actor.id, row.from_organization_id) if row.requested_transfer_type == "EXCLUSIVE_TRANSFER" else []) for row in rows]}
 
 
 @router.post("/network/transfer-requests/{request_id}/approve")
 def approve_transfer(request_id: int, payload: ReviewInput, db: Session = Depends(get_db), actor: User = Depends(require_root_user)):
+    require_network_schema(db)
     row = db.query(TechnicianTransferRequest).filter(TechnicianTransferRequest.id == request_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Solicitação não encontrada")
@@ -168,6 +179,7 @@ def approve_transfer(request_id: int, payload: ReviewInput, db: Session = Depend
 
 @router.post("/network/transfer-requests/{request_id}/reject")
 def reject_transfer(request_id: int, payload: ReviewInput, db: Session = Depends(get_db), actor: User = Depends(require_root_user)):
+    require_network_schema(db)
     row = db.query(TechnicianTransferRequest).filter(TechnicianTransferRequest.id == request_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Solicitação não encontrada")
@@ -183,6 +195,7 @@ def reject_transfer(request_id: int, payload: ReviewInput, db: Session = Depends
 
 @router.get("/admin/users/{user_id}/memberships")
 def admin_user_memberships(user_id: int, db: Session = Depends(get_db), actor: User = Depends(require_root_user)):
+    require_network_schema(db)
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")

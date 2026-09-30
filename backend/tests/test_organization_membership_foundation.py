@@ -9,6 +9,8 @@ from sqlalchemy.pool import StaticPool
 from app.database.connection import Base
 # Import the application model registry so all legacy foreign-key targets are present.
 import app.main  # noqa: F401,E402
+from app.main import STARTUP_MANUAL_MIGRATION_TABLES, startup_managed_tables
+from app.routes.organization_membership_routes import require_network_schema
 from app.models.organization import Organization
 from app.models.organization_membership import NetworkFeePolicy, OrganizationMembership
 from app.models.service_order import ServiceOrder
@@ -19,6 +21,7 @@ from app.services.organization_membership_service import (
     backfill_memberships,
     apply_membership_backfill,
     get_active_memberships,
+    membership_schema_available,
     plan_membership_backfill,
     transfer_blockers,
 )
@@ -335,3 +338,45 @@ def test_network_migration_is_structural_and_startup_does_not_backfill():
     assert "INSERT INTO organization_memberships" not in migration
     assert "backfill_memberships" not in startup
     assert "organization_membership_router" in startup
+
+
+def test_startup_create_all_excludes_all_manual_migration_tables():
+    managed_names = {table.name for table in startup_managed_tables()}
+    expected_manual = {
+        "identity_verifications",
+        "identity_verification_attempts",
+        "identity_verification_events",
+        "identity_human_review_decisions",
+        "stripe_webhook_events",
+        "stripe_payment_adjustments",
+        "technician_earnings",
+        "technician_earning_events",
+        "network_fee_policies",
+        "organization_memberships",
+        "technician_transfer_requests",
+    }
+    assert expected_manual <= STARTUP_MANUAL_MIGRATION_TABLES
+    assert managed_names.isdisjoint(expected_manual)
+
+
+def test_missing_network_schema_is_detected_fail_closed():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    session = sessionmaker(bind=engine)()
+    try:
+        assert membership_schema_available(session) is False
+    finally:
+        session.close()
+        engine.dispose()
+
+
+def test_network_route_guard_returns_sanitized_503_without_schema():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    session = sessionmaker(bind=engine)()
+    try:
+        with pytest.raises(Exception) as caught:
+            require_network_schema(session)
+        assert caught.value.status_code == 503
+        assert caught.value.detail == "Membership operacional indisponível"
+    finally:
+        session.close()
+        engine.dispose()

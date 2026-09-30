@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
 from app.models.organization import Organization
@@ -17,6 +18,11 @@ from app.models.user import User
 
 TERMINAL_ORDER_STATUSES = {"COMPLETED", "CANCELLED", "CANCELED", "REJECTED", "FINALIZADA", "CONCLUIDA"}
 ACTIVE_MEMBERSHIP_STATUSES = {"ACTIVE"}
+NETWORK_SCHEMA_TABLES = frozenset({
+    "network_fee_policies",
+    "organization_memberships",
+    "technician_transfer_requests",
+})
 ROLE_TO_MEMBERSHIP = {
     "GERENTE": ("ADMIN", "ADMIN"),
     "BROKER": ("TECHNICIAN", "TECHNICIAN"),
@@ -54,6 +60,12 @@ def _membership_status(user: User, organization: Organization) -> tuple[str, boo
         and (organization.status or "ACTIVE").upper() == "ACTIVE"
     )
     return ("ACTIVE", True) if active else ("SUSPENDED", False)
+
+
+def membership_schema_available(db: Session) -> bool:
+    """Return whether the manually migrated NETWORK schema is available."""
+    inspector = inspect(db.get_bind())
+    return all(inspector.has_table(table_name) for table_name in NETWORK_SCHEMA_TABLES)
 
 
 def plan_membership_backfill(
