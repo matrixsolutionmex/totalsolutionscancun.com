@@ -24,7 +24,8 @@ from app.models.user import User
 
 
 MONEY = Decimal("0.01")
-POLICY_EVENT_TYPES = {"POLICY_CREATED", "POLICY_ACTIVATED"}
+POLICY_EVENT_TYPES = {"POLICY_CREATED", "POLICY_ACTIVATED", "POLICY_VOIDED"}
+POLICY_VOID_REASON_CODES = {"INCORRECT_CUTOFF", "DUPLICATE_DRAFT", "CONFIGURATION_ERROR", "CREATED_IN_ERROR"}
 SNAPSHOT_EVENT_TYPES = {"SNAPSHOT_PROPOSED", "SNAPSHOT_FROZEN", "SNAPSHOT_VOIDED"}
 ROLLOUT_MODES = {"off", "canary", "all"}
 PUBLISHED_POLICY_STATUSES = {"ACTIVE", "RETIRED"}
@@ -392,6 +393,37 @@ def activate_policy(db: Session, *, actor: User, policy_id: int) -> TechnicianCo
     db.flush()
     _event(db, organization_id=row.organization_id, policy_id=row.id, event_type="POLICY_ACTIVATED",
            reason_code="POLICY_ACTIVATED", idempotency_key=f"policy-activated:{row.id}:{row.version}", actor_user_id=actor.id)
+    return row
+
+
+def void_policy(db: Session, *, actor: User, policy_id: int, reason_code: str,
+                idempotency_key: str) -> TechnicianCompensationPolicy:
+    if not idempotency_key.strip():
+        raise CompensationError("IDEMPOTENCY_KEY_REQUIRED")
+    reason_code = str(reason_code or "").strip().upper()
+    if reason_code not in POLICY_VOID_REASON_CODES:
+        raise CompensationError("VOID_REASON_INVALID")
+    row = db.query(TechnicianCompensationPolicy).filter_by(id=policy_id).with_for_update().first()
+    if not row:
+        raise CompensationError("POLICY_NOT_FOUND")
+    _require_feature(db, row.organization_id)
+    _require_admin(actor, row.organization_id)
+    idempotency_hash = _hash_key(idempotency_key)
+    existing_event = db.query(TechnicianCompensationEvent).filter_by(
+        idempotency_key_hash=idempotency_hash,
+    ).first()
+    if existing_event:
+        if (existing_event.event_type == "POLICY_VOIDED" and existing_event.policy_id == row.id
+                and existing_event.reason_code == reason_code and row.status == "VOID"):
+            return row
+        raise CompensationError("IDEMPOTENCY_CONFLICT")
+    if row.status != "DRAFT":
+        raise CompensationError("POLICY_NOT_DRAFT")
+    row.status = "VOID"
+    row.updated_at = datetime.utcnow()
+    db.flush()
+    _event(db, organization_id=row.organization_id, policy_id=row.id, event_type="POLICY_VOIDED",
+           reason_code=reason_code, idempotency_key=idempotency_key, actor_user_id=actor.id)
     return row
 
 

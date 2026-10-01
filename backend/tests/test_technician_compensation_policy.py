@@ -16,6 +16,7 @@ from app.models.service_order import ServiceOrder
 from app.models.service_order_quote import ServiceOrderQuote, ServiceOrderQuoteItem
 from app.models.technician_compensation import (
     ServiceOrderCompensationSnapshot,
+    TechnicianCompensationEvent,
     TechnicianCompensationPolicy,
 )
 from app.models.technician_earning import TechnicianEarning
@@ -33,6 +34,7 @@ from app.services.technician_compensation_service import (
     ensure_technician_acceptance_allowed,
     list_technician_snapshots,
     technician_snapshot_payload,
+    void_policy,
 )
 
 
@@ -406,6 +408,70 @@ def test_retired_versions_resolve_by_order_cutoff(monkeypatch, db):
     quote.approved_at = order.created_at
     db.commit()
     assert resolve_policy_for_order(db, order).id == second.id
+
+
+def make_draft_policy(db, manager, org, key="voidable"):
+    return create_policy(
+        db, actor=manager, organization_id=org.id, currency="MXN",
+        effective_from=utcnow() + timedelta(minutes=10), idempotency_key=key,
+    )
+
+
+def test_draft_policy_can_be_voided_with_a_controlled_reason(monkeypatch, db):
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
+    org, manager, _, _ = make_fixture(db)
+    policy = make_draft_policy(db, manager, org)
+    voided = void_policy(db, actor=manager, policy_id=policy.id, reason_code="incorrect_cutoff", idempotency_key="void-1")
+    db.commit()
+    assert voided.status == "VOID"
+    event = db.query(TechnicianCompensationEvent).filter_by(policy_id=policy.id, event_type="POLICY_VOIDED").one()
+    assert event.reason_code == "INCORRECT_CUTOFF"
+    assert db.query(TechnicianCompensationPolicy).count() == 1
+
+
+def test_policy_void_is_idempotent_and_conflicting_replay_is_rejected(monkeypatch, db):
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
+    org, manager, _, _ = make_fixture(db)
+    policy = make_draft_policy(db, manager, org, "void-idempotent")
+    first = void_policy(db, actor=manager, policy_id=policy.id, reason_code="CREATED_IN_ERROR", idempotency_key="void-key")
+    db.commit()
+    second = void_policy(db, actor=manager, policy_id=policy.id, reason_code="CREATED_IN_ERROR", idempotency_key="void-key")
+    assert second.id == first.id
+    with pytest.raises(CompensationError, match="IDEMPOTENCY_CONFLICT"):
+        void_policy(db, actor=manager, policy_id=policy.id, reason_code="DUPLICATE_DRAFT", idempotency_key="void-key")
+    assert db.query(TechnicianCompensationEvent).filter_by(event_type="POLICY_VOIDED").count() == 1
+
+
+@pytest.mark.parametrize("status", ["ACTIVE", "RETIRED", "VOID"])
+def test_only_drafts_can_be_voided(monkeypatch, db, status):
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
+    org, manager, _, _ = make_fixture(db)
+    policy = make_draft_policy(db, manager, org, f"void-status-{status}")
+    policy.status = status
+    db.commit()
+    with pytest.raises(CompensationError, match="POLICY_NOT_DRAFT"):
+        void_policy(db, actor=manager, policy_id=policy.id, reason_code="CONFIGURATION_ERROR", idempotency_key=f"void-{status}")
+
+
+def test_invalid_void_reason_and_non_admin_are_rejected(monkeypatch, db):
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
+    org, manager, technician, _ = make_fixture(db)
+    policy = make_draft_policy(db, manager, org, "void-security")
+    with pytest.raises(CompensationError, match="VOID_REASON_INVALID"):
+        void_policy(db, actor=manager, policy_id=policy.id, reason_code="FREE_TEXT", idempotency_key="void-invalid")
+    with pytest.raises(CompensationError, match="ADMIN_REQUIRED"):
+        void_policy(db, actor=technician, policy_id=policy.id, reason_code="CONFIGURATION_ERROR", idempotency_key="void-technician")
+    assert policy.status == "DRAFT"
+
+
+def test_void_policy_is_ignored_and_next_draft_gets_next_version(monkeypatch, db):
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
+    org, manager, _, order = make_fixture(db)
+    first = make_draft_policy(db, manager, org, "void-v1")
+    void_policy(db, actor=manager, policy_id=first.id, reason_code="DUPLICATE_DRAFT", idempotency_key="void-v1-key")
+    second = make_draft_policy(db, manager, org, "void-v2")
+    assert second.version == 2
+    assert resolve_policy_for_order(db, order) is None
 
 
 def test_pre_policy_snapshot_is_not_created(monkeypatch, db):

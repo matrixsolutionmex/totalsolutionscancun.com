@@ -4381,6 +4381,16 @@
       <div class="identity-info-modal-box" role="dialog" aria-modal="true" aria-labelledby="technicianCompensationConfirmTitle">
         <div class="panel-title" id="technicianCompensationConfirmTitle"></div>
         <div class="line" id="technicianCompensationConfirmMessage"></div>
+        <label id="technicianCompensationVoidReasonField" hidden>
+          <span id="technicianCompensationVoidReasonLabel"></span>
+          <select id="technicianCompensationVoidReason" required>
+            <option value=""></option>
+            <option value="INCORRECT_CUTOFF"></option>
+            <option value="DUPLICATE_DRAFT"></option>
+            <option value="CONFIGURATION_ERROR"></option>
+            <option value="CREATED_IN_ERROR"></option>
+          </select>
+        </label>
         <div class="technician-compensation-actions" style="margin-top:16px;">
           <button class="ghost" type="button" id="technicianCompensationConfirmCancel"></button>
           <button type="button" id="technicianCompensationConfirmAction"></button>
@@ -6108,6 +6118,16 @@
         compensationPolicyActive: "Ativa",
         compensationPolicyDraft: "Rascunho",
         compensationPolicyRetired: "Retirada",
+        compensationPolicyVoid: "Invalidado",
+        compensationPolicyVoidAction: "Invalidar rascunho",
+        compensationPolicyVoidTitle: "Invalidar rascunho",
+        compensationPolicyVoidMessage: "O rascunho será invalidado e permanecerá no histórico. Esta ação não pode ser desfeita.",
+        compensationPolicyVoidReason: "Motivo da invalidação",
+        compensationPolicyVoidReasonIncorrectCutoff: "Cutoff incorreto",
+        compensationPolicyVoidReasonDuplicateDraft: "Rascunho duplicado",
+        compensationPolicyVoidReasonConfigurationError: "Erro de configuração",
+        compensationPolicyVoidReasonCreatedInError: "Criado por engano",
+        compensationPolicyVoidConfirm: "Invalidar rascunho",
         compensationPolicyLabor: "Mão de obra",
         compensationPolicyMaterial: "Material",
         compensationPolicyTax: "Imposto",
@@ -6469,6 +6489,16 @@
         compensationPolicyActive: "Active",
         compensationPolicyDraft: "Draft",
         compensationPolicyRetired: "Retired",
+        compensationPolicyVoid: "Voided",
+        compensationPolicyVoidAction: "Void draft",
+        compensationPolicyVoidTitle: "Void draft",
+        compensationPolicyVoidMessage: "The draft will be voided and kept in history. This action cannot be undone.",
+        compensationPolicyVoidReason: "Void reason",
+        compensationPolicyVoidReasonIncorrectCutoff: "Incorrect cutoff",
+        compensationPolicyVoidReasonDuplicateDraft: "Duplicate draft",
+        compensationPolicyVoidReasonConfigurationError: "Configuration error",
+        compensationPolicyVoidReasonCreatedInError: "Created in error",
+        compensationPolicyVoidConfirm: "Void draft",
         compensationPolicyLabor: "Labor",
         compensationPolicyMaterial: "Material",
         compensationPolicyTax: "Tax",
@@ -6838,6 +6868,16 @@
         compensationPolicyActive: "Activa",
         compensationPolicyDraft: "Borrador",
         compensationPolicyRetired: "Retirada",
+        compensationPolicyVoid: "Invalidada",
+        compensationPolicyVoidAction: "Invalidar borrador",
+        compensationPolicyVoidTitle: "Invalidar borrador",
+        compensationPolicyVoidMessage: "El borrador se invalidará y permanecerá en el historial. Esta acción no se puede deshacer.",
+        compensationPolicyVoidReason: "Motivo de invalidación",
+        compensationPolicyVoidReasonIncorrectCutoff: "Cutoff incorrecto",
+        compensationPolicyVoidReasonDuplicateDraft: "Borrador duplicado",
+        compensationPolicyVoidReasonConfigurationError: "Error de configuración",
+        compensationPolicyVoidReasonCreatedInError: "Creado por error",
+        compensationPolicyVoidConfirm: "Invalidar borrador",
         compensationPolicyLabor: "Mano de obra",
         compensationPolicyMaterial: "Material",
         compensationPolicyTax: "Impuesto",
@@ -11202,6 +11242,10 @@
         if (node) node.disabled = true;
       });
       if (technicianCompensationConfirmModal) technicianCompensationConfirmModal.hidden = true;
+      const voidReasonField = document.getElementById("technicianCompensationVoidReasonField");
+      const voidReason = document.getElementById("technicianCompensationVoidReason");
+      if (voidReasonField) voidReasonField.hidden = true;
+      if (voidReason) { voidReason.value = ""; voidReason.removeEventListener("change", updateTechnicianCompensationVoidAction); }
       document.body.style.overflow = technicianCompensationBodyOverflow;
       technicianCompensationConfirmAction = null;
       technicianCompensationConfirmTrigger = null;
@@ -11231,14 +11275,15 @@
         technicianCompensationTechnicianRefresh: "compensationPolicyTechnicianRefresh",
         technicianCompensationConfirmTitle: "compensationPolicyConfirmTitle",
         technicianCompensationConfirmCancel: "compensationPolicyCancel",
-        technicianCompensationConfirmAction: "compensationPolicyConfirm"
+        technicianCompensationConfirmAction: "compensationPolicyConfirm",
+        technicianCompensationVoidReasonLabel: "compensationPolicyVoidReason"
       };
       Object.entries(labels).forEach(([id, key]) => setText(`#${id}`, t(key)));
     }
 
     function safeCompensationPolicies(data) {
       return data && Array.isArray(data.items) && data.items.every((item) => item && Number.isInteger(item.id)
-        && Number.isInteger(item.version) && ["DRAFT", "ACTIVE", "RETIRED"].includes(item.status)
+        && Number.isInteger(item.version) && ["DRAFT", "ACTIVE", "RETIRED", "VOID"].includes(item.status)
         && /^[A-Z]{3}$/.test(item.currency) && typeof item.technician_share_bps === "number"
         && typeof item.organization_share_bps === "number" && typeof item.effective_from === "string"
         && typeof item.effective_timezone === "string");
@@ -11265,7 +11310,8 @@
           }).format(new Date(policy.effective_from));
           cutoffText = `${localText} ${policy.effective_timezone} · ${policy.effective_from} UTC`;
         } catch (_error) { /* Keep the canonical UTC value visible if formatting fails. */ }
-        details.textContent = `v${policy.version} · ${policy.currency} · ${policy.technician_share_bps / 100}% / ${policy.organization_share_bps / 100}% · ${policy.status} · ${cutoffText}`;
+        const statusLabels = { DRAFT: "compensationPolicyDraft", ACTIVE: "compensationPolicyActive", RETIRED: "compensationPolicyRetired", VOID: "compensationPolicyVoid" };
+        details.textContent = `v${policy.version} · ${policy.currency} · ${policy.technician_share_bps / 100}% / ${policy.organization_share_bps / 100}% · ${t(statusLabels[policy.status] || "compensationPolicyInvalid")} · ${cutoffText}`;
         const actions = document.createElement("div");
         if (policy.status === "DRAFT") {
           const activate = document.createElement("button");
@@ -11274,6 +11320,12 @@
           activate.textContent = t("compensationPolicyConfirm");
           activate.addEventListener("click", () => openTechnicianCompensationConfirm(policy, activate));
           actions.appendChild(activate);
+          const voidButton = document.createElement("button");
+          voidButton.type = "button";
+          voidButton.className = "ghost";
+          voidButton.textContent = t("compensationPolicyVoidAction");
+          voidButton.addEventListener("click", () => openTechnicianCompensationConfirm(policy, voidButton, "void"));
+          actions.appendChild(voidButton);
         }
         row.append(details, actions);
         technicianCompensationPolicyList.appendChild(row);
@@ -11333,19 +11385,48 @@
       technicianCompensationPreview.hidden = false;
     }
 
-    function openTechnicianCompensationConfirm(policy, trigger) {
+    function updateTechnicianCompensationVoidAction() {
+      const reason = document.getElementById("technicianCompensationVoidReason");
+      const action = document.getElementById("technicianCompensationConfirmAction");
+      if (action && reason) action.disabled = !reason.value;
+    }
+
+    function openTechnicianCompensationConfirm(policy, trigger, actionType = "activate") {
+      const isVoid = actionType === "void";
+      const voidReasonField = document.getElementById("technicianCompensationVoidReasonField");
+      const voidReason = document.getElementById("technicianCompensationVoidReason");
+      const confirmAction = document.getElementById("technicianCompensationConfirmAction");
+      if (voidReason) voidReason.removeEventListener("change", updateTechnicianCompensationVoidAction);
+      if (voidReasonField) voidReasonField.hidden = !isVoid;
+      if (voidReason) {
+        voidReason.value = "";
+        ["INCORRECT_CUTOFF", "DUPLICATE_DRAFT", "CONFIGURATION_ERROR", "CREATED_IN_ERROR"].forEach((code) => {
+          const option = voidReason.querySelector(`option[value="${code}"]`);
+          if (option) option.textContent = t(`compensationPolicyVoidReason${code.split("_").map((part) => part.charAt(0) + part.slice(1).toLowerCase()).join("")}`);
+        });
+        if (isVoid) voidReason.addEventListener("change", updateTechnicianCompensationVoidAction);
+      }
       technicianCompensationConfirmAction = async () => {
-        const response = await apiFetch(`${API_BASE}/technician-compensation/policies/${encodeURIComponent(policy.id)}/activate`, { method: "POST", headers: { Accept: "application/json" } });
+        const endpoint = isVoid ? "void" : "activate";
+        const options = { method: "POST", headers: { Accept: "application/json" } };
+        if (isVoid) {
+          options.headers["Content-Type"] = "application/json";
+          options.body = JSON.stringify({ reason_code: voidReason?.value || "", idempotency_key: `policy-void-${policy.id}-${Date.now()}-${Math.random().toString(36).slice(2)}` });
+        }
+        const response = await apiFetch(`${API_BASE}/technician-compensation/policies/${encodeURIComponent(policy.id)}/${endpoint}`, options);
         if (!response.ok) throw new Error("activation_failed");
         closeTechnicianCompensationConfirm();
         await loadTechnicianCompensationAdmin();
       };
       technicianCompensationConfirmTrigger = trigger;
-      document.getElementById("technicianCompensationConfirmMessage").textContent = t("compensationPolicyConfirmMessage");
-      document.getElementById("technicianCompensationConfirmAction").focus();
+      document.getElementById("technicianCompensationConfirmTitle").textContent = t(isVoid ? "compensationPolicyVoidTitle" : "compensationPolicyConfirmTitle");
+      document.getElementById("technicianCompensationConfirmMessage").textContent = t(isVoid ? "compensationPolicyVoidMessage" : "compensationPolicyConfirmMessage");
+      confirmAction.textContent = t(isVoid ? "compensationPolicyVoidConfirm" : "compensationPolicyConfirm");
+      confirmAction.disabled = isVoid;
       technicianCompensationBodyOverflow = document.body.style.overflow;
       document.body.style.overflow = "hidden";
       technicianCompensationConfirmModal.hidden = false;
+      (isVoid ? voidReason : confirmAction)?.focus();
     }
 
     function closeTechnicianCompensationConfirm() {
@@ -11354,6 +11435,7 @@
       technicianCompensationConfirmTrigger?.focus?.();
       technicianCompensationConfirmTrigger = null;
       technicianCompensationConfirmAction = null;
+      updateTechnicianCompensationVoidAction();
     }
 
     async function loadTechnicianCompensationAdmin() {

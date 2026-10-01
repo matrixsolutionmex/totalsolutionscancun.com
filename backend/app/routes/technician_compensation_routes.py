@@ -22,6 +22,7 @@ from app.services.technician_compensation_service import (
     quote_items_for_order,
     snapshot_payload,
     technician_snapshot_payload,
+    void_policy,
 )
 
 
@@ -44,6 +45,11 @@ class SnapshotInput(BaseModel):
     category_by_item_id: dict[int, str] = Field(default_factory=dict)
 
 
+class VoidPolicyInput(BaseModel):
+    reason_code: str = Field(min_length=1, max_length=64)
+    idempotency_key: str = Field(min_length=1, max_length=160)
+
+
 def _call(function, *args, **kwargs):
     try:
         return function(*args, **kwargs)
@@ -56,7 +62,8 @@ def _call(function, *args, **kwargs):
             "DISCOUNT_EXCEEDS_ORGANIZATION_SHARE", "SNAPSHOT_NOT_PROPOSED", "SNAPSHOT_NOT_DRAFT",
             "APPROVER_CANNOT_BE_TECHNICIAN", "POLICY_NOT_DRAFT", "ORDER_BEFORE_POLICY_EFFECTIVE_DATE",
             "PRE_POLICY_LEGACY", "POLICY_EFFECTIVE_FROM_PAST", "POLICY_EFFECTIVE_FROM_NOT_AFTER_PREVIOUS",
-        } else 403 if exc.code in {"ADMIN_REQUIRED", "TENANT_MISMATCH", "SNAPSHOT_NOT_FOUND"} else 422
+            "VOID_REASON_INVALID", "IDEMPOTENCY_CONFLICT", "IDEMPOTENCY_KEY_REQUIRED",
+        } else 403 if exc.code in {"ADMIN_REQUIRED", "TENANT_MISMATCH", "SNAPSHOT_NOT_FOUND"} else 404 if exc.code == "POLICY_NOT_FOUND" else 422
         raise HTTPException(status_code=status, detail=exc.code) from exc
 
 
@@ -103,6 +110,14 @@ def create_policy_route(payload: PolicyInput, db: Session = Depends(get_db), act
 @router.post("/policies/{policy_id}/activate")
 def activate_policy_route(policy_id: int, db: Session = Depends(get_db), actor=Depends(get_current_user)):
     row = _call(activate_policy, db, actor=actor, policy_id=policy_id)
+    db.commit()
+    db.refresh(row)
+    return _policy_response(db, row)
+
+
+@router.post("/policies/{policy_id}/void")
+def void_policy_route(policy_id: int, payload: VoidPolicyInput, db: Session = Depends(get_db), actor=Depends(get_current_user)):
+    row = _call(void_policy, db, actor=actor, policy_id=policy_id, **payload.model_dump())
     db.commit()
     db.refresh(row)
     return _policy_response(db, row)

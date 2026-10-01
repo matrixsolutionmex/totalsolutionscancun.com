@@ -6,7 +6,7 @@ from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, I
 from app.database.connection import Base
 
 
-COMPENSATION_POLICY_STATUSES = frozenset({"DRAFT", "ACTIVE", "RETIRED"})
+COMPENSATION_POLICY_STATUSES = frozenset({"DRAFT", "ACTIVE", "RETIRED", "VOID"})
 COMPENSATION_SNAPSHOT_STATUSES = frozenset({"PROPOSED", "FROZEN", "VOID"})
 COMPENSATION_ITEM_CATEGORIES = frozenset({"LABOR", "MATERIAL", "TAX", "REIMBURSEMENT", "OTHER"})
 COMPENSATION_INSTALLMENT_RULE = "PROPORTIONAL_CONFIRMED_INSTALLMENTS"
@@ -17,7 +17,7 @@ class TechnicianCompensationPolicy(Base):
     __table_args__ = (
         UniqueConstraint("idempotency_key_hash", name="uq_compensation_policy_idempotency_hash"),
         UniqueConstraint("organization_id", "currency", "version", name="uq_compensation_policy_org_currency_version"),
-        CheckConstraint("status IN ('DRAFT', 'ACTIVE', 'RETIRED')", name="ck_compensation_policy_status"),
+        CheckConstraint("status IN ('DRAFT', 'ACTIVE', 'RETIRED', 'VOID')", name="ck_compensation_policy_status"),
         CheckConstraint("technician_share_bps >= 0 AND organization_share_bps >= 0", name="ck_compensation_policy_nonnegative_bps"),
         CheckConstraint("technician_share_bps + organization_share_bps = 10000", name="ck_compensation_policy_bps_total"),
         CheckConstraint("default_guarantee_days >= 0", name="ck_compensation_policy_guarantee_days"),
@@ -81,7 +81,7 @@ class TechnicianCompensationEvent(Base):
     __tablename__ = "technician_compensation_events"
     __table_args__ = (
         UniqueConstraint("idempotency_key_hash", name="uq_compensation_event_idempotency_hash"),
-        CheckConstraint("event_type IN ('POLICY_CREATED', 'POLICY_ACTIVATED', 'SNAPSHOT_PROPOSED', 'SNAPSHOT_FROZEN', 'SNAPSHOT_VOIDED')", name="ck_compensation_event_type"),
+        CheckConstraint("event_type IN ('POLICY_CREATED', 'POLICY_ACTIVATED', 'POLICY_VOIDED', 'SNAPSHOT_PROPOSED', 'SNAPSHOT_FROZEN', 'SNAPSHOT_VOIDED')", name="ck_compensation_event_type"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
