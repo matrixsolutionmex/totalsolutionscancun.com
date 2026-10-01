@@ -2,6 +2,7 @@ import hashlib
 import os
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
@@ -99,6 +100,44 @@ def _utc_datetime(value: datetime, *, field: str) -> datetime:
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def _local_datetime_to_utc(value: str, timezone_name: str) -> datetime:
+    if not isinstance(value, str) or not value.strip() or not isinstance(timezone_name, str) or not timezone_name.strip():
+        raise CompensationError("EFFECTIVE_FROM_REQUIRED")
+    try:
+        local_value = datetime.fromisoformat(value)
+        zone = ZoneInfo(timezone_name.strip())
+    except (TypeError, ValueError):
+        raise CompensationError("EFFECTIVE_FROM_LOCAL_INVALID") from None
+    except ZoneInfoNotFoundError:
+        raise CompensationError("EFFECTIVE_FROM_TIMEZONE_INVALID") from None
+    if local_value.tzinfo is not None or local_value.utcoffset() is not None:
+        raise CompensationError("EFFECTIVE_FROM_LOCAL_INVALID")
+
+    candidates = []
+    for fold in (0, 1):
+        aware = local_value.replace(tzinfo=zone, fold=fold)
+        round_trip = aware.astimezone(timezone.utc).astimezone(zone).replace(tzinfo=None)
+        if round_trip == local_value:
+            candidates.append(aware)
+    if not candidates:
+        raise CompensationError("EFFECTIVE_FROM_LOCAL_NONEXISTENT")
+    if len(candidates) == 2 and candidates[0].utcoffset() != candidates[1].utcoffset():
+        raise CompensationError("EFFECTIVE_FROM_LOCAL_AMBIGUOUS")
+    return candidates[0].astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def normalize_effective_from(*, effective_from: datetime | None = None,
+                             effective_from_local: str | None = None,
+                             effective_timezone: str | None = None) -> datetime:
+    if effective_from_local is not None or effective_timezone is not None:
+        if effective_from is not None:
+            raise CompensationError("EFFECTIVE_FROM_INPUT_CONFLICT")
+        return _local_datetime_to_utc(effective_from_local, effective_timezone)
+    if effective_from is None:
+        raise CompensationError("EFFECTIVE_FROM_REQUIRED")
+    return _utc_datetime(effective_from, field="EFFECTIVE_FROM")
+
+
 def _stored_utc(value: datetime | None) -> datetime | None:
     """Migration 089 stores UTC timestamps in TIMESTAMP WITHOUT TIME ZONE."""
     if value is None:
@@ -156,7 +195,7 @@ def policy_payload(row: TechnicianCompensationPolicy) -> dict:
         "installment_rule": row.installment_rule,
         "processor_fee_responsibility": row.processor_fee_responsibility,
         "discount_rule": row.discount_rule,
-        "effective_from": row.effective_from.isoformat() if row.effective_from else None,
+        "effective_from": f"{row.effective_from.isoformat()}Z" if row.effective_from else None,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
@@ -277,13 +316,21 @@ def _calculate(db: Session, order: ServiceOrder, policy: TechnicianCompensationP
 
 
 def create_policy(db: Session, *, actor: User, organization_id: int, currency: str,
-                  effective_from: datetime, idempotency_key: str,
+                  effective_from: datetime | None = None, idempotency_key: str,
+                  effective_from_local: str | None = None,
+                  effective_timezone: str | None = None,
                   technician_share_bps: int = 7500, organization_share_bps: int = 2500,
                   default_guarantee_days: int = 7) -> TechnicianCompensationPolicy:
     _require_feature(db, organization_id)
     _require_admin(actor, organization_id)
     currency = _currency(currency)
-    effective_from = _utc_datetime(effective_from, field="EFFECTIVE_FROM")
+    effective_from = normalize_effective_from(
+        effective_from=effective_from,
+        effective_from_local=effective_from_local,
+        effective_timezone=effective_timezone,
+    )
+    if effective_from < datetime.now(timezone.utc).replace(tzinfo=None):
+        raise CompensationError("POLICY_EFFECTIVE_FROM_PAST")
     if technician_share_bps + organization_share_bps != 10000 or min(technician_share_bps, organization_share_bps) < 0:
         raise CompensationError("SHARE_TOTAL_INVALID")
     if default_guarantee_days < 0 or not idempotency_key.strip():

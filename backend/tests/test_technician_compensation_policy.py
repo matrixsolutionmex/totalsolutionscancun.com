@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import create_engine
@@ -24,6 +25,7 @@ from app.services.technician_compensation_service import (
     activate_policy,
     compensation_policy_enabled_for_organization,
     create_policy,
+    normalize_effective_from,
     freeze_snapshot,
     preview_order,
     propose_snapshot,
@@ -228,7 +230,7 @@ def test_policy_requires_exact_share_total(monkeypatch, db):
     monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
     org, manager, _, _ = make_fixture(db)
     with pytest.raises(CompensationError, match="SHARE_TOTAL_INVALID"):
-        create_policy(db, actor=manager, organization_id=org.id, currency="MXN", effective_from=utcnow(), idempotency_key="bad", technician_share_bps=7000, organization_share_bps=2000)
+        create_policy(db, actor=manager, organization_id=org.id, currency="MXN", effective_from=utcnow() + timedelta(minutes=1), idempotency_key="bad", technician_share_bps=7000, organization_share_bps=2000)
 
 
 def test_startup_excludes_compensation_tables():
@@ -288,6 +290,53 @@ def test_effective_from_requires_timezone_aware_utc(monkeypatch, db):
         )
 
 
+def test_local_cutoff_converts_cancun_to_canonical_utc(monkeypatch, db):
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
+    org, manager, _, _ = make_fixture(db)
+    policy = create_policy(
+        db, actor=manager, organization_id=org.id, currency="MXN",
+        effective_from_local="2026-10-05T09:00", effective_timezone="America/Cancun",
+        idempotency_key="cancun-cutoff",
+    )
+    assert policy.effective_from == datetime(2026, 10, 5, 14, 0)
+
+
+def test_cutoff_requires_explicit_input(monkeypatch, db):
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
+    org, manager, _, _ = make_fixture(db)
+    with pytest.raises(CompensationError, match="EFFECTIVE_FROM_REQUIRED"):
+        create_policy(db, actor=manager, organization_id=org.id, currency="MXN", idempotency_key="missing-cutoff")
+
+
+@pytest.mark.parametrize("timezone_name, local, expected", [
+    ("Not/AZone", "2026-10-05T09:00", "EFFECTIVE_FROM_TIMEZONE_INVALID"),
+    ("America/New_York", "2026-03-08T02:30", "EFFECTIVE_FROM_LOCAL_NONEXISTENT"),
+])
+def test_invalid_local_cutoff_fails_closed(monkeypatch, db, timezone_name, local, expected):
+    monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
+    org, manager, _, _ = make_fixture(db)
+    with pytest.raises(CompensationError, match=expected):
+        create_policy(
+            db, actor=manager, organization_id=org.id, currency="MXN",
+            effective_from_local=local, effective_timezone=timezone_name,
+            idempotency_key=f"invalid-{timezone_name}",
+        )
+    assert db.query(TechnicianCompensationPolicy).count() == 0
+
+
+def test_ambiguous_local_cutoff_fails_closed():
+    with pytest.raises(CompensationError, match="EFFECTIVE_FROM_LOCAL_AMBIGUOUS"):
+        normalize_effective_from(effective_from_local="2026-11-01T01:30", effective_timezone="America/New_York")
+
+
+def test_local_cutoff_rejects_conflicting_utc_input():
+    with pytest.raises(CompensationError, match="EFFECTIVE_FROM_INPUT_CONFLICT"):
+        normalize_effective_from(
+            effective_from=datetime(2026, 10, 5, 14, 0, tzinfo=ZoneInfo("UTC")),
+            effective_from_local="2026-10-05T09:00", effective_timezone="America/Cancun",
+        )
+
+
 def test_cutoff_boundaries_keep_old_orders_legacy(monkeypatch, db):
     monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
     org, manager, technician, order = make_fixture(db)
@@ -321,12 +370,12 @@ def test_cutoff_boundaries_keep_old_orders_legacy(monkeypatch, db):
 def test_first_policy_cannot_be_backdated(monkeypatch, db):
     monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
     org, manager, _, _ = make_fixture(db)
-    policy = create_policy(
-        db, actor=manager, organization_id=org.id, currency="MXN",
-        effective_from=utcnow() - timedelta(seconds=1), idempotency_key="backdated",
-    )
     with pytest.raises(CompensationError, match="POLICY_EFFECTIVE_FROM_PAST"):
-        activate_policy(db, actor=manager, policy_id=policy.id)
+        create_policy(
+            db, actor=manager, organization_id=org.id, currency="MXN",
+            effective_from=utcnow() - timedelta(seconds=1), idempotency_key="backdated",
+        )
+    assert db.query(TechnicianCompensationPolicy).count() == 0
 
 
 def test_retired_versions_resolve_by_order_cutoff(monkeypatch, db):

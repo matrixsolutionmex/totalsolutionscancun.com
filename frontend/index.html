@@ -4345,6 +4345,10 @@
         <label><span id="technicianCompensationCurrencyLabel"></span><input id="technicianCompensationCurrency" value="MXN" maxlength="3" required></label>
         <label><span id="technicianCompensationTechShareLabel"></span><input id="technicianCompensationTechShare" type="number" min="0" max="100" step="0.01" value="75" required></label>
         <label><span id="technicianCompensationGuaranteeLabel"></span><input id="technicianCompensationGuarantee" type="number" min="0" max="3650" value="7" required></label>
+        <label><span id="technicianCompensationCutoffDateLabel"></span><input id="technicianCompensationCutoffDate" type="date" required></label>
+        <label><span id="technicianCompensationCutoffTimeLabel"></span><input id="technicianCompensationCutoffTime" type="time" step="60" required></label>
+        <label><span id="technicianCompensationTimezoneLabel"></span><select id="technicianCompensationTimezone" required><option value=""></option><option value="America/Cancun">America/Cancun (UTC−05:00)</option></select></label>
+        <div id="technicianCompensationCutoffPreview" class="technician-compensation-status" aria-live="polite"></div>
         <button type="submit" id="technicianCompensationCreatePolicy"></button>
       </form>
       <div class="panel-title" id="technicianCompensationHistoryTitle" style="margin-top:16px;"></div>
@@ -6087,6 +6091,12 @@
         compensationPolicyCurrency: "Moeda",
         compensationPolicyTechShare: "Parcela do técnico (%)",
         compensationPolicyGuarantee: "Garantia (dias)",
+        compensationPolicyCutoffDate: "Data de início",
+        compensationPolicyCutoffTime: "Hora de início",
+        compensationPolicyTimezone: "Zona horária",
+        compensationPolicyCutoffPreview: "Equivalente UTC",
+        compensationPolicyCutoffRequired: "Informe data, hora e zona horária.",
+        compensationPolicyCutoffInvalid: "Informe um cutoff válido.",
         compensationPolicyCreate: "Criar rascunho",
         compensationPolicyHistory: "Histórico de versões",
         compensationPolicyPreview: "Preview da remuneração",
@@ -6442,6 +6452,12 @@
         compensationPolicyCurrency: "Currency",
         compensationPolicyTechShare: "Technician share (%)",
         compensationPolicyGuarantee: "Guarantee (days)",
+        compensationPolicyCutoffDate: "Start date",
+        compensationPolicyCutoffTime: "Start time",
+        compensationPolicyTimezone: "Time zone",
+        compensationPolicyCutoffPreview: "UTC equivalent",
+        compensationPolicyCutoffRequired: "Enter a date, time, and time zone.",
+        compensationPolicyCutoffInvalid: "Enter a valid cutoff.",
         compensationPolicyCreate: "Create draft",
         compensationPolicyHistory: "Version history",
         compensationPolicyPreview: "Compensation preview",
@@ -6805,6 +6821,12 @@
         compensationPolicyCurrency: "Moneda",
         compensationPolicyTechShare: "Parte del técnico (%)",
         compensationPolicyGuarantee: "Garantía (días)",
+        compensationPolicyCutoffDate: "Fecha de inicio",
+        compensationPolicyCutoffTime: "Hora de inicio",
+        compensationPolicyTimezone: "Zona horaria",
+        compensationPolicyCutoffPreview: "Equivalente UTC",
+        compensationPolicyCutoffRequired: "Indica fecha, hora y zona horaria.",
+        compensationPolicyCutoffInvalid: "Indica un cutoff válido.",
         compensationPolicyCreate: "Crear borrador",
         compensationPolicyHistory: "Historial de versiones",
         compensationPolicyPreview: "Vista previa de remuneración",
@@ -8449,6 +8471,9 @@
       renderThemeSelects();
 
       applyTranslations();
+      if (typeof renderTechnicianCompensationLabels === "function") {
+        renderTechnicianCompensationLabels();
+      }
       updateGoogleProviderButton();
       updateAppleProviderButton();
       setText("#registerTitle", t("registerTitle"));
@@ -11103,6 +11128,54 @@
       }
     }
 
+    function technicianCompensationCutoffUtc(dateValue, timeValue, timezoneName) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateValue) || !/^\d{2}:\d{2}$/.test(timeValue) || !timezoneName) return null;
+      const [year, month, day] = dateValue.split("-").map(Number);
+      const [hour, minute] = timeValue.split(":").map(Number);
+      const localAsUtc = Date.UTC(year, month - 1, day, hour, minute);
+      if (!Number.isFinite(localAsUtc)) return null;
+      const normalized = new Date(localAsUtc);
+      if (normalized.getUTCFullYear() !== year || normalized.getUTCMonth() !== month - 1
+        || normalized.getUTCDate() !== day || normalized.getUTCHours() !== hour
+        || normalized.getUTCMinutes() !== minute) return null;
+      const formatter = new Intl.DateTimeFormat("en-CA", {
+        timeZone: timezoneName, hour12: false, year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit"
+      });
+      let candidate = localAsUtc;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const parts = Object.fromEntries(formatter.formatToParts(new Date(candidate)).map(({ type, value }) => [type, value]));
+        const zoneAsUtc = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour) % 24, Number(parts.minute));
+        candidate = localAsUtc - (zoneAsUtc - candidate);
+      }
+      return new Date(candidate);
+    }
+
+    function updateTechnicianCompensationCutoffPreview() {
+      const dateValue = document.getElementById("technicianCompensationCutoffDate")?.value || "";
+      const timeValue = document.getElementById("technicianCompensationCutoffTime")?.value || "";
+      const timezoneName = document.getElementById("technicianCompensationTimezone")?.value || "";
+      const button = document.getElementById("technicianCompensationCreatePolicy");
+      const preview = document.getElementById("technicianCompensationCutoffPreview");
+      const complete = Boolean(dateValue && timeValue && timezoneName);
+      button.disabled = !complete;
+      if (!preview) return;
+      if (!complete) {
+        preview.textContent = t("compensationPolicyCutoffRequired");
+        return;
+      }
+      const utc = technicianCompensationCutoffUtc(dateValue, timeValue, timezoneName);
+      if (!utc || Number.isNaN(utc.getTime())) {
+        button.disabled = true;
+        preview.textContent = t("compensationPolicyCutoffInvalid");
+        return;
+      }
+      const utcText = new Intl.DateTimeFormat(translations[currentLanguage]?.locale || "pt-BR", {
+        timeZone: "UTC", dateStyle: "medium", timeStyle: "short", hour12: false
+      }).format(utc);
+      preview.textContent = `${dateValue} · ${timeValue} (${timezoneName}) · ${t("compensationPolicyCutoffPreview")}: ${utcText} UTC`;
+    }
+
     function resetTechnicianCompensationUi() {
       technicianCompensationPolicies = [];
       technicianCompensationQuoteItems = [];
@@ -11114,11 +11187,17 @@
       technicianCompensationItems.replaceChildren();
       technicianCompensationPreview.replaceChildren();
       technicianCompensationPreview.hidden = true;
+      ["technicianCompensationCutoffDate", "technicianCompensationCutoffTime", "technicianCompensationTimezone"].forEach((id) => {
+        const node = document.getElementById(id);
+        if (node) node.value = "";
+      });
+      const cutoffPreview = document.getElementById("technicianCompensationCutoffPreview");
+      if (cutoffPreview) cutoffPreview.textContent = "";
       ["technicianCompensationAdminStatus", "technicianCompensationTechnicianStatus"].forEach((id) => {
         const node = document.getElementById(id);
         if (node) { node.textContent = ""; node.classList.remove("error"); }
       });
-      ["technicianCompensationPreviewButton", "technicianCompensationProposeButton", "technicianCompensationFreezeButton"].forEach((id) => {
+      ["technicianCompensationCreatePolicy", "technicianCompensationPreviewButton", "technicianCompensationProposeButton", "technicianCompensationFreezeButton"].forEach((id) => {
         const node = document.getElementById(id);
         if (node) node.disabled = true;
       });
@@ -11136,6 +11215,9 @@
         technicianCompensationCurrencyLabel: "compensationPolicyCurrency",
         technicianCompensationTechShareLabel: "compensationPolicyTechShare",
         technicianCompensationGuaranteeLabel: "compensationPolicyGuarantee",
+        technicianCompensationCutoffDateLabel: "compensationPolicyCutoffDate",
+        technicianCompensationCutoffTimeLabel: "compensationPolicyCutoffTime",
+        technicianCompensationTimezoneLabel: "compensationPolicyTimezone",
         technicianCompensationCreatePolicy: "compensationPolicyCreate",
         technicianCompensationHistoryTitle: "compensationPolicyHistory",
         technicianCompensationPreviewTitle: "compensationPolicyPreview",
@@ -11158,7 +11240,8 @@
       return data && Array.isArray(data.items) && data.items.every((item) => item && Number.isInteger(item.id)
         && Number.isInteger(item.version) && ["DRAFT", "ACTIVE", "RETIRED"].includes(item.status)
         && /^[A-Z]{3}$/.test(item.currency) && typeof item.technician_share_bps === "number"
-        && typeof item.organization_share_bps === "number" && typeof item.effective_from === "string");
+        && typeof item.organization_share_bps === "number" && typeof item.effective_from === "string"
+        && typeof item.effective_timezone === "string");
     }
 
     function renderTechnicianCompensationPolicies() {
@@ -11175,7 +11258,14 @@
         row.className = "technician-compensation-policy-row";
         const details = document.createElement("div");
         details.className = "technician-compensation-policy-meta";
-        details.textContent = `v${policy.version} · ${policy.currency} · ${policy.technician_share_bps / 100}% / ${policy.organization_share_bps / 100}% · ${policy.status} · ${policy.effective_from}`;
+        let cutoffText = policy.effective_from;
+        try {
+          const localText = new Intl.DateTimeFormat(translations[currentLanguage]?.locale || "pt-BR", {
+            timeZone: policy.effective_timezone, dateStyle: "medium", timeStyle: "short", hour12: false
+          }).format(new Date(policy.effective_from));
+          cutoffText = `${localText} ${policy.effective_timezone} · ${policy.effective_from} UTC`;
+        } catch (_error) { /* Keep the canonical UTC value visible if formatting fails. */ }
+        details.textContent = `v${policy.version} · ${policy.currency} · ${policy.technician_share_bps / 100}% / ${policy.organization_share_bps / 100}% · ${policy.status} · ${cutoffText}`;
         const actions = document.createElement("div");
         if (policy.status === "DRAFT") {
           const activate = document.createElement("button");
@@ -14367,16 +14457,29 @@
       const status = document.getElementById("technicianCompensationAdminStatus");
       try {
         const techShare = Math.round(Number(document.getElementById("technicianCompensationTechShare").value) * 100);
-        const response = await apiFetch(`${API_BASE}/technician-compensation/policies`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ currency: document.getElementById("technicianCompensationCurrency").value.trim().toUpperCase(), technician_share_bps: techShare, organization_share_bps: 10000 - techShare, default_guarantee_days: Number(document.getElementById("technicianCompensationGuarantee").value), effective_from: new Date().toISOString(), idempotency_key: `policy-${Date.now()}-${Math.random().toString(16).slice(2)}` }) });
+        const cutoffDate = document.getElementById("technicianCompensationCutoffDate").value;
+        const cutoffTime = document.getElementById("technicianCompensationCutoffTime").value;
+        const cutoffTimezone = document.getElementById("technicianCompensationTimezone").value;
+        const cutoffUtc = technicianCompensationCutoffUtc(cutoffDate, cutoffTime, cutoffTimezone);
+        if (!cutoffDate || !cutoffTime || !cutoffTimezone || !cutoffUtc || Number.isNaN(cutoffUtc.getTime())) {
+          updateTechnicianCompensationCutoffPreview();
+          return;
+        }
+        const response = await apiFetch(`${API_BASE}/technician-compensation/policies`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ currency: document.getElementById("technicianCompensationCurrency").value.trim().toUpperCase(), technician_share_bps: techShare, organization_share_bps: 10000 - techShare, default_guarantee_days: Number(document.getElementById("technicianCompensationGuarantee").value), effective_from_local: `${cutoffDate}T${cutoffTime}`, effective_timezone: cutoffTimezone, idempotency_key: `policy-${Date.now()}-${Math.random().toString(16).slice(2)}` }) });
         if (!response.ok) throw new Error("policy_failed");
         event.currentTarget.reset();
         document.getElementById("technicianCompensationCurrency").value = "MXN";
         document.getElementById("technicianCompensationTechShare").value = "75";
         document.getElementById("technicianCompensationGuarantee").value = "7";
+        updateTechnicianCompensationCutoffPreview();
         await loadTechnicianCompensationAdmin();
       } catch (_error) {
         if (status) { status.textContent = t("compensationPolicyActionError"); status.classList.add("error"); }
       }
+    });
+    ["technicianCompensationCutoffDate", "technicianCompensationCutoffTime", "technicianCompensationTimezone"].forEach((id) => {
+      document.getElementById(id)?.addEventListener("input", updateTechnicianCompensationCutoffPreview);
+      document.getElementById(id)?.addEventListener("change", updateTechnicianCompensationCutoffPreview);
     });
     document.getElementById("technicianCompensationOrderForm")?.addEventListener("submit", (event) => loadTechnicianCompensationItems(event).catch((error) => {
       const status = document.getElementById("technicianCompensationAdminStatus");
