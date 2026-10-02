@@ -16,6 +16,18 @@ TECHNICIAN_EARNING_AUTOMATION_CANARY_ORGANIZATION_IDS=
 
 The rollout decision is derived from the organization on the service order/payment and is never taken from the actor, frontend, or provider metadata. ROOT and GERENTE have no bypass. The frontend receives only the technician's own state; it does not receive rollout mode or the allowlist.
 
+## Technician statement rollout
+
+The statement has its own fail-closed organization gate and is independent from automatic earning recognition:
+
+```text
+TECHNICIAN_EARNINGS_ENABLED=false
+TECHNICIAN_EARNINGS_ROLLOUT_MODE=off
+TECHNICIAN_EARNINGS_CANARY_ORGANIZATION_IDS=
+```
+
+The authenticated user response exposes only `technician_earnings_enabled`. The API requires an ACTIVE technician, an ACTIVE organization, and an ACTIVE operational membership resolved server-side. ROOT and GERENTE do not bypass the organization rollout. Missing or invalid configuration keeps the panel and endpoints unavailable without exposing rollout details.
+
 ## Activation and rollback
 
 1. Keep the master flag false while validating the deployment.

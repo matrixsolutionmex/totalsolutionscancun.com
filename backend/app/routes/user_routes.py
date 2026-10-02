@@ -12,6 +12,7 @@ from app.auth.jwt_handler import (
     require_root_user as require_root_actor,
     user_access_block_reason,
 )
+from app.auth.routes import authenticated_user_response
 from app.core.auth_security import audit_auth_event
 from app.core.security import hash_password, verify_password
 from app.core.storage import PROFILE_PHOTOS_DIR, delete_profile_photo
@@ -102,7 +103,7 @@ def heartbeat(
     user.last_seen_at = datetime.utcnow()
     db.commit()
     db.refresh(user)
-    return user
+    return authenticated_user_response(db, user)
 
 
 @router.post("/me/logout")
@@ -339,7 +340,7 @@ async def upload_profile_photo(
     db.commit()
     db.refresh(user)
     delete_profile_photo(previous_photo)
-    return user
+    return authenticated_user_response(db, user)
 
 
 @router.delete("/{user_id}/profile-photo", response_model=UserResponse)
@@ -354,7 +355,7 @@ def remove_profile_photo(
     db.commit()
     db.refresh(user)
     delete_profile_photo(previous_photo)
-    return user
+    return authenticated_user_response(db, user)
 
 
 @router.patch("/{user_id}", response_model=UserResponse)
@@ -494,7 +495,7 @@ def update_own_profile(
 
     db.commit()
     db.refresh(user)
-    return user
+    return authenticated_user_response(db, user)
 
 
 @router.delete("/{user_id}")

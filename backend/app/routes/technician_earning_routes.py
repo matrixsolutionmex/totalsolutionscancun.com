@@ -1,20 +1,20 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
 from app.auth.jwt_handler import get_current_user, get_db
 from app.models.technician_earning import TechnicianEarning
 from app.models.user import User
-from app.services.technician_earning_service import earning_payload, technician_earnings_enabled
+from app.services.technician_earning_service import earning_payload, technician_earnings_enabled_for_user
 
 
 router = APIRouter(prefix="/technician/earnings", tags=["technician-earnings"])
 
 
-def _require_enabled():
-    if not technician_earnings_enabled():
+def _require_enabled(db: Session, actor: User):
+    if not technician_earnings_enabled_for_user(db, actor):
         raise HTTPException(status_code=503, detail="technician_earnings_unavailable")
 
 
@@ -36,7 +36,7 @@ def list_my_earnings(
     db: Session = Depends(get_db),
     actor: User = Depends(get_current_user),
 ):
-    _require_enabled()
+    _require_enabled(db, actor)
     query = _query(db, actor)
     if status:
         query = query.filter(TechnicianEarning.status == status.strip().upper())
@@ -53,12 +53,25 @@ def list_my_earnings(
 
 @router.get("/me/summary")
 def my_earnings_summary(db: Session = Depends(get_db), actor: User = Depends(get_current_user)):
-    _require_enabled()
+    _require_enabled(db, actor)
     query = _query(db, actor)
-    query = query.filter(TechnicianEarning.status != "REVERSED")
+    query = query.filter(
+        or_(
+            TechnicianEarning.status != "REVERSED",
+            TechnicianEarning.source_type == "AUTOMATED_ADJUSTMENT",
+        )
+    )
     grouped = query.with_entities(
         TechnicianEarning.currency,
-        func.coalesce(func.sum(TechnicianEarning.net_amount), 0),
+        func.coalesce(
+            func.sum(
+                case(
+                    (TechnicianEarning.source_type == "AUTOMATED_ADJUSTMENT", -TechnicianEarning.net_amount),
+                    else_=TechnicianEarning.net_amount,
+                )
+            ),
+            0,
+        ),
         func.count(TechnicianEarning.id),
     ).group_by(TechnicianEarning.currency).order_by(TechnicianEarning.currency).all()
     by_currency = [
@@ -75,7 +88,7 @@ def my_earnings_summary(db: Session = Depends(get_db), actor: User = Depends(get
 
 @router.get("/me/{earning_id}")
 def get_my_earning(earning_id: int, db: Session = Depends(get_db), actor: User = Depends(get_current_user)):
-    _require_enabled()
+    _require_enabled(db, actor)
     row = _query(db, actor).filter(TechnicianEarning.id == earning_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="earning_not_found")

@@ -99,6 +99,14 @@ EMAIL_VERIFICATION_SECURITY_HEADERS = {
 }
 
 
+def authenticated_user_response(db: Session, user: User) -> UserResponse:
+    from app.services.technician_earning_service import technician_earnings_enabled_for_user
+
+    return UserResponse.model_validate(user).model_copy(
+        update={"technician_earnings_enabled": technician_earnings_enabled_for_user(db, user)}
+    )
+
+
 class _LocalRequest:
     method = "POST"
     headers = {}
@@ -890,7 +898,7 @@ def issue_authenticated_response(db: Session, request: Request | None, response:
     audit_auth_event(db, request=safe_request(request), event_type=event_type, outcome="SUCCESS", user=user)
     db.commit()
     db.refresh(user)
-    return AuthResponse(access_token=create_access_token(user), user=UserResponse.model_validate(user))
+    return AuthResponse(access_token=create_access_token(user), user=authenticated_user_response(db, user))
 
 
 def auth_status_gate(db: Session, user: User) -> str | None:
@@ -1286,5 +1294,5 @@ def logout(response: Response, user: User = Depends(get_current_user), db: Sessi
 
 
 @router.get("/me", response_model=UserResponse)
-def get_authenticated_user(user: User = Depends(get_current_user)):
-    return user
+def get_authenticated_user(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return authenticated_user_response(db, user)

@@ -14,16 +14,20 @@ from app.models.identity_human_review import IdentityHumanReviewDecision
 from app.models.identity_provider import IdentityVerificationAttempt, IdentityVerificationEvent
 from app.models.identity_verification import IdentityVerification
 from app.models.organization import Organization
+from app.models.organization_membership import OrganizationMembership
 from app.models.organization_payment_policy import OrganizationPaymentPolicy
 from app.models.payment import Payment
 from app.models.service_order import ServiceOrder
 from app.models.service_order_completion import ServiceOrderCustomerAcceptance, ServiceOrderTechnicalCompletion, ServiceOrderWarranty
 from app.models.technician_earning import TechnicianEarning, TechnicianEarningEvent
 from app.models.user import User
+from app.routes.technician_earning_routes import my_earnings_summary
 from app.services.technician_earning_service import (
     create_technician_earning,
     evaluate_technician_earning_eligibility,
     reverse_technician_earning,
+    technician_earnings_enabled_for_user,
+    technician_earnings_rollout,
     transition_technician_earning,
 )
 import app.services.technician_earning_service as earning_service
@@ -71,6 +75,16 @@ def make_order(db, org, tech):
 
 def active_membership_gate(_db, user_id, organization_id):
     return SimpleNamespace(user_id=user_id, organization_id=organization_id, status="ACTIVE", is_operational=True)
+
+
+def add_membership(db, user, organization, *, status="ACTIVE", is_operational=True):
+    membership = OrganizationMembership(
+        user_id=user.id, organization_id=organization.id, membership_type="TECHNICIAN",
+        role="TECHNICIAN", status=status, is_primary=True, is_operational=is_operational,
+    )
+    db.add(membership)
+    db.flush()
+    return membership
 
 
 def make_payment(db, org, order, tech, *, status="PAID", method="STRIPE_CARD"):
@@ -305,3 +319,119 @@ def test_startup_excludes_earnings_tables_from_create_all():
     source = open("backend/app/main.py", encoding="utf-8").read()
     assert '"technician_earnings"' in source
     assert '"technician_earning_events"' in source
+
+
+@pytest.mark.parametrize(
+    ("mode", "allowlist", "valid", "organization_ids"),
+    [
+        ("off", "", True, frozenset()),
+        ("canary", "1, 2", True, frozenset({1, 2})),
+        ("all", "", True, frozenset()),
+        ("", "", False, frozenset()),
+        ("invalid", "1", False, frozenset()),
+        ("canary", "", False, frozenset()),
+        ("canary", "0", False, frozenset()),
+        ("canary", "-1", False, frozenset()),
+        ("canary", "1,1", False, frozenset()),
+        ("all", "1", False, frozenset()),
+    ],
+)
+def test_statement_rollout_parser_is_fail_closed(monkeypatch, mode, allowlist, valid, organization_ids):
+    monkeypatch.setenv("TECHNICIAN_EARNINGS_ROLLOUT_MODE", mode)
+    monkeypatch.setenv("TECHNICIAN_EARNINGS_CANARY_ORGANIZATION_IDS", allowlist)
+    rollout = technician_earnings_rollout()
+    assert rollout.valid is valid
+    assert rollout.organization_ids == organization_ids
+
+
+def test_statement_rollout_requires_active_operational_membership_and_no_role_bypass(monkeypatch, db):
+    monkeypatch.setenv("TECHNICIAN_EARNINGS_ENABLED", "true")
+    monkeypatch.setenv("TECHNICIAN_EARNINGS_ROLLOUT_MODE", "canary")
+    monkeypatch.setenv("TECHNICIAN_EARNINGS_CANARY_ORGANIZATION_IDS", "1")
+    monkeypatch.setattr(earning_service, "_membership_gate_initialized", False)
+    monkeypatch.setattr(earning_service, "_membership_gate", None)
+    org = make_org(db, "statement-canary-org")
+    other = make_org(db, "statement-other-org")
+    technician = make_user(db, org, "statement-tech")
+    other_technician = make_user(db, other, "statement-other-tech")
+    root = make_user(db, org, "statement-root", role="ROOT")
+    suspended = make_user(db, org, "statement-suspended", status="SUSPENDED")
+    add_membership(db, technician, org)
+    add_membership(db, other_technician, other)
+    add_membership(db, root, org, status="ACTIVE", is_operational=True)
+    add_membership(db, suspended, org, status="SUSPENDED", is_operational=False)
+    db.commit()
+
+    assert technician_earnings_enabled_for_user(db, technician) is True
+    assert technician_earnings_enabled_for_user(db, other_technician) is False
+    assert technician_earnings_enabled_for_user(db, root) is False
+    assert technician_earnings_enabled_for_user(db, suspended) is False
+
+    monkeypatch.setenv("TECHNICIAN_EARNINGS_ROLLOUT_MODE", "all")
+    monkeypatch.delenv("TECHNICIAN_EARNINGS_CANARY_ORGANIZATION_IDS", raising=False)
+    assert technician_earnings_enabled_for_user(db, technician) is True
+    assert technician_earnings_enabled_for_user(db, other_technician) is True
+
+
+def test_statement_rollout_master_and_missing_configuration_fail_closed(monkeypatch, db):
+    org = make_org(db, "statement-off-org")
+    technician = make_user(db, org, "statement-off-tech")
+    add_membership(db, technician, org)
+    db.commit()
+    monkeypatch.delenv("TECHNICIAN_EARNINGS_ENABLED", raising=False)
+    monkeypatch.setenv("TECHNICIAN_EARNINGS_ROLLOUT_MODE", "all")
+    assert technician_earnings_enabled_for_user(db, technician) is False
+    monkeypatch.setenv("TECHNICIAN_EARNINGS_ENABLED", "true")
+    monkeypatch.delenv("TECHNICIAN_EARNINGS_ROLLOUT_MODE", raising=False)
+    assert technician_earnings_enabled_for_user(db, technician) is False
+
+
+def test_statement_frontend_requires_sanitized_backend_boolean_before_request():
+    source = open("frontend/index.html", encoding="utf-8").read()
+    assert "currentUser?.technician_earnings_enabled !== true" in source
+    assert "TECHNICIAN_EARNINGS_ROLLOUT_MODE" not in source
+    assert "TECHNICIAN_EARNINGS_CANARY_ORGANIZATION_IDS" not in source
+
+
+def test_statement_summary_subtracts_automated_reversal_without_double_counting(monkeypatch, db):
+    monkeypatch.setenv("TECHNICIAN_EARNINGS_ENABLED", "true")
+    monkeypatch.setenv("TECHNICIAN_EARNINGS_ROLLOUT_MODE", "canary")
+    org = make_org(db, "statement-reversal-org")
+    technician = make_user(db, org, "statement-reversal-tech")
+    add_membership(db, technician, org)
+    db.add_all([
+        TechnicianEarning(
+            organization_id=org.id, service_order_id=1, technician_user_id=technician.id,
+            currency="MXN", gross_amount=Decimal("37.50"), platform_fee_amount=Decimal("0.00"),
+            processing_fee_amount=Decimal("0.00"), net_amount=Decimal("37.50"),
+            policy_version="QA-1", source_type="AUTOMATED_PAYMENT", source_reference="payment-1",
+            status="PROCESSING", idempotency_key_hash="summary-positive-1",
+        ),
+        TechnicianEarning(
+            organization_id=org.id, service_order_id=1, technician_user_id=technician.id,
+            currency="MXN", gross_amount=Decimal("37.50"), platform_fee_amount=Decimal("0.00"),
+            processing_fee_amount=Decimal("0.00"), net_amount=Decimal("37.50"),
+            policy_version="QA-1", source_type="AUTOMATED_PAYMENT", source_reference="payment-2",
+            status="IN_GUARANTEE", idempotency_key_hash="summary-positive-2",
+        ),
+        TechnicianEarning(
+            organization_id=org.id, service_order_id=1, technician_user_id=technician.id,
+            currency="MXN", gross_amount=Decimal("15.00"), platform_fee_amount=Decimal("0.00"),
+            processing_fee_amount=Decimal("0.00"), net_amount=Decimal("15.00"),
+            policy_version="QA-1", source_type="AUTOMATED_ADJUSTMENT", source_reference="refund-1",
+            status="REVERSED", reversal_of_id=1, idempotency_key_hash="summary-reversal-1",
+        ),
+    ])
+    db.commit()
+    monkeypatch.setenv("TECHNICIAN_EARNINGS_CANARY_ORGANIZATION_IDS", str(org.id))
+
+    summary = my_earnings_summary(db, technician)
+
+    assert summary["net_total"] == "60.00"
+    assert summary["by_currency"] == [{"currency": "MXN", "net_total": "60.00", "items": 3}]
+
+
+def test_frontend_language_refresh_preserves_technician_earnings_labels():
+    source = open("frontend/index.html", encoding="utf-8").read()
+    assert 'renderTechnicianEarningsLabels();' in source
+    assert 'setText("#technicianEarningsTitle", t("technicianEarningsTitle"));' in source

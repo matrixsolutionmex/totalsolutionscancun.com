@@ -6063,6 +6063,7 @@
         technicianEarningsTitle: "Ganhos por serviços",
         technicianEarningsDescription: "Extrato mensal dos valores relacionados aos serviços realizados.",
         technicianEarningsNotice: "Este extrato registra valores relacionados aos serviços realizados. Não representa uma conta bancária ou carteira de fundos custodiados.",
+        technicianEarningsIdentityNotice: "A verificação de identidade é necessária para pagamentos futuros.",
         technicianEarningsRefresh: "Atualizar extrato",
         technicianEarningsMonth: "Mês",
         technicianEarningsAllMonths: "Todos os meses",
@@ -6434,6 +6435,7 @@
         technicianEarningsTitle: "Service earnings",
         technicianEarningsDescription: "Monthly statement of values related to completed services.",
         technicianEarningsNotice: "This statement records values related to completed services. It is not a bank account or a custodial funds wallet.",
+        technicianEarningsIdentityNotice: "Identity verification is required for future payments.",
         technicianEarningsRefresh: "Refresh statement",
         technicianEarningsMonth: "Month",
         technicianEarningsAllMonths: "All months",
@@ -6813,6 +6815,7 @@
         technicianEarningsTitle: "Ganancias por servicios",
         technicianEarningsDescription: "Extracto mensual de los valores relacionados con los servicios realizados.",
         technicianEarningsNotice: "Este extracto registra valores relacionados con los servicios realizados. No representa una cuenta bancaria ni una cartera de fondos custodiados.",
+        technicianEarningsIdentityNotice: "Se requiere verificación de identidad para pagos futuros.",
         technicianEarningsRefresh: "Actualizar extracto",
         technicianEarningsMonth: "Mes",
         technicianEarningsAllMonths: "Todos los meses",
@@ -7064,6 +7067,7 @@
     let humanReviewBodyOverflow = "";
     let humanReviewDecisionInFlight = false;
     let identityVerificationPayload = null;
+    let technicianIdentityNeedsVerification = false;
     let identityVerificationModalTrigger = null;
     let identityVerificationBodyOverflow = "";
     let identityVerificationAttemptStarted = false;
@@ -8608,6 +8612,7 @@
           panels[index].textContent = label;
         }
       });
+      renderTechnicianEarningsLabels();
       setText("#pendingUsersTitle", t("pendingUsersTitle"));
 
       [t("freeLeads"), t("segments"), t("countries"), t("combinations")].forEach((label, index) => {
@@ -10663,6 +10668,7 @@
     }
 
     function resetIdentityVerificationUi() {
+      technicianIdentityNeedsVerification = false;
       if (identityVerificationPanel) identityVerificationPanel.hidden = true;
       if (identityVerificationInfoModal) identityVerificationInfoModal.hidden = true;
       if (profileIdentityBadge) profileIdentityBadge.hidden = true;
@@ -10685,6 +10691,8 @@
     function renderIdentityVerification(payload) {
       identityVerificationPayload = payload;
       resetIdentityVerificationUi();
+      technicianIdentityNeedsVerification = payload?.status === "NOT_STARTED";
+      if (technicianEarningsPanel && !technicianEarningsPanel.hidden) renderTechnicianEarningsLabels();
       if (!identityVerificationPanel || payload?.available !== true) return;
       identityVerificationPanel.hidden = false;
       const actionButton = document.getElementById("identityVerificationActionButton");
@@ -10981,7 +10989,7 @@
     function renderTechnicianEarningsLabels() {
       setText("#technicianEarningsTitle", t("technicianEarningsTitle"));
       setText("#technicianEarningsDescription", t("technicianEarningsDescription"));
-      setText("#technicianEarningsNotice", t("technicianEarningsNotice"));
+      setText("#technicianEarningsNotice", t(technicianIdentityNeedsVerification ? "technicianEarningsIdentityNotice" : "technicianEarningsNotice"));
       setText("#technicianEarningsRefresh", t("technicianEarningsRefresh"));
       setText("#technicianEarningsMonthLabel", t("technicianEarningsMonth"));
       setText("#technicianEarningsStatusLabel", t("technicianEarningsStatusFilter"));
@@ -11120,6 +11128,7 @@
     async function loadTechnicianEarnings({ offset = technicianEarningsOffset } = {}) {
       resetTechnicianEarningsUi();
       renderTechnicianEarningsLabels();
+      if (currentUser?.technician_earnings_enabled !== true) return;
       if (!currentUser?.id || !["BROKER", "TECNICO", "TÉCNICO"].includes(currentUser.role)) return;
       const statusFilter = document.getElementById("technicianEarningsStatus")?.value || "";
       const month = document.getElementById("technicianEarningsMonth")?.value || "";

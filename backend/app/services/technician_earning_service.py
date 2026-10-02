@@ -2,6 +2,7 @@ import hashlib
 import importlib
 import os
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Protocol
@@ -40,6 +41,14 @@ ALLOWED_TRANSITIONS = {
 
 class MembershipGate(Protocol):
     def __call__(self, db: Session, user_id: int, organization_id: int): ...
+
+
+@dataclass(frozen=True)
+class TechnicianEarningsRollout:
+    mode: str
+    organization_ids: frozenset[int]
+    valid: bool
+    reason_code: str | None = None
 
 
 _membership_gate_initialized = False
@@ -93,6 +102,51 @@ def _membership_gate_result(
 
 def technician_earnings_enabled() -> bool:
     return os.getenv("TECHNICIAN_EARNINGS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def technician_earnings_rollout() -> TechnicianEarningsRollout:
+    mode = os.getenv("TECHNICIAN_EARNINGS_ROLLOUT_MODE", "").strip().lower()
+    raw_allowlist = os.getenv("TECHNICIAN_EARNINGS_CANARY_ORGANIZATION_IDS", "").strip()
+    if mode not in {"off", "canary", "all"}:
+        return TechnicianEarningsRollout(mode=mode, organization_ids=frozenset(), valid=False, reason_code="EARNINGS_ROLLOUT_INVALID")
+
+    organization_ids: set[int] = set()
+    if raw_allowlist:
+        for raw_id in raw_allowlist.split(","):
+            token = raw_id.strip()
+            if not re.fullmatch(r"[1-9][0-9]*", token):
+                return TechnicianEarningsRollout(mode=mode, organization_ids=frozenset(), valid=False, reason_code="EARNINGS_ROLLOUT_INVALID")
+            organization_ids.add(int(token))
+        if len(organization_ids) != len([item for item in raw_allowlist.split(",") if item.strip()]):
+            return TechnicianEarningsRollout(mode=mode, organization_ids=frozenset(), valid=False, reason_code="EARNINGS_ROLLOUT_INVALID")
+    if mode == "canary" and not organization_ids:
+        return TechnicianEarningsRollout(mode=mode, organization_ids=frozenset(), valid=False, reason_code="EARNINGS_ROLLOUT_INVALID")
+    if mode != "canary" and organization_ids:
+        return TechnicianEarningsRollout(mode=mode, organization_ids=frozenset(), valid=False, reason_code="EARNINGS_ROLLOUT_INVALID")
+    return TechnicianEarningsRollout(mode=mode, organization_ids=frozenset(organization_ids), valid=True)
+
+
+def technician_earnings_enabled_for_user(db: Session, user: User) -> bool:
+    """Return only the sanitized availability decision for the authenticated technician."""
+    if not technician_earnings_enabled():
+        return False
+    rollout = technician_earnings_rollout()
+    if not rollout.valid or rollout.mode == "off":
+        return False
+    if (
+        not user
+        or user.role not in TECHNICIAN_ROLES
+        or not user.is_active
+        or (user.status or "").upper() != "ACTIVE"
+        or not user.organization_id
+    ):
+        return False
+    organization = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    if not organization or (organization.status or "").upper() != "ACTIVE":
+        return False
+    if _membership_gate_result(db, user_id=user.id, organization_id=user.organization_id):
+        return False
+    return rollout.mode == "all" or user.organization_id in rollout.organization_ids
 
 
 def _hash_key(value: str) -> str:

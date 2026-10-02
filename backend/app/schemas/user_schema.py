@@ -92,6 +92,7 @@ class UserResponse(BaseModel):
     plan_max_leads: int = 100
     onboarding_source: str = "INDEPENDENT"
     registered_at: datetime | None = None
+    technician_earnings_enabled: bool = False
 
     model_config = {
         "from_attributes": True,
