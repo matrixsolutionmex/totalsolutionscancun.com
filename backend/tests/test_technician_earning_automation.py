@@ -12,7 +12,7 @@ from app.models.organization import Organization
 from app.models.payment import Payment
 from app.models.service_order import ServiceOrder
 from app.models.service_order_completion import ServiceOrderCustomerAcceptance, ServiceOrderWarranty
-from app.models.technician_compensation import ServiceOrderCompensationSnapshot
+from app.models.technician_compensation import ServiceOrderCompensationSnapshot, TechnicianCompensationPolicy
 from app.models.technician_earning import TechnicianEarning
 from app.models.user import User
 import app.services.technician_earning_reconciliation_service as automation_service
@@ -39,9 +39,16 @@ def _fixture(db, org, tech, *, amount="100.00"):
     )
     db.add(order)
     db.flush()
+    policy = TechnicianCompensationPolicy(
+        organization_id=org.id, version=1, status="ACTIVE", currency="MXN",
+        effective_from=datetime.utcnow() - timedelta(days=1), created_by=tech.id,
+        idempotency_key_hash=("p" * 63) + str(org.id % 10),
+    )
+    db.add(policy)
+    db.flush()
     snapshot = ServiceOrderCompensationSnapshot(
         organization_id=org.id, service_order_id=order.id, technician_user_id=tech.id,
-        policy_id=1, policy_version=1, currency="MXN", labor_base_amount=Decimal(amount),
+        policy_id=policy.id, policy_version=1, currency="MXN", labor_base_amount=Decimal(amount),
         material_amount=Decimal("40.00"), tax_amount=Decimal("20.00"), reimbursement_amount=Decimal("10.00"),
         discount_amount=Decimal("0.00"), technician_share_bps=7500, organization_share_bps=2500,
         technician_amount=Decimal("75.00"), organization_amount=Decimal("25.00"), guarantee_days=7,
@@ -66,6 +73,7 @@ def _payment(db, org, order, tech, key, amount):
 
 def test_confirmed_installments_recognize_only_incremental_capped_amount(monkeypatch, db):
     monkeypatch.setenv("TECHNICIAN_EARNING_AUTOMATION_ENABLED", "true")
+    monkeypatch.setenv("TECHNICIAN_EARNING_AUTOMATION_ROLLOUT_MODE", "all")
     org = Organization(name="automation-org", slug="automation-org", status="ACTIVE")
     db.add(org)
     db.flush()
@@ -116,12 +124,14 @@ def test_automation_is_off_by_default_and_requires_frozen_snapshot(monkeypatch, 
     monkeypatch.delenv("TECHNICIAN_EARNING_AUTOMATION_ENABLED", raising=False)
     assert reconcile_confirmed_payment(db, payment, provider_event_key="gate-off")["reason_code"] == "AUTOMATION_DISABLED"
     monkeypatch.setenv("TECHNICIAN_EARNING_AUTOMATION_ENABLED", "true")
+    monkeypatch.setenv("TECHNICIAN_EARNING_AUTOMATION_ROLLOUT_MODE", "all")
     assert reconcile_confirmed_payment(db, payment, provider_event_key="gate-no-snapshot")["reason_code"] == "FROZEN_SNAPSHOT_REQUIRED"
     assert db.query(TechnicianEarning).count() == 0
 
 
 def test_refund_reversal_is_linked_to_the_positive_earning(monkeypatch, db):
     monkeypatch.setenv("TECHNICIAN_EARNING_AUTOMATION_ENABLED", "true")
+    monkeypatch.setenv("TECHNICIAN_EARNING_AUTOMATION_ROLLOUT_MODE", "all")
     org = Organization(name="reversal-org", slug="reversal-org", status="ACTIVE")
     db.add(org)
     db.flush()
@@ -150,6 +160,7 @@ def test_refund_reversal_is_linked_to_the_positive_earning(monkeypatch, db):
 
 def test_due_release_requires_expired_warranty_and_timezone_aware_now(monkeypatch, db):
     monkeypatch.setenv("TECHNICIAN_EARNING_AUTOMATION_ENABLED", "true")
+    monkeypatch.setenv("TECHNICIAN_EARNING_AUTOMATION_ROLLOUT_MODE", "all")
     org = Organization(name="due-org", slug="due-org", status="ACTIVE")
     db.add(org)
     db.flush()
@@ -201,3 +212,128 @@ def test_technician_statement_payload_excludes_internal_fees():
     assert Decimal(payload["net_amount"]) == Decimal("72.00")
     assert "platform_fee_amount" not in payload
     assert "processing_fee_amount" not in payload
+
+
+@pytest.mark.parametrize(
+    ("mode", "allowlist", "expected_valid", "expected_ids"),
+    [
+        ("off", "", True, frozenset()),
+        ("all", "", True, frozenset()),
+        ("canary", "1, 2", True, frozenset({1, 2})),
+        ("canary", "", False, frozenset()),
+        ("canary", "0", False, frozenset()),
+        ("canary", "-1", False, frozenset()),
+        ("canary", "qa", False, frozenset()),
+        ("canary", "1,1", False, frozenset()),
+        ("invalid", "1", False, frozenset()),
+        ("all", "1", False, frozenset()),
+    ],
+)
+def test_rollout_parser_is_fail_closed(monkeypatch, mode, allowlist, expected_valid, expected_ids):
+    monkeypatch.setenv("TECHNICIAN_EARNING_AUTOMATION_ROLLOUT_MODE", mode)
+    monkeypatch.setenv("TECHNICIAN_EARNING_AUTOMATION_CANARY_ORGANIZATION_IDS", allowlist)
+    config = automation_service.technician_earning_automation_rollout()
+    assert config.valid is expected_valid
+    assert config.organization_ids == expected_ids
+    if not expected_valid:
+        assert config.reason_code == "AUTOMATION_ROLLOUT_INVALID"
+
+
+def test_rollout_defaults_to_off_and_skips_schema_access(monkeypatch, db):
+    monkeypatch.setenv("TECHNICIAN_EARNING_AUTOMATION_ENABLED", "true")
+    monkeypatch.delenv("TECHNICIAN_EARNING_AUTOMATION_ROLLOUT_MODE", raising=False)
+    monkeypatch.delenv("TECHNICIAN_EARNING_AUTOMATION_CANARY_ORGANIZATION_IDS", raising=False)
+    monkeypatch.setattr(automation_service, "_schema_available", lambda _db: pytest.fail("schema must not be inspected when rollout is off"))
+    org = Organization(name="rollout-off-org", slug="rollout-off-org", status="ACTIVE")
+    db.add(org)
+    db.flush()
+    tech = User(
+        organization_id=org.id, username="rollout-off-tech", email="rollout-off-tech@example.test",
+        password_hash="test-hash", role="BROKER", status="ACTIVE", is_active=True,
+    )
+    db.add(tech)
+    db.flush()
+    order = _fixture(db, org, tech)
+    payment = _payment(db, org, order, tech, "rollout-off-payment", "50.00")
+    result = reconcile_confirmed_payment(db, payment, provider_event_key="rollout-off-event")
+    assert result["reason_code"] == "AUTOMATION_ROLLOUT_OFF"
+    assert db.query(TechnicianEarning).count() == 0
+
+
+def test_canary_allows_only_the_configured_organization(monkeypatch, db):
+    monkeypatch.setenv("TECHNICIAN_EARNING_AUTOMATION_ENABLED", "true")
+    monkeypatch.setenv("TECHNICIAN_EARNING_AUTOMATION_ROLLOUT_MODE", "canary")
+    org = Organization(name="rollout-canary-org", slug="rollout-canary-org", status="ACTIVE")
+    other = Organization(name="rollout-other-org", slug="rollout-other-org", status="ACTIVE")
+    db.add_all([org, other])
+    db.flush()
+    tech = User(
+        organization_id=org.id, username="rollout-canary-tech", email="rollout-canary-tech@example.test",
+        password_hash="test-hash", role="BROKER", status="ACTIVE", is_active=True,
+    )
+    other_tech = User(
+        organization_id=other.id, username="rollout-other-tech", email="rollout-other-tech@example.test",
+        password_hash="test-hash", role="ROOT", status="ACTIVE", is_active=True,
+    )
+    db.add_all([tech, other_tech])
+    db.flush()
+    monkeypatch.setattr(automation_service, "_membership_gate_result", lambda *_args, **_kwargs: None)
+    allowed_order = _fixture(db, org, tech)
+    blocked_order = _fixture(db, other, other_tech)
+    allowed_payment = _payment(db, org, allowed_order, tech, "rollout-canary-allowed", "50.00")
+    blocked_payment = _payment(db, other, blocked_order, other_tech, "rollout-canary-blocked", "50.00")
+    db.commit()
+    monkeypatch.setenv("TECHNICIAN_EARNING_AUTOMATION_CANARY_ORGANIZATION_IDS", str(org.id))
+    allowed = reconcile_confirmed_payment(db, allowed_payment, provider_event_key="rollout-canary-allowed-event")
+    blocked = reconcile_confirmed_payment(db, blocked_payment, provider_event_key="rollout-canary-blocked-event")
+    assert allowed["recognized"] is True
+    assert blocked["reason_code"] == "AUTOMATION_ORGANIZATION_NOT_AUTHORIZED"
+    assert db.query(TechnicianEarning).filter_by(service_order_id=blocked_order.id).count() == 0
+
+
+def test_all_requires_active_organization_and_invalid_config_does_not_block_refund(monkeypatch, db):
+    monkeypatch.setenv("TECHNICIAN_EARNING_AUTOMATION_ENABLED", "true")
+    monkeypatch.setenv("TECHNICIAN_EARNING_AUTOMATION_ROLLOUT_MODE", "all")
+    org = Organization(name="rollout-active-org", slug="rollout-active-org", status="ACTIVE")
+    db.add(org)
+    db.flush()
+    tech = User(
+        organization_id=org.id, username="rollout-active-tech", email="rollout-active-tech@example.test",
+        password_hash="test-hash", role="GERENTE", status="ACTIVE", is_active=True,
+    )
+    db.add(tech)
+    db.flush()
+    monkeypatch.setattr(automation_service, "_membership_gate_result", lambda *_args, **_kwargs: None)
+    order = _fixture(db, org, tech)
+    payment = _payment(db, org, order, tech, "rollout-refund-payment", "50.00")
+    db.commit()
+    positive = reconcile_confirmed_payment(db, payment, provider_event_key="rollout-refund-positive")
+    assert positive["recognized"] is True
+    monkeypatch.setenv("TECHNICIAN_EARNING_AUTOMATION_ROLLOUT_MODE", "invalid")
+    refund = automation_service.reconcile_payment_adjustment(
+        db, payment, provider_event_key="rollout-refund-adjustment", amount=Decimal("20.00"), event_type="REFUND",
+    )
+    assert refund["adjusted"] is True
+    assert Decimal(refund["delta"]) == Decimal("15.00")
+    assert db.query(TechnicianEarning).filter_by(source_type="AUTOMATED_ADJUSTMENT").count() == 1
+
+
+def test_inactive_organization_blocks_positive_earning_without_role_bypass(monkeypatch, db):
+    monkeypatch.setenv("TECHNICIAN_EARNING_AUTOMATION_ENABLED", "true")
+    monkeypatch.setenv("TECHNICIAN_EARNING_AUTOMATION_ROLLOUT_MODE", "all")
+    org = Organization(name="rollout-inactive-org", slug="rollout-inactive-org", status="SUSPENDED")
+    db.add(org)
+    db.flush()
+    tech = User(
+        organization_id=org.id, username="rollout-root-tech", email="rollout-root-tech@example.test",
+        password_hash="test-hash", role="ROOT", status="ACTIVE", is_active=True,
+    )
+    db.add(tech)
+    db.flush()
+    monkeypatch.setattr(automation_service, "_membership_gate_result", lambda *_args, **_kwargs: None)
+    order = _fixture(db, org, tech)
+    payment = _payment(db, org, order, tech, "rollout-inactive-payment", "50.00")
+    db.commit()
+    result = reconcile_confirmed_payment(db, payment, provider_event_key="rollout-inactive-event")
+    assert result["reason_code"] == "ORGANIZATION_NOT_ACTIVE"
+    assert db.query(TechnicianEarning).count() == 0

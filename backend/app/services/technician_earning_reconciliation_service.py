@@ -5,9 +5,11 @@ The automation flag is separate from the read-only earnings UI flag and defaults
 """
 
 import hashlib
+import logging
 import os
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
+from typing import NamedTuple
 
 from sqlalchemy import inspect, func
 from sqlalchemy.orm import Session
@@ -17,9 +19,10 @@ from app.models.service_order import ServiceOrder
 from app.models.service_order_completion import ServiceOrderCustomerAcceptance, ServiceOrderWarranty
 from app.models.service_order_warranty_claim import ServiceOrderWarrantyClaim
 from app.models.stripe_reconciliation import StripePaymentAdjustment
-from app.models.technician_compensation import ServiceOrderCompensationSnapshot
+from app.models.technician_compensation import ServiceOrderCompensationSnapshot, TechnicianCompensationPolicy
 from app.models.technician_earning import TechnicianEarning, TechnicianEarningEvent
 from app.models.technician_earning_reconciliation import TechnicianEarningReconciliationEvent
+from app.models.organization import Organization
 from app.services.technician_earning_service import _membership_gate_result
 
 
@@ -27,10 +30,49 @@ MONEY = Decimal("0.01")
 AUTOMATION_SOURCE = "AUTOMATED_PAYMENT"
 REVERSAL_SOURCE = "AUTOMATED_ADJUSTMENT"
 _schema_cache: dict[int, bool] = {}
+ROLLOUT_MODES = frozenset({"off", "canary", "all"})
+logger = logging.getLogger(__name__)
+
+
+class AutomationRolloutConfig(NamedTuple):
+    valid: bool
+    mode: str
+    organization_ids: frozenset[int]
+    reason_code: str | None = None
 
 
 def technician_earning_automation_enabled() -> bool:
     return os.getenv("TECHNICIAN_EARNING_AUTOMATION_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def technician_earning_automation_rollout() -> AutomationRolloutConfig:
+    """Parse rollout configuration without ever granting access on malformed input."""
+    mode = os.getenv("TECHNICIAN_EARNING_AUTOMATION_ROLLOUT_MODE", "off").strip().lower()
+    raw_allowlist = os.getenv("TECHNICIAN_EARNING_AUTOMATION_CANARY_ORGANIZATION_IDS", "").strip()
+    if mode not in ROLLOUT_MODES:
+        return AutomationRolloutConfig(False, mode, frozenset(), "AUTOMATION_ROLLOUT_INVALID")
+    if mode != "canary" and raw_allowlist:
+        return AutomationRolloutConfig(False, mode, frozenset(), "AUTOMATION_ROLLOUT_INVALID")
+    if mode != "canary":
+        return AutomationRolloutConfig(True, mode, frozenset())
+    tokens = [token.strip() for token in raw_allowlist.split(",")]
+    if not raw_allowlist or any(not token.isascii() or not token.isdigit() or int(token) <= 0 for token in tokens):
+        return AutomationRolloutConfig(False, mode, frozenset(), "AUTOMATION_ROLLOUT_INVALID")
+    ids = [int(token) for token in tokens]
+    if len(ids) != len(set(ids)):
+        return AutomationRolloutConfig(False, mode, frozenset(), "AUTOMATION_ROLLOUT_INVALID")
+    return AutomationRolloutConfig(True, mode, frozenset(ids))
+
+
+def _new_earning_rollout_reason(organization_id: int, config: AutomationRolloutConfig | None = None) -> str | None:
+    config = config or technician_earning_automation_rollout()
+    if not config.valid:
+        return config.reason_code
+    if config.mode == "off":
+        return "AUTOMATION_ROLLOUT_OFF"
+    if config.mode == "canary" and organization_id not in config.organization_ids:
+        return "AUTOMATION_ORGANIZATION_NOT_AUTHORIZED"
+    return None
 
 
 def _money(value) -> Decimal:
@@ -119,6 +161,9 @@ def _eligible_snapshot(db: Session, payment: Payment):
     order = db.query(ServiceOrder).filter_by(id=payment.service_order_id, organization_id=payment.organization_id).with_for_update().first()
     if not order:
         return None, "SERVICE_ORDER_NOT_FOUND"
+    organization = db.query(Organization).filter_by(id=order.organization_id).first()
+    if not organization or (organization.status or "").upper() != "ACTIVE":
+        return None, "ORGANIZATION_NOT_ACTIVE"
     snapshot = db.query(ServiceOrderCompensationSnapshot).filter_by(
         service_order_id=order.id, organization_id=order.organization_id,
         technician_user_id=payment.technician_id, status="FROZEN",
@@ -129,6 +174,14 @@ def _eligible_snapshot(db: Session, payment: Payment):
         return None, "CURRENCY_MISMATCH"
     if order.responsible_user_id != payment.technician_id:
         return None, "TECHNICIAN_MISMATCH"
+    policy = db.query(TechnicianCompensationPolicy).filter_by(
+        id=snapshot.policy_id, organization_id=order.organization_id,
+        currency=snapshot.currency, version=snapshot.policy_version,
+    ).first()
+    if not policy or policy.status not in {"ACTIVE", "RETIRED"}:
+        return None, "POLICY_SNAPSHOT_MISMATCH"
+    if not order.created_at or _stored_utc(policy.effective_from) > _stored_utc(order.created_at):
+        return None, "ORDER_BEFORE_POLICY_CUTOFF"
     membership_reason = _membership_gate_result(
         db, user_id=payment.technician_id, organization_id=payment.organization_id,
     )
@@ -157,6 +210,12 @@ def reconcile_confirmed_payment(db: Session, payment: Payment, *, provider_event
                                 confirmed_amount=None) -> dict:
     if not technician_earning_automation_enabled():
         return {"recognized": False, "reason_code": "AUTOMATION_DISABLED"}
+    rollout = technician_earning_automation_rollout()
+    if not rollout.valid:
+        logger.warning("technician earning automation rollout rejected: %s", rollout.reason_code)
+        return {"recognized": False, "reason_code": rollout.reason_code}
+    if rollout.mode == "off":
+        return {"recognized": False, "reason_code": "AUTOMATION_ROLLOUT_OFF"}
     if not _schema_available(db):
         return {"recognized": False, "reason_code": "AUTOMATION_SCHEMA_UNAVAILABLE"}
     if payment.status not in {"PAID", "SUCCEEDED"}:
@@ -172,6 +231,9 @@ def reconcile_confirmed_payment(db: Session, payment: Payment, *, provider_event
     if reason:
         return {"recognized": False, "reason_code": reason}
     order, snapshot = context
+    rollout_reason = _new_earning_rollout_reason(order.organization_id, rollout)
+    if rollout_reason:
+        return {"recognized": False, "reason_code": rollout_reason}
     amount = _money(confirmed_amount if confirmed_amount is not None else payment.gross_amount)
     eligible_total = _eligible_total(snapshot)
     if amount <= 0 or eligible_total <= 0:
@@ -237,6 +299,19 @@ def reconcile_payment_adjustment(db: Session, payment: Payment, *, provider_even
     if amount <= 0:
         raise ValueError("adjustment amount must be positive")
     currency = str(payment.currency).upper()
+    existing_positive = db.query(TechnicianEarning).filter(
+        TechnicianEarning.service_order_id == order.id,
+        TechnicianEarning.organization_id == order.organization_id,
+        TechnicianEarning.technician_user_id == payment.technician_id,
+        TechnicianEarning.source_type == AUTOMATION_SOURCE,
+        TechnicianEarning.status != "REVERSED",
+    ).first()
+    if event_type == "DISPUTE_WON" and not existing_positive:
+        reconciliation = _record_reconciliation(
+            db, payment=payment, order=order, event_type=event_type,
+            provider_event_key=provider_event_key, amount=amount,
+        )
+        return {"adjusted": False, "reason_code": "NO_EXISTING_EARNING", "reconciliation_id": reconciliation.id}
     recognized = _recognized_total(db, order.id, payment.technician_id, currency)
     confirmed = db.query(func.coalesce(func.sum(TechnicianEarningReconciliationEvent.amount), 0)).filter(
         TechnicianEarningReconciliationEvent.service_order_id == order.id,
