@@ -166,6 +166,8 @@ def customer_acceptance(db: Session, order: ServiceOrder, *, idempotency_key: st
             scope=completion.final_observation,
         )
         db.add(warranty)
+    from app.services.technician_earning_reconciliation_service import on_order_customer_accepted
+    on_order_customer_accepted(db, order, event_key=f"customer-accepted:{order.id}:{row.id}")
     return row
 
 

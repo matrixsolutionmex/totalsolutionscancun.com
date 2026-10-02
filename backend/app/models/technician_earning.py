@@ -15,7 +15,10 @@ EARNING_STATUSES = frozenset({
     "HELD",
     "REVERSED",
 })
-EARNING_EVENT_TYPES = frozenset({"CREATED", "STATUS_CHANGED", "REVERSED"})
+EARNING_EVENT_TYPES = frozenset({
+    "CREATED", "STATUS_CHANGED", "REVERSED", "EARNING_RECOGNIZED", "EARNING_ADJUSTED",
+    "EARNING_REVERSED", "GUARANTEE_STARTED", "AVAILABLE_FOR_PAYMENT",
+})
 EARNING_REASON_CODES = frozenset({
     "EARNING_CREATED",
     "ELIGIBILITY_CONFIRMED",
@@ -24,6 +27,10 @@ EARNING_REASON_CODES = frozenset({
     "IDENTITY_SUSPENDED",
     "ADMINISTRATIVE_HOLD",
     "CORRECTION",
+    "PAYMENT_CONFIRMED",
+    "REFUND_OR_DISPUTE_ADJUSTMENT",
+    "GUARANTEE_STARTED",
+    "AVAILABLE_FOR_PAYMENT",
 })
 
 
@@ -64,11 +71,11 @@ class TechnicianEarningEvent(Base):
     __table_args__ = (
         UniqueConstraint("idempotency_key_hash", name="uq_technician_earning_event_idempotency_hash"),
         CheckConstraint(
-            "event_type IN ('CREATED', 'STATUS_CHANGED', 'REVERSED')",
+            "event_type IN ('CREATED', 'STATUS_CHANGED', 'REVERSED', 'EARNING_RECOGNIZED', 'EARNING_ADJUSTED', 'EARNING_REVERSED', 'GUARANTEE_STARTED', 'AVAILABLE_FOR_PAYMENT')",
             name="ck_technician_earning_event_type",
         ),
         CheckConstraint(
-            "reason_code IN ('EARNING_CREATED', 'ELIGIBILITY_CONFIRMED', 'GUARANTEE_CLOSED', 'REFUND_OR_DISPUTE', 'IDENTITY_SUSPENDED', 'ADMINISTRATIVE_HOLD', 'CORRECTION')",
+            "reason_code IN ('EARNING_CREATED', 'ELIGIBILITY_CONFIRMED', 'GUARANTEE_CLOSED', 'REFUND_OR_DISPUTE', 'IDENTITY_SUSPENDED', 'ADMINISTRATIVE_HOLD', 'CORRECTION', 'PAYMENT_CONFIRMED', 'REFUND_OR_DISPUTE_ADJUSTMENT', 'GUARANTEE_STARTED', 'AVAILABLE_FOR_PAYMENT')",
             name="ck_technician_earning_event_reason_code",
         ),
     )

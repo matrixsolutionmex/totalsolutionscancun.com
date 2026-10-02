@@ -497,8 +497,26 @@ def handle_stripe_event(db: Session, event: dict) -> Payment | None:
         webhook.organization_id = payment.organization_id
         if event_type == "charge.refunded":
             payment = _apply_refund(db, payment, event, object_data)
+            if payment.service_order_id:
+                from app.models.stripe_reconciliation import StripePaymentAdjustment
+                from app.services.technician_earning_reconciliation_service import reconcile_payment_adjustment
+                refund = db.query(StripePaymentAdjustment).filter_by(
+                    payment_id=payment.id, kind="REFUND", stripe_event_id=_event_id(event), status="APPLIED",
+                ).first()
+                reconcile_payment_adjustment(
+                    db, payment, provider_event_key=f"stripe:{_event_id(event)}",
+                    amount=refund.amount if refund else 0, event_type="REFUND",
+                )
         elif event_type.startswith("charge.dispute."):
             payment = _apply_dispute(db, payment, event, object_data)
+            if payment.service_order_id:
+                from app.services.technician_earning_reconciliation_service import reconcile_payment_adjustment
+                dispute_status = str(object_data.get("status") or "under_review").lower()
+                dispute_event_type = "DISPUTE_WON" if dispute_status == "won" else "DISPUTE_LOST" if dispute_status == "lost" else "DISPUTE_OPEN"
+                reconcile_payment_adjustment(
+                    db, payment, provider_event_key=f"stripe:{_event_id(event)}",
+                    amount=object_data.get("amount"), event_type=dispute_event_type,
+                )
         else:
             checkout_paid = event_type != "checkout.session.completed" or object_data.get("payment_status") == "paid"
             if checkout_paid and event_type in {"checkout.session.completed", "invoice.paid", "payment_intent.succeeded"}:
@@ -521,6 +539,12 @@ def handle_stripe_event(db: Session, event: dict) -> Payment | None:
                     payment = record_service_installment_payment(db, payment, provider_payload=object_data)
                 else:
                     payment = mark_payment_paid(db, payment, provider_payload=object_data)
+                if payment.status == "PAID" and payment.service_order_id:
+                    from app.services.technician_earning_reconciliation_service import reconcile_confirmed_payment
+                    reconcile_confirmed_payment(
+                        db, payment, provider_event_key=f"stripe:{_event_id(event)}",
+                        confirmed_amount=payment.gross_amount,
+                    )
             elif event_type in {"payment_intent.payment_failed", "invoice.payment_failed"} and payment.status not in {"PAID", "PAID_CASH"}:
                 payment.status = "FAILED"
                 payment.updated_at = datetime.utcnow()

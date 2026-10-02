@@ -10944,7 +10944,7 @@
       return item && Number.isInteger(item.id) && Number.isInteger(item.service_order_id)
         && typeof item.currency === "string" && /^[A-Z]{3}$/.test(item.currency)
         && TECHNICIAN_EARNING_STATUSES.includes(item.status)
-        && ["gross_amount", "platform_fee_amount", "processing_fee_amount", "net_amount", "policy_version"].every((key) => typeof item[key] === "string")
+        && ["gross_amount", "net_amount", "policy_version"].every((key) => typeof item[key] === "string")
         && ["created_at", "updated_at"].every((key) => item[key] === null || typeof item[key] === "string");
     }
 
@@ -11045,8 +11045,6 @@
       appendEarningDetailRow(technicianEarningsModalDetails, t("technicianEarningsStatusFilter"), technicianEarningStatusLabel(item.status));
       appendEarningDetailRow(technicianEarningsModalDetails, t("technicianEarningsCurrency"), item.currency);
       appendEarningDetailRow(technicianEarningsModalDetails, t("technicianEarningsGross"), money(item.gross_amount));
-      appendEarningDetailRow(technicianEarningsModalDetails, t("technicianEarningsFees"), money(item.platform_fee_amount));
-      appendEarningDetailRow(technicianEarningsModalDetails, t("technicianEarningsProcessingFee"), money(item.processing_fee_amount));
       appendEarningDetailRow(technicianEarningsModalDetails, t("technicianEarningsNet"), money(item.net_amount));
       appendEarningDetailRow(technicianEarningsModalDetails, t("technicianEarningsPolicy"), item.policy_version);
       technicianEarningsBodyOverflow = document.body.style.overflow;

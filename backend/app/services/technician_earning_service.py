@@ -327,10 +327,10 @@ def reverse_technician_earning(db: Session, *, earning_id: int, organization_id:
 
 
 def earning_payload(row: TechnicianEarning) -> dict:
+    """Public technician DTO; internal fees and provider details stay server-side."""
     return {
         "id": row.id, "service_order_id": row.service_order_id, "currency": row.currency,
-        "gross_amount": str(row.gross_amount), "platform_fee_amount": str(row.platform_fee_amount),
-        "processing_fee_amount": str(row.processing_fee_amount), "net_amount": str(row.net_amount),
+        "gross_amount": str(row.gross_amount), "net_amount": str(row.net_amount),
         "policy_version": row.policy_version, "source_type": row.source_type, "status": row.status,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,

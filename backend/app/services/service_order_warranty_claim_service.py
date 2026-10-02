@@ -183,7 +183,12 @@ def customer_confirm(db: Session, order: ServiceOrder, claim_id: int, *, problem
         claim.customer_problem_reported_at = claim.customer_problem_reported_at or now
         return _set_status(db, claim, "IN_PROGRESS", actor=None, source="PUBLIC_TRACKING", notes=notes)
     claim.customer_confirmed_at = claim.customer_confirmed_at or now
-    return _set_status(db, claim, "CLOSED", actor=None, source="PUBLIC_TRACKING")
+    result = _set_status(db, claim, "CLOSED", actor=None, source="PUBLIC_TRACKING")
+    from app.services.technician_earning_reconciliation_service import on_guarantee_closed
+    order = db.query(ServiceOrder).filter_by(id=order.id, organization_id=order.organization_id).first()
+    if order:
+        on_guarantee_closed(db, order, event_key=f"guarantee-closed:{order.id}:{claim.id}")
+    return result
 
 
 def claim_payload(claim, *, public=False):
