@@ -15401,14 +15401,16 @@
     window.setTimeout(hideSplash, 1400);
     restoreSession();
   </script>
+  <script src="/assets/public-confirmation.js?v=ads-conversion-01"></script>
   <script>
     (() => {
       const path = window.location.pathname;
       const isPortal = path === "/solicitar-servico";
+      const isConfirmation = path === "/solicitud-enviada";
       const marketplacePath = path.match(/^\/m\/([^/]+)(?:\/([^/]+))?\/?$/);
       const isMarketplace = Boolean(marketplacePath);
       const isTracking = path.startsWith("/acompanhar/") || path.startsWith("/seguimiento/");
-      if (!isPortal && !isMarketplace && !isTracking) {
+      if (!isPortal && !isConfirmation && !isMarketplace && !isTracking) {
         return;
       }
 
@@ -15441,7 +15443,8 @@
           newRequest: "Nova solicitação", newRequestText: "Registre o serviço e nossa equipe o enviará para revisão comercial antes de atribuir supervisor e técnico.", requestInfo: "Informações da solicitação", property: "Tipo de imóvel", service: "Tipo de serviço", urgency: "Urgência", date: "Data preferida", description: "Descrição do problema", descriptionPlaceholder: "Ex.: vazamento na cozinha, ar não gela, pintura do quarto...", customer: "Cliente", name: "Nome", phone: "Telefone ou WhatsApp", email: "E-mail", budget: "Orçamento aproximado", budgetHelp: "Você pode informar uma faixa indicativa. A visita usa a matriz vigente e o preço final exige diagnóstico.", hasBudget: "Tenho um orçamento aproximado", from: "A partir de (MXN)", to: "Até (MXN)", location: "Local do serviço", address: "Endereço", district: "Colônia", city: "Cidade", state: "Estado", postal: "Código postal", mapLink: "Link do mapa (opcional)", exactLocation: "Localização exata do serviço", exactHelp: "Marque o ponto exato no mapa ou use sua localização atual.", useGps: "Usar minha localização atual", confirmLocation: "Confirmar localização", selectPoint: "Selecione um ponto no mapa.", evidenceSection: "Evidências iniciais", files: "Fotos, vídeos, áudio ou documentos", chooseFiles: "Selecionar arquivos", noFiles: "Nenhum arquivo selecionado", privacy: "Aceito o uso dos meus dados para registrar e atender esta solicitação.", images: "Autorizo o uso de imagens enviadas como evidência técnica do serviço.", submit: "Enviar solicitação", back: "Voltar ao acesso", registered: "Solicitação registrada", registeredText: "Sua solicitação foi enviada para revisão comercial. A operação atribuirá supervisor e técnico após validar os dados.", order: "Número da OS", trackingCode: "Código de acompanhamento", status: "Status", visitReference: "Referência da visita", diagnosis: "A definir após diagnóstico", marketReference: "Referência Total Solutions", waitingDiagnosis: "Aguardando diagnóstico", marketHelp: "Referência preliminar baseada na categoria do serviço. O preço final depende do diagnóstico técnico.", track: "Acompanhar solicitação", newRequestButton: "Criar outra solicitação", tracking: "Acompanhamento", trackingText: "Consultando o status público da sua solicitação.", loading: "Carregando...", preparing: "Sua solicitação está sendo preparada", technician: "Técnico", departure: "Saída", route: "Rota temporariamente indisponível", noRequest: "Não encontramos esta solicitação. Verifique o código de acompanhamento.", createRequest: "Criar solicitação", newService: "Nova solicitação", language: "Idioma", selected: "Localização selecionada. Confirme para continuar.", confirmed: "Localização confirmada. Você pode revisar o endereço sugerido.", sending: "Enviando solicitação...", sent: "Solicitação registrada com sucesso.", confirmBeforeSend: "Confirme a localização exata do serviço antes de enviar.", retry: "Tentando atualizar novamente.", mapHint: "O marcador azul representa o técnico e o verde representa o destino.", preparingShort: "Sua solicitação está sendo preparada.", visitPayment: "Pagamento da visita", visitPaymentHelp: "Inclui deslocamento e diagnóstico inicial. O reparo requer sua aprovação.", confirmVisit: "Confirmar visita", confirmingPayment: "Confirmando pagamento...", visitPending: "Estamos confirmando seu pagamento.", visitPaid: "Visita paga ✓", checkoutUnavailable: "Pagamento da visita indisponível."
         }
       };
-      const normalizePortalLanguage = (value) => String(value || "").toLowerCase().startsWith("pt") ? "pt-BR" : String(value || "").toLowerCase().startsWith("en") ? "en" : "es";
+      const confirmationState = window.TotalSolutionsConfirmation;
+      const normalizePortalLanguage = confirmationState.normalizeLanguage;
       const trackingTranslations = {
         es: { interrupted: "Ubicación interrumpida", stale: "Ubicación sin actualización reciente", onWay: "Tu técnico está en camino", waiting: "Esperando ubicación del técnico", updatedNow: "Actualizada ahora", lastUpdate: "Última actualización hace", seconds: "segundos", recalculating: "Recalculando ruta...", approximateEta: "Llegada estimada aproximada", estimatedArrival: "Llegada estimada", distance: "Distancia restante", time: "Hora", etaUnavailable: "ETA temporalmente no disponible", accuracy: "Precisión", map: "Mapa de seguimiento del servicio", technician: "Técnico", destination: "Destino del servicio", visitPayment: "Pago de la visita", visitPending: "Estamos confirmando tu pago.", visitPaid: "Visita pagada ✓", checkoutUnavailable: "Pago de visita no disponible.", diagnosis: "Diagnóstico", problemFound: "Problema encontrado", solution: "Solución recomendada", observations: "Observaciones", quote: "Presupuesto", quoteItems: "Ítems", itemDescription: "Descripción", quantity: "Cantidad", unit: "Unidad", unitPrice: "Precio", subtotal: "Subtotal", discount: "Descuento", tax: "Impuestos", total: "Total", validUntil: "Válido hasta", approveQuote: "Aprobar presupuesto", rejectQuote: "Rechazar presupuesto", approved: "Presupuesto aprobado", rejected: "Presupuesto rechazado", quoteError: "No fue posible actualizar el presupuesto.", paymentPlan: "Plan de pago", installment: "Parcela", payInstallment: "Pagar", installmentPaid: "Pagada", installmentPending: "Pendiente", installmentAvailable: "Disponible", serviceTotal: "Total del servicio", paid: "Pagado", outstanding: "Saldo restante", paymentTypeFull: "Pago total", paymentTypeDeposit: "Anticipo", paymentTypeProgress: "Pago intermedio", paymentTypeFinal: "Pago final", installmentWaiting: "Esperando liberación" },
         en: { interrupted: "Location interrupted", stale: "Location has not updated recently", onWay: "Your technician is on the way", waiting: "Waiting for technician location", updatedNow: "Updated now", lastUpdate: "Last update", seconds: "seconds ago", recalculating: "Recalculating route...", approximateEta: "Approximate ETA", estimatedArrival: "Estimated arrival", distance: "Distance remaining", time: "Time", etaUnavailable: "ETA temporarily unavailable", accuracy: "Accuracy", map: "Service tracking map", technician: "Technician", destination: "Service destination", visitPayment: "Visit payment", visitPending: "We are confirming your payment.", visitPaid: "Visit paid ✓", checkoutUnavailable: "Visit payment unavailable.", diagnosis: "Diagnosis", problemFound: "Problem found", solution: "Recommended solution", observations: "Observations", quote: "Quote", quoteItems: "Items", itemDescription: "Description", quantity: "Quantity", unit: "Unit", unitPrice: "Price", subtotal: "Subtotal", discount: "Discount", tax: "Tax", total: "Total", validUntil: "Valid until", approveQuote: "Approve quote", rejectQuote: "Reject quote", approved: "Quote approved", rejected: "Quote rejected", quoteError: "The quote could not be updated.", paymentPlan: "Payment plan", installment: "Installment", payInstallment: "Pay", installmentPaid: "Paid", installmentPending: "Pending", installmentAvailable: "Available" },
@@ -15512,6 +15515,7 @@
         .portal-language-switcher { position: fixed; top: 16px; right: 18px; z-index: 20; display: flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px solid rgba(34, 197, 94, 0.35); border-radius: 8px; background: rgba(255,255,255,0.94); color: var(--portal-muted); font-size: 12px; font-weight: 800; }
         .portal-language-switcher button { border: 0; border-radius: 4px; padding: 5px 7px; color: var(--portal-ink); background: transparent; font: inherit; cursor: pointer; }
         .portal-language-switcher button:hover { background: #dcfce7; }
+        .portal-language-switcher button[aria-pressed="true"] { color: #06120c; background: #22c55e; }
         .location-actions { margin-top: 10px; gap: 8px; }
         .portal-help { color: var(--portal-muted); margin: 0 0 8px; }
         * { box-sizing: border-box; }
@@ -15979,6 +15983,7 @@
         }
         @media (max-width: 640px) {
           body { background: var(--portal-bg); }
+          .portal-language-switcher { position: static; justify-content: center; width: 100%; border-width: 0 0 1px; border-radius: 0; }
           .portal-brand { display: none; }
           .portal-main { padding: 16px; align-items: flex-start; }
           .portal-panel-header,
@@ -16015,8 +16020,9 @@
       }
 
       function renderShell(inner) {
+        document.documentElement.lang = portalLanguage === "pt-BR" ? "pt-BR" : portalLanguage;
         document.body.innerHTML = `
-          <div class="portal-language-switcher" aria-label="${pt("language")}"><span>${pt("language")}</span><button type="button" data-portal-language="es">ES</button><button type="button" data-portal-language="en">EN</button><button type="button" data-portal-language="pt-BR">PT</button></div>
+          <div class="portal-language-switcher" aria-label="${pt("language")}"><span>${pt("language")}</span><button type="button" data-portal-language="es" aria-pressed="${portalLanguage === "es"}">ES</button><button type="button" data-portal-language="en" aria-pressed="${portalLanguage === "en"}">EN</button><button type="button" data-portal-language="pt-BR" aria-pressed="${portalLanguage === "pt-BR"}">PT</button></div>
           <main class="portal-shell">
             <section class="portal-brand">
               <div>
@@ -16037,7 +16043,9 @@
         document.querySelectorAll("[data-portal-language]").forEach((button) => button.addEventListener("click", () => {
           portalLanguage = normalizePortalLanguage(button.dataset.portalLanguage);
           localStorage.setItem("totalsolutions_public_language", portalLanguage);
-          if (isTracking) renderTracking(); else renderForm();
+          if (isConfirmation) {
+            window.location.assign(`/solicitud-enviada?lang=${confirmationState.languageQuery(portalLanguage)}`);
+          } else if (isTracking) renderTracking(); else renderForm();
         }));
       }
 
@@ -16197,36 +16205,41 @@
       }
 
       function renderResult(data) {
-        const trackingUrl = data.tracking_url || `/acompanhar/${data.tracking_token}`;
+        const trackingUrl = data.tracking_url;
         renderShell(`
           <section class="portal-panel">
             <header class="portal-panel-header">
               <img class="portal-panel-logo" src="${logoUrl}" alt="Total Solutions" />
-              <h2>${pt("registered")}</h2>
+              <h2 id="confirmationTitle" tabindex="-1">${pt("registered")}</h2>
               <p>${pt("registeredText")}</p>
             </header>
             <div class="portal-status">
               <div class="portal-result">
                 <p>${pt("order")}</p>
-                <code>${data.order_number || "En preparacion"}</code>
+                <code>${escapeHtml(data.order_number)}</code>
                 <p>${pt("trackingCode")}</p>
-                <code>${data.tracking_token}</code>
-                <p>${pt("status")}: <strong>${data.status || "SALES_QUEUE"}</strong></p>
+                <code>${escapeHtml(data.tracking_token)}</code>
+                <p>${pt("status")}: <strong>${escapeHtml(localizedTrackingStatus(data.status))}</strong></p>
               </div>
-              ${data.pricing ? `<div class="portal-result pricing-result">
+              <div class="portal-result pricing-result">
                 <p>${pt("visitReference")}</p>
-                <strong>${data.pricing.visit_calculated_price == null ? pt("diagnosis") : `${data.pricing.currency || "MXN"} ${Number(data.pricing.visit_calculated_price).toLocaleString(portalLanguage === "pt-BR" ? "pt-BR" : portalLanguage === "en" ? "en-US" : "es-MX", { minimumFractionDigits: 2 })}`}</strong>
-                <p>Zona: ${escapeHtml(data.pricing.zone || "-")} · Urgencia: ${escapeHtml(data.pricing.urgency_multiplier ? `x${data.pricing.urgency_multiplier}` : "-")}</p>
-                <p>${pt("marketReference")}: <strong>${data.pricing.market_reference_min == null ? pt("waitingDiagnosis") : `MX$${Number(data.pricing.market_reference_min).toLocaleString(portalLanguage === "pt-BR" ? "pt-BR" : "en-US")} — MX$${Number(data.pricing.market_reference_max).toLocaleString(portalLanguage === "pt-BR" ? "pt-BR" : "en-US")}`}</strong></p>
+                <strong>${data.pricing?.visit_calculated_price == null ? pt("diagnosis") : `${data.pricing.currency || "MXN"} ${Number(data.pricing.visit_calculated_price).toLocaleString(portalLanguage === "pt-BR" ? "pt-BR" : portalLanguage === "en" ? "en-US" : "es-MX", { minimumFractionDigits: 2 })}`}</strong>
+                <p>${portalLanguage === "en" ? "Zone" : "Zona"}: ${escapeHtml(data.pricing?.zone || "-")} · ${portalLanguage === "en" ? "Urgency" : portalLanguage === "pt-BR" ? "Urgência" : "Urgencia"}: ${escapeHtml(data.pricing?.urgency_multiplier ? `x${data.pricing.urgency_multiplier}` : "-")}</p>
+                <p>${pt("marketReference")}: <strong>${data.pricing?.market_reference_min == null ? pt("waitingDiagnosis") : `MX$${Number(data.pricing.market_reference_min).toLocaleString(portalLanguage === "pt-BR" ? "pt-BR" : "en-US")} — MX$${Number(data.pricing.market_reference_max).toLocaleString(portalLanguage === "pt-BR" ? "pt-BR" : "en-US")}`}</strong></p>
                 <p>${pt("marketHelp")}</p>
-              </div>` : ""}
+              </div>
               <div class="portal-actions" style="margin-top: 18px;">
-                <a class="portal-button" href="${trackingUrl}">${pt("track")}</a>
-                <a class="portal-button secondary" href="/solicitar-servico">${pt("newRequestButton")}</a>
+                <a class="portal-button" href="${escapeHtml(trackingUrl)}">${pt("track")}</a>
+                <button id="newServiceRequest" class="portal-button secondary" type="button">${pt("newRequestButton")}</button>
               </div>
             </div>
           </section>
         `);
+        document.getElementById("newServiceRequest").addEventListener("click", () => {
+          confirmationState.clear(sessionStorage);
+          window.location.assign(`/solicitar-servico?lang=${confirmationState.languageQuery(portalLanguage)}`);
+        });
+        document.getElementById("confirmationTitle")?.focus();
       }
 
       async function renderTracking() {
@@ -16809,18 +16822,15 @@
             const endpoint = marketplaceContext
               ? `${apiBase}/public/service-requests?organization_slug=${encodeURIComponent(marketplaceOrganizationSlug)}&marketplace_link_slug=${encodeURIComponent(marketplaceLinkSlug)}`
               : `${apiBase}/public/service-requests`;
-            const response = await fetch(endpoint, {
-              method: "POST",
+            await confirmationState.submit({
+              endpoint,
               body: formData,
-              headers: { Accept: "application/json" },
+              language: portalLanguage,
+              storage: sessionStorage,
+              fetchImpl: window.fetch.bind(window),
+              navigate: (url) => window.location.assign(url),
+              baseUrl: window.location.origin,
             });
-            const data = await response.json().catch(() => ({}));
-            if (!response.ok) {
-              throw new Error(data.detail || "No fue posible registrar la solicitud");
-            }
-            message.className = "portal-message ok";
-            message.textContent = pt("sent");
-            renderResult(data);
           } catch (error) {
             message.className = "portal-message error";
             message.textContent = error.message || pt("route");
@@ -16837,7 +16847,14 @@
           if (!response.ok) throw new Error(data.detail || pt("noRequest"));
           marketplaceContext = data;
         }
-        if (isTracking) renderTracking(); else renderForm();
+        if (isConfirmation) {
+          const state = confirmationState.read(sessionStorage, Date.now(), window.location.origin);
+          if (!state) {
+            window.location.replace(`/solicitar-servico?lang=${confirmationState.languageQuery(portalLanguage)}`);
+            return;
+          }
+          renderResult(state.confirmation);
+        } else if (isTracking) renderTracking(); else renderForm();
       };
       initializePublicExperience().catch((error) => {
         document.body.innerHTML = `<main class="portal-main"><section class="portal-panel"><div class="portal-status"><div class="portal-message error">${escapeHtml(error.message || pt("noRequest"))}</div></div></section></main>`;

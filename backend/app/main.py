@@ -162,7 +162,7 @@ async def security_headers(request: Request, call_next):
     if request.url.path.startswith("/uploads/professional-applications/"):
         return JSONResponse(status_code=404, content={"detail": "Archivo no encontrado"})
     response = await call_next(request)
-    no_store_paths = {"/", "/sw.js", "/solicitar-servico", "/aviso-de-privacidad", "/preferencias-comunicacion"}
+    no_store_paths = {"/", "/sw.js", "/solicitar-servico", "/solicitud-enviada", "/aviso-de-privacidad", "/preferencias-comunicacion"}
     if request.url.path in no_store_paths or request.url.path.startswith(("/m/", "/acompanhar/", "/seguimiento/")):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
@@ -743,6 +743,11 @@ def service_portal():
             },
         )
     return {"status": "portal-not-found"}
+
+
+@app.get("/solicitud-enviada", include_in_schema=False)
+def service_request_confirmation():
+    return service_portal()
 
 
 def public_information_page(filename: str):
