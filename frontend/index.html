@@ -8046,11 +8046,12 @@
       return Number.isNaN(date.getTime()) ? "-" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     }
 
-    function trackingProximityMessage(distance) {
+    function trackingProximityMessage(distance, language) {
+      const lang = language || "es";
       const numeric = Number(distance);
-      const messages = portalLanguage === "en"
+      const messages = lang === "en"
         ? { onWay: "Your technician is on the way", arriving: "Your technician is arriving", near: "Your technician is nearby", approaching: "Your technician is getting closer" }
-        : portalLanguage === "pt-BR"
+        : (lang === "pt-BR" || lang === "pt")
           ? { onWay: "Seu técnico está a caminho", arriving: "Seu técnico está chegando", near: "Seu técnico está perto", approaching: "Seu técnico está se aproximando" }
           : { onWay: "Tu técnico está en camino", arriving: "Tu técnico está llegando", near: "Tu técnico está cerca", approaching: "Tu técnico se está acercando" };
       if (!Number.isFinite(numeric) || numeric < 0) return messages.onWay;
@@ -16536,7 +16537,7 @@
               </div>
               <div class="public-tracking-status" id="publicTrackingLiveStatus"><strong>${escapeHtml(locationMessage)}</strong>${lastKnownLocationText ? `<span>${escapeHtml(lastKnownLocationText)}</span>` : ""}<span>${escapeHtml(routeMessage)}</span><span id="publicTrackingUpdated">${escapeHtml(trackingAgeLabel(data.last_location_updated_at, data.technician_display_name))}</span>${data.accuracy_m == null ? "" : `<span>${trackingText("accuracy")}: ${escapeHtml(data.accuracy_m)} m</span>`}</div>
               ${displayRouteAvailable ? `<div class="public-tracking-eta-card${routeCardClass}"><div class="public-tracking-eta-title">${escapeHtml(routeCardTitle)}</div><div><small>${escapeHtml(routeCardArrivalLabel)}</small><strong>${escapeHtml(formatRouteDuration(displayRoute.route_duration_s))}</strong></div><div><small>${escapeHtml(routeCardDistanceLabel)}</small><strong>${escapeHtml(formatRouteDistance(displayRoute.route_distance_m))}</strong></div><div><small>${escapeHtml(routeCardEtaLabel)}</small><strong>${escapeHtml(formatRouteEta(displayRoute.route_eta_at))}</strong></div>${routeCardNote ? `<div class="public-tracking-eta-note">${escapeHtml(routeCardNote)}</div>` : ""}</div>` : ""}
-              <p id="publicTrackingProximity" class="portal-message">${escapeHtml(displayRouteAvailable ? trackingProximityMessage(displayRoute.route_distance_m) : locationMessage)}</p>
+              <p id="publicTrackingProximity" class="portal-message">${escapeHtml(displayRouteAvailable ? trackingProximityMessage(displayRoute.route_distance_m, portalLanguage) : locationMessage)}</p>
               <div id="publicVisitPayment" class="public-tracking-status"></div>
               <div id="publicQuoteSection"></div>
               <div id="publicServicePaymentPlan"></div>
@@ -16560,7 +16561,7 @@
               else liveStatus.insertAdjacentHTML("afterend", etaMarkup);
             } else if (existingEtaCard) existingEtaCard.remove();
             const proximity = document.getElementById("publicTrackingProximity");
-            if (proximity) proximity.textContent = displayRouteAvailable ? trackingProximityMessage(displayRoute.route_distance_m) : locationMessage;
+            if (proximity) proximity.textContent = displayRouteAvailable ? trackingProximityMessage(displayRoute.route_distance_m, portalLanguage) : locationMessage;
           }
           renderVisitPayment(data);
           renderPublicQuote(data);
@@ -16626,6 +16627,7 @@
             if (data.tracking_active === true && !document.hidden) trackingTimer = window.setTimeout(pollTracking, 12000);
           } catch (_error) {
             if (requestSeq !== trackingRequestSeq) return;
+            console.error("[tracking] render error", _error);
             if (lastTrackingData) {
               const liveStatus = document.getElementById("publicTrackingLiveStatus");
               const canShowLastRoute = lastTrackingData.tracking_active === true && lastValidRouteData !== null;
@@ -16640,7 +16642,8 @@
               if (!document.hidden) trackingTimer = window.setTimeout(pollTracking, 12000);
             } else {
               removeTrackingTimer();
-              content.innerHTML = `<div class="portal-message error">${pt("noRequest")}</div>`;
+              content.innerHTML = `<div class="portal-message error"><p>${escapeHtml(pt("noRequest"))}</p><button type="button" class="portal-button" id="publicTrackingRetry">${escapeHtml(pt("retry"))}</button></div>`;
+              document.getElementById("publicTrackingRetry")?.addEventListener("click", pollTracking);
             }
           }
         };

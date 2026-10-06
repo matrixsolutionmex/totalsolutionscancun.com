@@ -1305,6 +1305,11 @@ def test_public_tracking_portal_uses_safe_statuses_and_live_leaflet_polling():
     assert "Distancia restante" in html
     assert "Hora estimada" in html
     assert "trackingProximityMessage" in html
+    assert "function trackingProximityMessage(distance, language)" in html
+    assert "const lang = language || \"es\";" in html
+    assert html.count("trackingProximityMessage(displayRoute.route_distance_m, portalLanguage)") == 2
+    assert 'console.error("[tracking] render error", _error)' in html
+    assert 'id="publicTrackingRetry"' in html
     assert "Tu técnico se está acercando" in html
     assert "Tu técnico está cerca" in html
     assert "Tu técnico está llegando" in html
