@@ -295,12 +295,14 @@ def test_effective_from_requires_timezone_aware_utc(monkeypatch, db):
 def test_local_cutoff_converts_cancun_to_canonical_utc(monkeypatch, db):
     monkeypatch.setenv("TECHNICIAN_COMPENSATION_POLICY_ENABLED", "true")
     org, manager, _, _ = make_fixture(db)
+    expected_utc = (utcnow() + timedelta(days=1)).replace(second=0, microsecond=0)
+    local_cutoff = expected_utc.astimezone(ZoneInfo("America/Cancun")).replace(tzinfo=None)
     policy = create_policy(
         db, actor=manager, organization_id=org.id, currency="MXN",
-        effective_from_local="2026-10-05T09:00", effective_timezone="America/Cancun",
+        effective_from_local=local_cutoff.isoformat(timespec="minutes"), effective_timezone="America/Cancun",
         idempotency_key="cancun-cutoff",
     )
-    assert policy.effective_from == datetime(2026, 10, 5, 14, 0)
+    assert policy.effective_from == expected_utc.replace(tzinfo=None)
 
 
 def test_cutoff_requires_explicit_input(monkeypatch, db):
