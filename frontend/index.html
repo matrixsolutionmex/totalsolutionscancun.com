@@ -6198,6 +6198,7 @@
         countryMissing: "País não informado",
         languageMissing: "Idioma a confirmar",
         whatsapp: "WhatsApp",
+        portalOpen: "Abrir portal do cliente", portalCopy: "Copiar link", portalWhatsapp: "Compartilhar pelo WhatsApp",
         call: "Ligar",
         contact: "Contacto",
         leads: "clientes",
@@ -6570,6 +6571,7 @@
         countryMissing: "Country not informed",
         languageMissing: "Language to confirm",
         whatsapp: "WhatsApp",
+        portalOpen: "Open customer portal", portalCopy: "Copy link", portalWhatsapp: "Share via WhatsApp",
         call: "Call",
         contact: "Contact",
         leads: "clientes",
@@ -6950,6 +6952,7 @@
         countryMissing: "País no informado",
         languageMissing: "Idioma por confirmar",
         whatsapp: "WhatsApp",
+        portalOpen: "Abrir portal del cliente", portalCopy: "Copiar enlace", portalWhatsapp: "Compartir por WhatsApp",
         call: "Llamar",
         contact: "Contacto",
         leads: "clientes",
@@ -8226,8 +8229,8 @@
       if (button?.dataset.trackingCopyOrder) {
         const response = await apiFetch(`${API_BASE}/service-orders/${encodeURIComponent(button.dataset.trackingCopyOrder)}/tracking-link`);
         const data = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data.detail || "Esta OS no possui um link público disponível.");
-        url = data.tracking_url;
+        if (!response.ok || data.available !== true) throw new Error(data.detail || "Esta OS no possui um link público disponível.");
+        url = data.portal_url;
       }
       if (!url) return;
       let copied = false;
@@ -8258,6 +8261,75 @@
       window.setTimeout(() => {
         if (button.isConnected) button.textContent = previousLabel;
       }, 1800);
+    }
+
+    function portalActionLabel(key) {
+      const labels = {
+        pt: { copied: "Link copiado", failed: "Não foi possível copiar" },
+        en: { copied: "Link copied", failed: "Could not copy" },
+        es: { copied: "Enlace copiado", failed: "No fue posible copiar" }
+      };
+      return (labels[currentLanguage] || labels.es)[key] || key;
+    }
+
+    async function loadPortalLink(orderId) {
+      const response = await apiFetch(`${API_BASE}/service-orders/${encodeURIComponent(orderId)}/tracking-link`, { headers: { Accept: "application/json" } });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.available !== true || !data.portal_url) throw new Error(data.detail || "Portal público no disponible");
+      return data;
+    }
+
+    async function openPortalLink(orderId) {
+      const popup = window.open("about:blank", "_blank", "noopener,noreferrer");
+      try {
+        const data = await loadPortalLink(orderId);
+        if (popup) popup.location.href = data.portal_url;
+        else window.open(data.portal_url, "_blank", "noopener,noreferrer");
+      } catch (error) {
+        if (popup) popup.close();
+        addPabloV2Message(error.message || "No fue posible abrir el portal.", "ai");
+      }
+    }
+
+    async function copyPortalLink(button) {
+      try {
+        const data = await loadPortalLink(button.dataset.portalCopy);
+        let copied = false;
+        if (navigator.clipboard?.writeText) {
+          try { await navigator.clipboard.writeText(data.portal_url); copied = true; } catch (_error) { copied = false; }
+        }
+        if (!copied) {
+          const input = document.createElement("textarea");
+          input.value = data.portal_url;
+          input.setAttribute("readonly", "");
+          input.style.position = "fixed";
+          input.style.opacity = "0";
+          document.body.appendChild(input);
+          input.select();
+          copied = document.execCommand("copy");
+          input.remove();
+        }
+        const previous = button.textContent;
+        button.textContent = copied ? portalActionLabel("copied") : portalActionLabel("failed");
+        window.setTimeout(() => { if (button.isConnected) button.textContent = previous; }, 1800);
+      } catch (error) {
+        button.textContent = portalActionLabel("failed");
+        addPabloV2Message(error.message || portalActionLabel("failed"), "ai");
+      }
+    }
+
+    async function openPortalWhatsApp(orderId) {
+      const data = await loadPortalLink(orderId);
+      if (data.whatsapp_url) {
+        window.open(data.whatsapp_url, "_blank", "noopener,noreferrer");
+        return;
+      }
+      if (data.whatsapp_message && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(data.whatsapp_message);
+        addPabloV2Message("No hay teléfono válido; el mensaje fue copiado para compartirlo manualmente.", "ai");
+        return;
+      }
+      throw new Error("No hay teléfono válido para compartir este enlace.");
     }
 
     async function openTrackingDiagnostic(orderId) {
@@ -8682,6 +8754,12 @@
             <button class="small-btn" type="button" onclick="stopServiceOrderTracking(${order.id}, 'MANUAL')">${t("uiRouteStop")}</button>
           </div>`
         : (canStartTracking ? `<div class="card-actions-row"><button class="small-btn" type="button" onclick="startServiceOrderTracking(${order.id})">${t("uiRouteStart")}</button></div>` : "");
+      const portalActions = order.id && order.portal_management_enabled === true ? `
+        <div class="card-actions-row portal-link-actions">
+          <button class="small-btn" type="button" data-portal-open="${order.id}">${t("portalOpen")}</button>
+          <button class="small-btn" type="button" data-portal-copy="${order.id}">${t("portalCopy")}</button>
+          <button class="small-btn" type="button" data-portal-whatsapp="${order.id}">${t("portalWhatsapp")}</button>
+        </div>` : "";
 
       return `
         <article class="card ${stageClass}" draggable="true" data-lead-id="${lead.id}">
@@ -8705,6 +8783,7 @@
           <div class="status">Local del servicio: <span>${escapeHtml(hasCoordinates ? t("uiLocationConfirmed") : (lead.google_maps_url ? "Enlace de mapa" : t("uiNoInfo")))}</span></div>
           ${navigationUrl ? `<div class="card-actions-row"><a class="small-btn" href="${escapeHtml(navigationUrl)}" target="_blank" rel="noopener noreferrer">${navigationLabel}</a></div>` : ""}
           ${trackingActions}
+          ${portalActions}
           <div class="lead-country"><span class="flag">${country.flag}</span>${escapeHtml(territory)}</div>
           <div class="status">${t("status")}: <span>${escapeHtml(stageLabel(lead.pipeline))}</span></div>
           <div class="status">${t("score")}: <span>${lead.score ?? 0}</span></div>
@@ -15010,6 +15089,13 @@
       copyTrackingPublicLink(target).catch(() => {
         target.textContent = "No fue posible copiar";
       });
+    });
+    document.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (target.matches("[data-portal-open]")) openPortalLink(target.dataset.portalOpen);
+      if (target.matches("[data-portal-copy]")) copyPortalLink(target);
+      if (target.matches("[data-portal-whatsapp]")) openPortalWhatsApp(target.dataset.portalWhatsapp).catch((error) => addPabloV2Message(error.message, "ai"));
     });
     document.getElementById("trackingOperationsRoutes")?.addEventListener("click", async (event) => {
       const target = event.target;

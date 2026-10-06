@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -221,9 +221,12 @@ def list_active_service_order_tracking(
 @router.get("/service-orders/{order_id}/tracking-link")
 def current_tracking_link(
     order_id: int,
+    response: Response,
     db: Session = Depends(get_db),
     actor: User = Depends(require_admin_user),
 ):
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Referrer-Policy"] = "no-referrer"
     return get_current_tracking_link_for_actor(db, order_id, actor)
 
 

@@ -195,7 +195,12 @@ def kanban_leads(
             .limit(limit_per_stage)
             .all()
         )
-        board[stage] = [LeadResponse.model_validate(lead).model_dump() for lead in leads]
+        board[stage] = []
+        for lead in leads:
+            item = LeadResponse.model_validate(lead).model_dump()
+            if lead.service_order:
+                item["service_order"]["portal_management_enabled"] = bool(actor and actor.role in {"ROOT", "GERENTE"})
+            board[stage].append(item)
 
     return {
         "stages": PIPELINE_STAGES,

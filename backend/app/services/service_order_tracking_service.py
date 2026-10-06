@@ -1,6 +1,7 @@
 """Authorization and lifecycle rules for technician location sharing."""
 
 import math
+from urllib.parse import quote
 from datetime import datetime
 
 from fastapi import HTTPException
@@ -15,6 +16,7 @@ from app.services.route_intelligence_service import calculate_route
 from app.services.tracking_state_service import is_tracking_session_active, tracking_session_state
 from app.services.tracking_health_service import tracking_health
 from app.models.service_order_financial import ServiceOrderFinancial
+from app.models.payment import Payment
 from app.services.service_order_financial_service import can_dispatch_service_order, calculate_order_balance, is_pricing_unavailable, resolve_payment_policy
 
 
@@ -153,7 +155,9 @@ def serialize_tracking(tracking: ServiceOrderTracking | None) -> dict | None:
 
 def get_tracking_for_actor(db: Session, order_id: int, actor: User) -> dict:
     order = _order_for_actor(db, order_id, actor)
-    if not _is_visible_to_actor(db, order, actor):
+    if not (_is_visible_to_actor(db, order, actor) or (
+        actor.role == "GERENTE" and actor.organization_id == order.organization_id
+    )):
         raise HTTPException(status_code=403, detail="Tracking fora da sua estrutura")
     tracking = db.query(ServiceOrderTracking).filter(ServiceOrderTracking.service_order_id == order.id).first()
     return {
@@ -168,7 +172,10 @@ def get_tracking_for_actor(db: Session, order_id: int, actor: User) -> dict:
 def get_current_tracking_link_for_actor(db: Session, order_id: int, actor: User) -> dict:
     """Return the current persisted public link without regenerating its token."""
     order = _order_for_actor(db, order_id, actor)
-    if not _is_visible_to_actor(db, order, actor):
+    if not (
+        _is_visible_to_actor(db, order, actor)
+        or (actor.role == "GERENTE" and actor.organization_id == order.organization_id)
+    ):
         raise HTTPException(status_code=403, detail="Tracking fora da sua estrutura")
     service_request = order.service_request
     token = (service_request.tracking_token or "").strip() if service_request else ""
@@ -177,10 +184,38 @@ def get_current_tracking_link_for_actor(db: Session, order_id: int, actor: User)
             status_code=409,
             detail="Esta OS não possui link público de acompanhamento disponível",
         )
+    payment = db.query(Payment).filter(
+        Payment.service_order_id == order.id,
+        Payment.organization_id == order.organization_id,
+        Payment.payment_type == "TECHNICAL_VISIT",
+    ).order_by(Payment.created_at.desc(), Payment.id.desc()).first()
+    payment_state = "VISIT_PAYMENT_PENDING"
+    if payment and payment.status in {"PAID", "PAID_CASH"}:
+        payment_state = "VISIT_PAID"
+    elif payment and payment.status in {"PROCESSING", "RECONCILIATION_PENDING"}:
+        payment_state = "VISIT_PAYMENT_PROCESSING"
+    tracking = db.query(ServiceOrderTracking).filter(ServiceOrderTracking.service_order_id == order.id).first()
+    route_state = "ACTIVE" if tracking and tracking.tracking_active else ("SCHEDULED" if order.scheduled_at else "NOT_STARTED")
+    request = order.service_request
+    raw_phone = (request.requester_phone if request else None) or (order.lead.whatsapp if order.lead else None) or (order.lead.contato if order.lead else None)
+    phone = "".join(character for character in (raw_phone or "") if character.isdigit())
+    message = (
+        "Hola. Puedes consultar el estado de tu solicitud y completar las acciones pendientes de Total Solutions Cancún "
+        "mediante este enlace seguro:\n\n"
+        f"{public_tracking_url(token)}\n\nPor seguridad, no compartas este enlace con otras personas."
+    )
     return {
-        "service_order_id": order.id,
-        "order_number": order.order_number,
+        "available": True,
+        "portal_url": public_tracking_url(token),
         "tracking_url": public_tracking_url(token),
+        "public_order_number": order.order_number,
+        "payment_state": payment_state,
+        "route_state": route_state,
+        "can_open": True,
+        "can_copy": True,
+        "can_share_whatsapp": len(phone) >= 8,
+        "whatsapp_url": f"https://wa.me/{phone}?text={quote(message)}" if len(phone) >= 8 else None,
+        "whatsapp_message": message,
     }
 
 

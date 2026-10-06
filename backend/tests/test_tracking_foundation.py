@@ -18,6 +18,7 @@ from app.models.service_order_financial import ServiceOrderFinancial
 from app.models.service_order_ledger_entry import ServiceOrderLedgerEntry
 from app.models.visit_pricing_snapshot import VisitPricingSnapshot
 from app.models.organization_payment_policy import OrganizationPaymentPolicy
+from app.models.commercial_upgrade_intent import CommercialUpgradeIntent
 from app.models.payment import Payment, PlatformLedgerEntry
 from app.models.service_property import ServiceProperty
 from app.models.service_request import ServiceRequest
@@ -43,6 +44,32 @@ from app.services.tracking_health_service import tracking_health
 from app.services.tracking_state_service import is_tracking_session_active, tracking_session_state
 
 
+def test_customer_portal_action_labels_are_localized_and_fail_closed():
+    frontend = Path(__file__).parents[2] / "frontend" / "index.html"
+    source = frontend.read_text(encoding="utf-8")
+
+    expected = (
+        'portalOpen: "Abrir portal del cliente"',
+        'portalCopy: "Copiar enlace"',
+        'portalWhatsapp: "Compartir por WhatsApp"',
+        'portalOpen: "Open customer portal"',
+        'portalCopy: "Copy link"',
+        'portalWhatsapp: "Share via WhatsApp"',
+        'portalOpen: "Abrir portal do cliente"',
+        'portalCopy: "Copiar link"',
+        'portalWhatsapp: "Compartilhar pelo WhatsApp"',
+    )
+    for label in expected:
+        assert label in source
+
+    assert 'data-portal-open="${order.id}">${t("portalOpen")}' in source
+    assert 'data-portal-copy="${order.id}">${t("portalCopy")}' in source
+    assert 'data-portal-whatsapp="${order.id}">${t("portalWhatsapp")}' in source
+    assert 'data-portal-open="${order.id}">Abrir portal' not in source
+    assert 'data-portal-copy="${order.id}">Copiar enlace' not in source
+    assert 'data-portal-whatsapp="${order.id}">WhatsApp' not in source
+
+
 @pytest.fixture()
 def db():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -61,6 +88,7 @@ def db():
             ServiceOrderLedgerEntry.__table__,
             VisitPricingSnapshot.__table__,
             OrganizationPaymentPolicy.__table__,
+            CommercialUpgradeIntent.__table__,
             Payment.__table__,
             PlatformLedgerEntry.__table__,
         ],
@@ -145,6 +173,7 @@ def test_assigned_technician_starts_with_consent_and_no_automatic_gps(db):
 def test_admin_tracking_link_uses_current_request_token_and_never_regenerates(db):
     org = make_org(db, "tracking-link-current")
     root = make_user(db, "root-current-link", "ROOT", org)
+    manager = make_user(db, "manager-current-link", "GERENTE", org)
     order = make_order(db, org, None)
     service_request = ServiceRequest(
         organization_id=org.id,
@@ -157,18 +186,60 @@ def test_admin_tracking_link_uses_current_request_token_and_never_regenerates(db
         consent_images=False,
     )
     order.service_request = service_request
+    order.lead.whatsapp = None
+    order.lead.contato = None
     db.commit()
     db.refresh(order)
 
     result = get_current_tracking_link_for_actor(db, order.id, root)
+    assert result["available"] is True
+    assert result["portal_url"].endswith("/seguimiento/current-token-071")
     assert result["tracking_url"].endswith("/seguimiento/current-token-071")
+    assert result["payment_state"] == "VISIT_PAYMENT_PENDING"
+    assert result["route_state"] == "NOT_STARTED"
+    assert result["can_share_whatsapp"] is False
+    assert result["whatsapp_url"] is None
+    assert "Por seguridad, no compartas este enlace con otras personas." in result["whatsapp_message"]
     assert db.query(ServiceRequest).filter_by(id=service_request.id).one().tracking_token == "current-token-071"
+
+    manager_result = get_current_tracking_link_for_actor(db, order.id, manager)
+    assert manager_result["portal_url"] == result["portal_url"]
 
     order.service_request = None
     db.commit()
     with pytest.raises(HTTPException) as missing:
         get_current_tracking_link_for_actor(db, order.id, root)
     assert missing.value.status_code == 409
+
+
+def test_tracking_link_is_tenant_scoped_and_broker_must_be_assigned(db):
+    org = make_org(db, "tracking-link-scope")
+    other_org = make_org(db, "tracking-link-other-scope")
+    manager = make_user(db, "manager-scope", "GERENTE", org)
+    other_manager = make_user(db, "other-manager-scope", "GERENTE", other_org)
+    assigned = make_user(db, "assigned-scope", "BROKER", org)
+    other_broker = make_user(db, "other-broker-scope", "BROKER", org)
+    order = make_order(db, org, assigned, supervisor=manager)
+    order.service_request = ServiceRequest(
+        organization_id=org.id,
+        lead_id=order.lead_id,
+        tracking_token="scope-token-072",
+        service_category="Plumbing",
+        requester_name="Cliente Tracking",
+        public_language="es-MX",
+        consent_privacy=True,
+        consent_images=False,
+    )
+    db.commit()
+
+    assert get_current_tracking_link_for_actor(db, order.id, manager)["available"] is True
+    with pytest.raises(HTTPException) as other_tenant:
+        get_current_tracking_link_for_actor(db, order.id, other_manager)
+    assert other_tenant.value.status_code == 404
+    with pytest.raises(HTTPException) as unassigned:
+        get_current_tracking_link_for_actor(db, order.id, other_broker)
+    assert unassigned.value.status_code == 403
+    assert order.service_request.tracking_token == "scope-token-072"
 
 
 def test_tracking_state_is_canonical_and_restart_clears_stopped_at(db):
