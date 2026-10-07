@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Total Solutions | Portal del cliente</title>
+  <style>
+    :root { color-scheme: light; font-family: Arial, sans-serif; color: #102032; background: #e8fff4; }
+    body { margin: 0; min-height: 100vh; background: #e8fff4; }
+    main { width: min(100% - 32px, 960px); margin: 32px auto; }
+    header, section { background: #fff; border: 1px solid #dbe5ee; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+    h1, h2 { margin: 0 0 8px; }
+    p { color: #667085; }
+    .hidden { display: none !important; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .item { border: 1px solid #dbe5ee; border-radius: 8px; padding: 14px; }
+    .button { display: inline-block; border: 0; border-radius: 6px; padding: 11px 16px; background: #16a34a; color: #fff; text-decoration: none; font-weight: 700; }
+    .muted { color: #667085; }
+    @media (max-width: 480px) { main { width: min(100% - 20px, 960px); margin: 12px auto; } header, section { padding: 16px; } }
+  </style>
+</head>
+<body>
+  <p id="portal-loading" class="muted" role="status" aria-live="polite">Cargando...</p>
+  <main id="customer-portal" class="hidden" aria-live="polite">
+    <header>
+      <h1 data-i18n="title">Panel del cliente</h1>
+      <p data-i18n="subtitle">Consulta tus solicitudes y propiedades vinculadas.</p>
+      <a class="button" href="/solicitar-servico?customer_portal=1" data-i18n="newRequest">Nueva solicitud</a>
+    </header>
+    <section>
+      <h2 data-i18n="services">Mis solicitudes</h2>
+      <div id="services" class="grid"></div>
+      <p id="empty" class="muted hidden" data-i18n="empty">No hay solicitudes vinculadas.</p>
+    </section>
+    <section>
+      <h2 data-i18n="properties">Mis propiedades</h2>
+      <div id="properties" class="grid"></div>
+    </section>
+  </main>
+  <script>
+    (() => {
+      const panel = document.getElementById("customer-portal");
+      const loading = document.getElementById("portal-loading");
+      const services = document.getElementById("services");
+      const properties = document.getElementById("properties");
+      const empty = document.getElementById("empty");
+      const copy = {
+        es: { title: "Panel del cliente", subtitle: "Consulta tus solicitudes y propiedades vinculadas.", newRequest: "Nueva solicitud", services: "Mis solicitudes", properties: "Mis propiedades", empty: "No hay solicitudes vinculadas." },
+        en: { title: "Customer dashboard", subtitle: "View your linked requests and properties.", newRequest: "New request", services: "My requests", properties: "My properties", empty: "No linked requests." },
+        pt: { title: "Painel do cliente", subtitle: "Consulte suas solicitações e imóveis vinculados.", newRequest: "Nova solicitação", services: "Minhas solicitações", properties: "Meus imóveis", empty: "Nenhuma solicitação vinculada.", loading: "Carregando..." }
+      };
+      copy.es.loading = "Cargando...";
+      copy.en.loading = "Loading...";
+      const language = (navigator.language || "es").toLowerCase().startsWith("pt") ? "pt" : (navigator.language || "").toLowerCase().startsWith("en") ? "en" : "es";
+      document.documentElement.lang = language;
+      document.querySelectorAll("[data-i18n]").forEach((node) => { node.textContent = copy[language][node.dataset.i18n] || node.textContent; });
+      const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;","\"":"&quot;"}[char]));
+      const render = (data) => {
+        loading.classList.add("hidden");
+        panel.classList.remove("hidden");
+        services.innerHTML = (data.services || []).map((service) => `<article class="item"><strong>${escapeHtml(service.order_number || `#${service.id}`)}</strong><div>${escapeHtml(service.service_category || "")}</div><div class="muted">${escapeHtml(service.status || "")}</div><div class="muted">${escapeHtml(service.property?.locality || "")}</div></article>`).join("");
+        properties.innerHTML = (data.properties || []).map((property) => `<article class="item"><strong>${escapeHtml(property.profile_type || "")}</strong><div class="muted">${escapeHtml(property.locality || "")}</div></article>`).join("");
+        empty.classList.toggle("hidden", Boolean(data.services?.length));
+      };
+      const validDashboardPayload = (data) => Boolean(
+        data && Array.isArray(data.services) && Array.isArray(data.properties)
+      );
+      const fetchWithTimeout = (url, options = {}, timeoutMs = 10000) => {
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+        return fetch(url, { ...options, signal: controller.signal }).finally(() => window.clearTimeout(timer));
+      };
+      loading.textContent = copy[language].loading;
+      fetchWithTimeout("/customer-portal/config", { credentials: "same-origin" })
+        .then((response) => response.ok ? response.json() : Promise.reject(new Error("config")))
+        .then((config) => config.customer_portal_enabled ? fetchWithTimeout("/customer-portal/me/dashboard", { credentials: "same-origin" }) : Promise.reject(new Error("disabled")))
+        .then((response) => response.ok ? response.json() : Promise.reject(new Error("dashboard")))
+        .then((data) => validDashboardPayload(data) ? data : Promise.reject(new Error("dashboard-payload")))
+        .then(render)
+        .catch(() => { loading.classList.add("hidden"); panel.classList.add("hidden"); });
+    })();
+  </script>
+</body>
+</html>
