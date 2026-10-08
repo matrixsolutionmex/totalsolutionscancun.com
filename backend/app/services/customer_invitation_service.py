@@ -4,7 +4,7 @@ import json
 import os
 import secrets
 from datetime import datetime, timedelta
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -19,7 +19,39 @@ from app.services.import_service import normalize_email, normalize_phone
 
 
 INVITATION_TTL_MINUTES = 30
+CANONICAL_PUBLIC_ORIGIN = "https://totalsolutionscancun.com"
 STAFF_ROLES = {"ROOT", "GERENTE", "BROKER", "TECNICO", "ADMIN"}
+
+
+def _validated_public_origin() -> str:
+    raw = os.getenv("PUBLIC_BASE_URL", "")
+    if not raw or not raw.isascii() or any(ord(char) < 32 or ord(char) == 127 for char in raw):
+        raise HTTPException(status_code=503, detail="Origem pública de convites não configurada")
+
+    try:
+        parsed = urlsplit(raw)
+        port = parsed.port
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail="Origem pública de convites não configurada") from exc
+
+    if (
+        raw not in {CANONICAL_PUBLIC_ORIGIN, f"{CANONICAL_PUBLIC_ORIGIN}/"}
+        or parsed.scheme != "https"
+        or parsed.hostname != "totalsolutionscancun.com"
+        or parsed.netloc != "totalsolutionscancun.com"
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or parsed.username
+        or parsed.password
+        or port is not None
+    ):
+        raise HTTPException(status_code=503, detail="Origem pública de convites não configurada")
+    return CANONICAL_PUBLIC_ORIGIN
+
+
+def _activation_url(raw_token: str, *, origin: str) -> str:
+    return f"{origin}/cliente/activar?token={quote(raw_token, safe='')}"
 
 
 def _token_hash(raw: str) -> str:
@@ -67,6 +99,7 @@ def _active_invitation(db: Session, request_id: int, channel: str):
 def create_invitation(db: Session, *, actor: User, service_request_id: int, channel: str, language: str, idempotency_key: str):
     if not customer_invitations_available(db, actor.organization_id):
         raise HTTPException(status_code=404, detail="Convites de cliente indisponíveis")
+    origin = _validated_public_origin()
     request = db.query(ServiceRequest).filter(ServiceRequest.id == service_request_id).first()
     if not request or (actor.role != "ROOT" and request.organization_id != actor.organization_id):
         raise HTTPException(status_code=404, detail="Solicitação não encontrada")
@@ -99,8 +132,7 @@ def create_invitation(db: Session, *, actor: User, service_request_id: int, chan
     db.flush()
     _event(db, invitation, "INVITATION_CREATED", actor.id)
     if channel == "EMAIL":
-        base = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
-        url = f"{base}/cliente/activar?token={quote(raw, safe='')}" if base else f"/cliente/activar?token={quote(raw, safe='')}"
+        url = _activation_url(raw, origin=origin)
         db.add(EmailOutbox(
             organization_id=request.organization_id, to_email=normalized,
             customer_portal_invitation_id=invitation.id,
@@ -125,6 +157,9 @@ def revoke_invitation(db: Session, invitation: CustomerPortalInvitation, actor: 
 
 
 def resend_invitation(db: Session, invitation: CustomerPortalInvitation, actor: User, idempotency_key: str):
+    if not customer_invitations_available(db, actor.organization_id):
+        raise HTTPException(status_code=404, detail="Convites de cliente indisponíveis")
+    _validated_public_origin()
     revoke_invitation(db, invitation, actor)
     _event(db, invitation, "INVITATION_REISSUED", actor.id)
     db.flush()

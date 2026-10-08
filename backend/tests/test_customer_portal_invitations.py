@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database.connection import Base
 from app.models.customer_invitation import CustomerPortalInvitation, CustomerPortalInvitationEvent
+from app.models.notification import EmailOutbox
 from app.models.organization import Organization
 from app.models.lead import Lead
 from app.models.service_request import ServiceRequest
@@ -59,6 +60,7 @@ def enable(monkeypatch, org_id):
     monkeypatch.setenv("CUSTOMER_PORTAL_INVITATIONS_ROLLOUT_MODE", "canary")
     monkeypatch.setenv("CUSTOMER_PORTAL_INVITATIONS_CANARY_ORGANIZATION_IDS", str(org_id))
     monkeypatch.setenv("CUSTOMER_PORTAL_CLAIM_SECRET", "customer-claim-secret-0123456789-abcdef")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://totalsolutionscancun.com")
 
 
 def test_invitation_is_feature_gated_and_fail_closed(monkeypatch):
@@ -70,6 +72,85 @@ def test_invitation_is_feature_gated_and_fail_closed(monkeypatch):
     monkeypatch.setenv("CUSTOMER_PORTAL_INVITATIONS_ROLLOUT_MODE", "canary")
     monkeypatch.setenv("CUSTOMER_PORTAL_INVITATIONS_CANARY_ORGANIZATION_IDS", "0,abc")
     assert customer_invitation_config()["valid"] is False
+
+
+def test_public_origin_accepts_only_canonical_https_and_encodes_token(monkeypatch):
+    from app.services.customer_invitation_service import _activation_url, _validated_public_origin
+
+    for value in ("https://totalsolutionscancun.com", "https://totalsolutionscancun.com/"):
+        monkeypatch.setenv("PUBLIC_BASE_URL", value)
+        assert _validated_public_origin() == "https://totalsolutionscancun.com"
+    assert _activation_url("a/b?c", origin="https://totalsolutionscancun.com") == (
+        "https://totalsolutionscancun.com/cliente/activar?token=a%2Fb%3Fc"
+    )
+
+
+@pytest.mark.parametrize("origin", [
+    "http://totalsolutionscancun.com",
+    "https://www.totalsolutionscancun.com",
+    "https://evil.tld",
+    "https://totalsolutionscancun.com.evil.tld",
+    "https://evil.tld/totalsolutionscancun.com",
+    "https://totalsolutionscancun.com:443",
+    "https://user:pass@totalsolutionscancun.com",
+    "https://totalsolutionscancun.com/path",
+    "https://totalsolutionscancun.com?x=1",
+    "https://totalsolutionscancun.com/#fragment",
+    "//totalsolutionscancun.com",
+    "http://127.0.0.1",
+    "http://localhost",
+    " https://totalsolutionscancun.com",
+    "https://totalsolutionscancun.com ",
+    "https://totalsolutionscancun.com\\path",
+    "https://totalsolutionscancun.com\n",
+    "https://TOTALSOLUTIONSCANCUN.COM",
+    "https://xn--totalsolutionscancun-9w8c.com",
+    "",
+])
+def test_invalid_public_origin_fails_closed_without_writes(monkeypatch, db, origin):
+    org, _, admin, request = fixture(db)
+    enable(monkeypatch, org.id)
+    monkeypatch.setenv("PUBLIC_BASE_URL", origin)
+
+    with pytest.raises(Exception) as error:
+        create_invitation(
+            db,
+            actor=admin,
+            service_request_id=request.id,
+            channel="EMAIL",
+            language="es",
+            idempotency_key=f"invalid-origin-{abs(hash(origin))}",
+        )
+
+    assert getattr(error.value, "status_code", None) == 503
+    assert db.query(CustomerPortalInvitation).count() == 0
+    assert db.query(CustomerPortalInvitationEvent).count() == 0
+    assert db.query(EmailOutbox).count() == 0
+    assert db.query(CustomerServiceLink).count() == 0
+
+
+def test_invalid_public_origin_cannot_partially_revoke_on_resend(monkeypatch, db):
+    org, _, admin, request = fixture(db)
+    enable(monkeypatch, org.id)
+    invitation, _ = create_invitation(
+        db,
+        actor=admin,
+        service_request_id=request.id,
+        channel="EMAIL",
+        language="es",
+        idempotency_key="origin-resend-valid",
+    )
+    db.commit()
+
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://evil.tld")
+    with pytest.raises(Exception) as error:
+        resend_invitation(db, invitation, admin, "origin-resend-invalid")
+
+    assert getattr(error.value, "status_code", None) == 503
+    db.rollback()
+    assert db.query(CustomerPortalInvitation).one().status == "QUEUED"
+    assert db.query(CustomerPortalInvitationEvent).count() == 2
+    assert db.query(EmailOutbox).count() == 1
 
 
 def test_invitation_hashes_token_and_activation_is_atomic(monkeypatch, db):
