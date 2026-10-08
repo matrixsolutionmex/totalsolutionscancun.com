@@ -14,6 +14,36 @@ from app.models.user import User
 from app.services.import_service import normalize_email, normalize_phone
 
 
+def customer_invitation_config() -> dict:
+    enabled = os.getenv("CUSTOMER_PORTAL_INVITATIONS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+    mode = os.getenv("CUSTOMER_PORTAL_INVITATIONS_ROLLOUT_MODE", "off").strip().lower()
+    raw_ids = os.getenv("CUSTOMER_PORTAL_INVITATIONS_CANARY_ORGANIZATION_IDS", "").strip()
+    if mode not in {"off", "canary", "all"} or (mode != "canary" and raw_ids):
+        return {"enabled": False, "valid": False}
+    ids = set()
+    if mode == "canary":
+        if not raw_ids:
+            return {"enabled": False, "valid": False}
+        for value in raw_ids.split(","):
+            value = value.strip()
+            if not value.isascii() or not value.isdigit() or int(value) <= 0:
+                return {"enabled": False, "valid": False}
+            ids.add(int(value))
+        if len(ids) != len([value for value in raw_ids.split(",") if value.strip()]):
+            return {"enabled": False, "valid": False}
+    return {"enabled": enabled, "valid": True, "mode": mode, "organization_ids": frozenset(ids)}
+
+
+def customer_invitations_available(db: Session, organization_id: int | None) -> bool:
+    config = customer_invitation_config()
+    if not config.get("enabled") or not config.get("valid") or config.get("mode") == "off":
+        return False
+    if config["mode"] == "canary" and organization_id not in config["organization_ids"]:
+        return False
+    organization = db.query(Organization).filter(Organization.id == organization_id).first()
+    return bool(organization and (organization.status or "").upper() == "ACTIVE")
+
+
 def customer_portal_config() -> dict:
     enabled = os.getenv("CUSTOMER_PORTAL_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
     mode = os.getenv("CUSTOMER_PORTAL_ROLLOUT_MODE", "off").strip().lower()

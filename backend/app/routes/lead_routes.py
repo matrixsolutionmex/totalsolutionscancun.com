@@ -30,6 +30,7 @@ from app.services.dossier_pdf_service import build_service_dossier_pdf
 from app.services.lead_entry_service import property_extra_json, validate_responsible
 from app.services.lead_creation_service import create_lead_record
 from app.services.service_order_service import ensure_service_order, sync_service_order_from_lead
+from app.services.customer_account_service import customer_invitations_available
 from app.services.service_order_tracking_service import stop_tracking_for_order
 from app.services.notification_service import dispatch_web_push_for_notification_ids, notify_assignment_change
 
@@ -200,6 +201,10 @@ def kanban_leads(
             item = LeadResponse.model_validate(lead).model_dump()
             if lead.service_order:
                 item["service_order"]["portal_management_enabled"] = bool(actor and actor.role in {"ROOT", "GERENTE"})
+                item["service_order"]["customer_invitation_management_enabled"] = bool(
+                    actor and actor.role in {"ROOT", "GERENTE"}
+                    and customer_invitations_available(db, actor.organization_id)
+                )
             board[stage].append(item)
 
     return {

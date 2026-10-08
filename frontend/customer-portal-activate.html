@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Total Solutions | Activar cuenta</title>
+  <style>
+    :root { font-family: Arial, sans-serif; color: #102032; background: #e8fff4; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #e8fff4; }
+    main { width: min(100% - 32px, 520px); background: #fff; border: 1px solid #dbe5ee; border-radius: 8px; padding: 24px; box-sizing: border-box; }
+    h1 { margin-top: 0; } label { display: block; margin: 14px 0 6px; font-weight: 700; }
+    input, button { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid #cbd5e1; border-radius: 6px; font: inherit; }
+    button { margin-top: 18px; border: 0; background: #16a34a; color: #fff; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: not-allowed; } [hidden] { display: none !important; }
+    .status { color: #667085; } .error { color: #b42318; } .success { color: #067647; }
+  </style>
+</head>
+<body>
+  <main aria-labelledby="title">
+    <h1 id="title">Activa tu cuenta de cliente</h1>
+    <p id="description" class="status">Completa los datos para continuar.</p>
+    <p id="status" class="status" role="status" aria-live="polite">Verificando invitación...</p>
+    <form id="activation" hidden>
+      <label for="name" id="nameLabel">Nombre completo</label><input id="name" name="name" autocomplete="name" required>
+      <label for="password" id="passwordLabel">Contraseña</label><input id="password" name="password" type="password" minlength="10" autocomplete="new-password" required>
+      <label for="email" id="emailLabel">Correo del convite</label><input id="email" name="email" type="email" autocomplete="email">
+      <label for="phone" id="phoneLabel">Teléfono del convite</label><input id="phone" name="phone" autocomplete="tel">
+      <button id="submit" type="submit">Crear cuenta y continuar</button>
+    </form>
+    <a id="loginLink" href="/" hidden>Entrar en el portal</a>
+  </main>
+  <script>
+    (() => {
+      const params = new URLSearchParams(location.search);
+      const token = params.get("token") || "";
+      const language = ["en", "pt-BR", "pt"].includes(params.get("lang")) ? params.get("lang") : "es";
+      const copy = {
+        es: { title: "Activa tu cuenta de cliente", description: "Completa los datos para continuar.", checking: "Verificando invitación...", complete: "Completa tus datos para continuar.", name: "Nombre completo", password: "Contraseña", email: "Correo de la invitación", phone: "Teléfono de la invitación", submit: "Crear cuenta y continuar", login: "Entrar en el portal", activated: "Cuenta activada. Entra para abrir tu panel.", invalid: "La invitación no es válida o ha expirado.", error: "No fue posible activar la cuenta. Inténtalo de nuevo." },
+        en: { title: "Activate your customer account", description: "Complete your details to continue.", checking: "Checking invitation...", complete: "Complete your details to continue.", name: "Full name", password: "Password", email: "Invitation email", phone: "Invitation phone", submit: "Create account and continue", login: "Sign in to the portal", activated: "Account activated. Sign in to open your dashboard.", invalid: "The invitation is invalid or expired.", error: "The account could not be activated. Try again." },
+        pt: { title: "Ative sua conta de cliente", description: "Preencha seus dados para continuar.", checking: "Verificando convite...", complete: "Preencha seus dados para continuar.", name: "Nome completo", password: "Senha", email: "E-mail do convite", phone: "Telefone do convite", submit: "Criar conta e continuar", login: "Entrar no portal", activated: "Conta ativada. Entre para abrir seu painel.", invalid: "O convite não é válido ou expirou.", error: "Não foi possível ativar a conta. Tente novamente." }
+      }[language === "pt-BR" ? "pt" : language];
+      document.documentElement.lang = language;
+      document.getElementById("title").textContent = copy.title;
+      document.getElementById("description").textContent = copy.description;
+      document.getElementById("status").textContent = copy.checking;
+      document.getElementById("nameLabel").textContent = copy.name;
+      document.getElementById("passwordLabel").textContent = copy.password;
+      document.getElementById("emailLabel").textContent = copy.email;
+      document.getElementById("phoneLabel").textContent = copy.phone;
+      document.getElementById("submit").textContent = copy.submit;
+      document.getElementById("loginLink").textContent = copy.login;
+      const safeLoginUrl = `/?next=${encodeURIComponent("/cliente")}&lang=${encodeURIComponent(language)}`;
+      document.getElementById("loginLink").href = safeLoginUrl;
+      if (token) history.replaceState(null, "", `${location.pathname}?lang=${encodeURIComponent(language)}`);
+      const status = document.getElementById("status");
+      const form = document.getElementById("activation");
+      const setStatus = (text, className) => { status.textContent = text; status.className = className; };
+      if (!token) { setStatus(copy.invalid, "error"); return; }
+      fetch(`/customer-portal/activation?token=${encodeURIComponent(token)}`, { credentials: "same-origin" })
+        .then((response) => response.ok ? response.json() : Promise.reject(new Error("invalid")))
+        .then((data) => { if (data.status !== "VALID") throw new Error("invalid"); form.hidden = false; setStatus(copy.complete, "status"); })
+        .catch(() => setStatus(copy.invalid, "error"));
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const payload = { token, full_name: document.getElementById("name").value, password: document.getElementById("password").value, email: document.getElementById("email").value || null, phone: document.getElementById("phone").value || null };
+        document.getElementById("submit").disabled = true;
+        fetch("/customer-portal/activation", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify(payload) })
+          .then((response) => response.ok ? response.json() : response.json().then((data) => Promise.reject(new Error(data.detail || "activation"))))
+          .then((data) => {
+            if (!data.redirect) throw new Error("activation");
+            form.hidden = true;
+            document.getElementById("loginLink").hidden = false;
+            setStatus(copy.activated, "success");
+            document.getElementById("name").value = "";
+            document.getElementById("password").value = "";
+            document.getElementById("email").value = "";
+            document.getElementById("phone").value = "";
+          })
+          .catch(() => { setStatus(copy.error, "error"); document.getElementById("submit").disabled = false; });
+      });
+    })();
+  </script>
+</body>
+</html>

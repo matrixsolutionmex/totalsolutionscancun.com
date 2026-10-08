@@ -8,12 +8,8 @@ from app.models.service_order import ServiceOrder
 from app.models.service_property import ServiceProperty
 from app.models.service_request import ServiceRequest
 from app.models.user import User
-from app.services.customer_account_service import (
-    customer_portal_config,
-    customer_portal_available,
-    require_customer,
-    verify_customer_claim,
-)
+from app.services.customer_account_service import customer_portal_config, customer_portal_available, require_customer
+from app.services.customer_invitation_service import consume_existing_customer_invitation
 
 
 router = APIRouter(prefix="/customer-portal", tags=["customer-portal"])
@@ -96,6 +92,6 @@ def customer_dashboard(user: User = Depends(get_current_user), db: Session = Dep
 @router.post("/claims/verify")
 def verify_claim(payload: CustomerClaimVerification, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     require_customer(user, db)
-    verify_customer_claim(db, payload.token, user)
+    consume_existing_customer_invitation(db, payload.token, user)
     db.commit()
     return {"status": "VERIFIED"}

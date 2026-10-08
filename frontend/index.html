@@ -6198,7 +6198,7 @@
         countryMissing: "País não informado",
         languageMissing: "Idioma a confirmar",
         whatsapp: "WhatsApp",
-        portalOpen: "Abrir portal do cliente", portalCopy: "Copiar link", portalWhatsapp: "Compartilhar pelo WhatsApp",
+        portalOpen: "Abrir portal do cliente", portalCopy: "Copiar link", portalWhatsapp: "Compartilhar pelo WhatsApp", portalInvite: "Convidar para o painel",
         call: "Ligar",
         contact: "Contacto",
         leads: "clientes",
@@ -6571,7 +6571,7 @@
         countryMissing: "Country not informed",
         languageMissing: "Language to confirm",
         whatsapp: "WhatsApp",
-        portalOpen: "Open customer portal", portalCopy: "Copy link", portalWhatsapp: "Share via WhatsApp",
+        portalOpen: "Open customer portal", portalCopy: "Copy link", portalWhatsapp: "Share via WhatsApp", portalInvite: "Invite to customer panel",
         call: "Call",
         contact: "Contact",
         leads: "clientes",
@@ -6952,7 +6952,7 @@
         countryMissing: "País no informado",
         languageMissing: "Idioma por confirmar",
         whatsapp: "WhatsApp",
-        portalOpen: "Abrir portal del cliente", portalCopy: "Copiar enlace", portalWhatsapp: "Compartir por WhatsApp",
+        portalOpen: "Abrir portal del cliente", portalCopy: "Copiar enlace", portalWhatsapp: "Compartir por WhatsApp", portalInvite: "Invitar al panel del cliente",
         call: "Llamar",
         contact: "Contacto",
         leads: "clientes",
@@ -8332,6 +8332,25 @@
       throw new Error("No hay teléfono válido para compartir este enlace.");
     }
 
+    async function inviteCustomerPortal(serviceRequestId, button) {
+      const channel = (window.prompt("Canal do convite: EMAIL ou PHONE", "EMAIL") || "").trim().toUpperCase();
+      if (!["EMAIL", "PHONE"].includes(channel)) return;
+      button.disabled = true;
+      try {
+        const response = await apiFetch(`${API_BASE}/customer-portal/admin/invitations`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ service_request_id: Number(serviceRequestId), channel, language: currentLanguage || "es", idempotency_key: `portal-invite:${serviceRequestId}:${channel}` })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || "No fue posible crear el convite.");
+        button.textContent = data.masked_destination ? `${t("portalInvite")}: ${data.masked_destination}` : t("portalInvite");
+      } catch (error) {
+        addPabloV2Message(error.message || "No fue posible crear el convite.", "ai");
+      } finally {
+        button.disabled = false;
+      }
+    }
+
     async function openTrackingDiagnostic(orderId) {
       if (currentUser?.role !== "ROOT" || !orderId) return;
       const modal = document.getElementById("trackingDiagnosticModal");
@@ -8759,6 +8778,7 @@
           <button class="small-btn" type="button" data-portal-open="${order.id}">${t("portalOpen")}</button>
           <button class="small-btn" type="button" data-portal-copy="${order.id}">${t("portalCopy")}</button>
           <button class="small-btn" type="button" data-portal-whatsapp="${order.id}">${t("portalWhatsapp")}</button>
+          ${order.service_request_id && order.customer_invitation_management_enabled === true ? `<button class="small-btn" type="button" data-portal-invite="${order.service_request_id}">${t("portalInvite")}</button>` : ""}
         </div>` : "";
 
       return `
@@ -15096,6 +15116,7 @@
       if (target.matches("[data-portal-open]")) openPortalLink(target.dataset.portalOpen);
       if (target.matches("[data-portal-copy]")) copyPortalLink(target);
       if (target.matches("[data-portal-whatsapp]")) openPortalWhatsApp(target.dataset.portalWhatsapp).catch((error) => addPabloV2Message(error.message, "ai"));
+      if (target.matches("[data-portal-invite]")) inviteCustomerPortal(target.dataset.portalInvite, target).catch((error) => addPabloV2Message(error.message, "ai"));
     });
     document.getElementById("trackingOperationsRoutes")?.addEventListener("click", async (event) => {
       const target = event.target;

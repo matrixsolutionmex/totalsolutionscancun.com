@@ -16,7 +16,7 @@ from app.core.organization import get_or_create_default_organization
 from app.core.storage import UPLOADS_DIR
 from app.auth.routes import router as auth_router
 from app.database.connection import Base, SessionLocal, engine
-from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, service_order_tracking, deletion_request, notification, user_lifecycle, auth_security, organization, organization_invitation, referral_attribution, service_property, service_request, service_opportunity, organization_marketplace_link, commercial_subscription, commercial_upgrade_intent, user_commercial_profile, pricing_rate, payment, service_order_financial, service_order_ledger_entry, visit_pricing_snapshot, organization_payment_policy, service_order_diagnosis, service_order_quote, service_order_payment_plan, service_order_installment_release_event, service_order_completion, service_order_warranty_claim, service_order_review, technician_skill, segmentation_referral, professional_application, professional_network, commercial_compliance, identity_provider, technician_earning, technician_earning_reconciliation, technician_compensation, customer_portal
+from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, service_order_tracking, deletion_request, notification, user_lifecycle, auth_security, organization, organization_invitation, referral_attribution, service_property, service_request, service_opportunity, organization_marketplace_link, commercial_subscription, commercial_upgrade_intent, user_commercial_profile, pricing_rate, payment, service_order_financial, service_order_ledger_entry, visit_pricing_snapshot, organization_payment_policy, service_order_diagnosis, service_order_quote, service_order_payment_plan, service_order_installment_release_event, service_order_completion, service_order_warranty_claim, service_order_review, technician_skill, segmentation_referral, professional_application, professional_network, commercial_compliance, identity_provider, technician_earning, technician_earning_reconciliation, technician_compensation, customer_portal, customer_invitation
 from app.models.lead import Lead
 from app.models.service_order import ServiceOrder
 from app.models.user import User
@@ -50,6 +50,7 @@ from app.routes.technician_earning_routes import router as technician_earning_ro
 from app.routes.technician_compensation_routes import router as technician_compensation_router
 from app.routes.organization_membership_routes import router as organization_membership_router
 from app.routes.customer_portal_routes import router as customer_portal_router
+from app.routes.customer_invitation_routes import router as customer_invitation_router
 from app.services.service_order_service import ensure_service_order
 from app.services.notification_service import process_email_outbox
 from app.services.commercial_upgrade_service import normalize_existing_upgrade_intents
@@ -83,6 +84,8 @@ STARTUP_MANUAL_MIGRATION_TABLES = frozenset({
     "technician_transfer_requests",
     "customer_service_links",
     "customer_claim_tokens",
+    "customer_portal_invitations",
+    "customer_portal_invitation_events",
 })
 
 
@@ -148,6 +151,7 @@ app.include_router(technician_earning_router)
 app.include_router(technician_compensation_router)
 app.include_router(organization_membership_router)
 app.include_router(customer_portal_router)
+app.include_router(customer_invitation_router)
 app.include_router(pablo_router)
 app.include_router(segmentation_referral_router)
 
@@ -754,6 +758,14 @@ def customer_portal_page():
     customer_page = frontend_dir / "customer-portal.html"
     if customer_page.exists():
         return FileResponse(customer_page, headers={"Cache-Control": "no-store, private"})
+    raise HTTPException(status_code=404, detail="Página indisponível")
+
+
+@app.get("/cliente/activar", include_in_schema=False)
+def customer_portal_activation_page():
+    activation_page = frontend_dir / "customer-portal-activate.html"
+    if activation_page.exists():
+        return FileResponse(activation_page, headers={"Cache-Control": "no-store, private"})
     raise HTTPException(status_code=404, detail="Página indisponível")
 
 

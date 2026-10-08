@@ -921,6 +921,14 @@ def process_email_outbox(db: Session, *, limit: int = 10) -> int:
             if item.template_type == "PASSWORD_RESET":
                 item.body_text = ""
                 item.body_html = ""
+            if item.customer_portal_invitation_id:
+                from app.models.customer_invitation import CustomerPortalInvitation, CustomerPortalInvitationEvent
+                invitation = db.query(CustomerPortalInvitation).filter_by(id=item.customer_portal_invitation_id).first()
+                if invitation:
+                    invitation.status = "DELIVERED"
+                    db.add(CustomerPortalInvitationEvent(invitation_id=invitation.id, organization_id=invitation.organization_id, event_type="INVITATION_DELIVERED"))
+                item.body_text = ""
+                item.body_html = ""
             sent += 1
         except Exception as exc:  # noqa: BLE001 - delivery must not break application work.
             item.status = "FAILED" if item.attempts >= EMAIL_OUTBOX_MAX_ATTEMPTS else "RETRY"
@@ -929,6 +937,14 @@ def process_email_outbox(db: Session, *, limit: int = 10) -> int:
                 item.body_text = ""
                 item.body_html = ""
             if item.template_type == "EMAIL_VERIFICATION":
+                item.body_text = ""
+                item.body_html = ""
+            if item.customer_portal_invitation_id:
+                from app.models.customer_invitation import CustomerPortalInvitation, CustomerPortalInvitationEvent
+                invitation = db.query(CustomerPortalInvitation).filter_by(id=item.customer_portal_invitation_id).first()
+                if invitation:
+                    invitation.status = "FAILED" if item.attempts >= EMAIL_OUTBOX_MAX_ATTEMPTS else "QUEUED"
+                    db.add(CustomerPortalInvitationEvent(invitation_id=invitation.id, organization_id=invitation.organization_id, event_type="INVITATION_FAILED"))
                 item.body_text = ""
                 item.body_html = ""
             item.claimed_at = None
