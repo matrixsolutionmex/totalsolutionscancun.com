@@ -193,7 +193,7 @@ def record_visit_payment(db: Session, payment, *, provider_payload: dict):
 
     entry = append_ledger_entry(
         db, order, organization_id=payment.organization_id, entry_type="VISIT_PAYMENT",
-        amount=snapshot.total_amount, currency=snapshot.currency, payment_method="STRIPE_CARD",
+        amount=snapshot.total_amount, currency=snapshot.currency, payment_method=payment.payment_method,
         payment_id=payment.id, external_reference=provider_payload.get("id"),
         idempotency_key=f"visit-payment:{payment.id}",
     )

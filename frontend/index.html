@@ -4605,6 +4605,24 @@
     </section>
   </div>
 
+  <div class="modal-backdrop" id="externalPaymentModal" hidden>
+    <form class="modal" id="externalPaymentForm" role="dialog" aria-modal="true" aria-labelledby="externalPaymentTitle">
+      <div class="modal-header"><div class="modal-title" id="externalPaymentTitle">Registrar pagamento externo</div><button class="ghost" type="button" id="externalPaymentClose">Cancelar</button></div>
+      <div class="modal-body">
+        <p id="externalPaymentOrder" class="modal-field full"></p>
+        <label class="modal-field"><span>Valor</span><input id="externalPaymentAmount" name="amount" type="number" min="0.01" step="0.01" required></label>
+        <label class="modal-field"><span>Moeda</span><select name="currency"><option>MXN</option><option>USD</option><option>CAD</option><option>EUR</option></select></label>
+        <label class="modal-field"><span>Finalidade</span><select name="purpose"><option value="VISIT">Visita</option><option value="SERVICE">Serviço</option><option value="INSTALLMENT">Parcela</option></select></label>
+        <label class="modal-field"><span>Forma de pagamento</span><select name="payment_method"><option value="BANK_TRANSFER">Transferência bancária</option><option value="CASH">Dinheiro</option><option value="CARD_EXTERNAL">Cartão externo</option><option value="OTHER_EXTERNAL">Outro meio externo</option></select></label>
+        <label class="modal-field full"><span>Referência da transação</span><input name="external_reference" maxlength="120" required></label>
+        <label class="modal-field full"><span>Comprovante</span><input name="evidence_reference" maxlength="240"></label>
+        <label class="modal-field full"><span>Observação</span><textarea name="observation" maxlength="2000"></textarea></label>
+        <p id="externalPaymentStatus" class="auth-status" role="status" aria-live="polite"></p>
+      </div>
+      <div class="modal-actions"><button class="ghost" type="button" id="externalPaymentCancel">Cancelar</button><button class="primary" type="submit" id="externalPaymentSubmit">Registrar recebimento</button></div>
+    </form>
+  </div>
+
   <section class="view" id="view-relatorios">
     <div class="view-grid">
       <div class="panel-box">
@@ -8612,6 +8630,64 @@
       openCustomerInvitationModal(serviceRequestId, button);
     }
 
+    const externalPaymentModal = document.getElementById("externalPaymentModal");
+    const externalPaymentForm = document.getElementById("externalPaymentForm");
+    const externalPaymentStatus = document.getElementById("externalPaymentStatus");
+    let externalPaymentOrderId = null;
+    let externalPaymentTrigger = null;
+    let externalPaymentBodyOverflow = "";
+
+    function closeExternalPaymentModal(restoreFocus = true) {
+      if (!externalPaymentModal) return;
+      externalPaymentModal.hidden = true;
+      externalPaymentModal.classList.remove("open");
+      document.body.style.overflow = externalPaymentBodyOverflow;
+      externalPaymentForm?.reset();
+      if (externalPaymentStatus) externalPaymentStatus.textContent = "";
+      const trigger = externalPaymentTrigger;
+      externalPaymentOrderId = null;
+      externalPaymentTrigger = null;
+      if (restoreFocus && trigger?.isConnected) trigger.focus();
+    }
+
+    function openExternalPaymentModal(orderId, trigger) {
+      if (!externalPaymentModal || !externalPaymentForm || !orderId) return;
+      externalPaymentOrderId = Number(orderId);
+      externalPaymentTrigger = trigger;
+      externalPaymentForm.reset();
+      document.getElementById("externalPaymentOrder").textContent = `OS interna: ${externalPaymentOrderId}`;
+      externalPaymentBodyOverflow = document.body.style.overflow;
+      externalPaymentModal.hidden = false;
+      externalPaymentModal.classList.add("open");
+      document.body.style.overflow = "hidden";
+      document.getElementById("externalPaymentAmount")?.focus();
+    }
+
+    async function submitExternalPayment(event) {
+      event.preventDefault();
+      if (!externalPaymentOrderId || !externalPaymentForm || externalPaymentForm.dataset.submitting === "1") return;
+      externalPaymentForm.dataset.submitting = "1";
+      const submit = document.getElementById("externalPaymentSubmit");
+      if (submit) submit.disabled = true;
+      if (externalPaymentStatus) externalPaymentStatus.textContent = "Registrando recebimento...";
+      const values = Object.fromEntries(new FormData(externalPaymentForm).entries());
+      try {
+        const response = await apiFetch(`${API_BASE}/payments/service-orders/${encodeURIComponent(externalPaymentOrderId)}/external`, {
+          method: "POST", headers: { "Accept": "application/json", "Content-Type": "application/json" },
+          body: JSON.stringify({ ...values, amount: Number(values.amount), evidence_reference: values.evidence_reference || null, observation: values.observation || null })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.detail || "Não foi possível registrar o recebimento.");
+        closeExternalPaymentModal(false);
+        await loadBoard();
+      } catch (error) {
+        if (externalPaymentStatus) externalPaymentStatus.textContent = error.message || "Não foi possível registrar o recebimento.";
+      } finally {
+        externalPaymentForm.dataset.submitting = "0";
+        if (submit) submit.disabled = false;
+      }
+    }
+
     async function openTrackingDiagnostic(orderId) {
       if (currentUser?.role !== "ROOT" || !orderId) return;
       const modal = document.getElementById("trackingDiagnosticModal");
@@ -9044,6 +9120,9 @@
           <button class="small-btn" type="button" data-portal-whatsapp="${order.id}">${t("portalWhatsapp")}</button>
           ${order.service_request_id && order.customer_invitation_management_enabled === true ? `<button class="small-btn" type="button" data-portal-invite="${order.service_request_id}">${t("portalInvite")}</button>` : ""}
         </div>` : "";
+      const externalPaymentActions = order.id && ["ROOT", "GERENTE"].includes(currentUser?.role)
+        ? `<div class="card-actions-row"><button class="small-btn" type="button" data-external-payment="${order.id}">Registrar pagamento externo</button></div>`
+        : "";
 
       return `
         <article class="card ${stageClass}" draggable="true" data-lead-id="${lead.id}">
@@ -9061,6 +9140,7 @@
           <div class="status">Entrada: <span>${escapeHtml(lead.received_at || lead.created_at || "-")}</span></div>
           <div class="status">Próximo contacto: <span>${escapeHtml(lead.proximo_contacto || "-")}</span></div>
           <div class="status">OS: <span>${escapeHtml(osNumber || "-")}</span></div>
+          ${externalPaymentActions}
           <div class="status">Estado de ruta: <span>${escapeHtml(order.status || "Sin iniciar")}</span></div>
           ${trackingActive ? `<div class="status">${t("uiSharingLocation")}</div>` : ""}
           ${trackingPublisherStatus.orderId === order.id && trackingPublisherStatus.message ? `<div class="status tracking-publisher-status ${escapeHtml(trackingPublisherStatus.kind)}">${escapeHtml(trackingPublisherStatus.message)}</div>` : ""}
@@ -15400,6 +15480,7 @@
       if (target.matches("[data-portal-copy]")) copyPortalLink(target);
       if (target.matches("[data-portal-whatsapp]")) openPortalWhatsApp(target.dataset.portalWhatsapp).catch((error) => addPabloV2Message(error.message, "ai"));
       if (target.matches("[data-portal-invite]")) inviteCustomerPortal(target.dataset.portalInvite, target).catch((error) => addPabloV2Message(error.message, "ai"));
+      if (target.matches("[data-external-payment]")) openExternalPaymentModal(target.dataset.externalPayment, target);
     });
     document.getElementById("trackingOperationsRoutes")?.addEventListener("click", async (event) => {
       const target = event.target;
@@ -15453,6 +15534,12 @@
     });
     customerInvitationModal?.addEventListener("click", (event) => {
       if (event.target === event.currentTarget) closeCustomerInvitationModal();
+    });
+    externalPaymentForm?.addEventListener("submit", submitExternalPayment);
+    document.getElementById("externalPaymentClose")?.addEventListener("click", () => closeExternalPaymentModal());
+    document.getElementById("externalPaymentCancel")?.addEventListener("click", () => closeExternalPaymentModal());
+    externalPaymentModal?.addEventListener("click", (event) => {
+      if (event.target === event.currentTarget) closeExternalPaymentModal();
     });
 
     document.getElementById("commercialPlanCards")?.addEventListener("click", (event) => {
@@ -16678,6 +16765,7 @@
 
       async function renderTracking() {
         const token = decodeURIComponent(path.split("/").pop() || "");
+        const paymentReturn = new URLSearchParams(window.location.search).get("payment") === "success";
         renderShell(`
           <section class="portal-panel">
             <header class="portal-panel-header">
@@ -16703,6 +16791,7 @@
         let lastAppliedTrackingActive = false;
         let trackingRequestSeq = 0;
         let trackingAppliedSeq = 0;
+        let paymentConfirmationPolls = 0;
         const trackingDiagnosticEnabled = localStorage.getItem("ts_tracking_diagnostic") === "1";
 
         const trackingDiagnosticPayload = (data, requestSeq, appliedSeq) => ({
@@ -17057,7 +17146,9 @@
             if (trackingDiagnosticEnabled) console.info("[tracking-diagnostic]", trackingDiagnosticPayload(data, requestSeq, trackingAppliedSeq));
             lastTrackingData = data;
             renderPublicTracking(data);
-            if (data.tracking_active === true && !document.hidden) trackingTimer = window.setTimeout(pollTracking, 12000);
+            if (!document.hidden && (data.tracking_active === true || (paymentReturn && data.payment_status === "PENDING" && paymentConfirmationPolls++ < 6))) {
+              trackingTimer = window.setTimeout(pollTracking, paymentReturn ? 5000 : 12000);
+            }
           } catch (_error) {
             if (requestSeq !== trackingRequestSeq) return;
             console.error("[tracking] render error", _error);

@@ -1,3 +1,4 @@
+import hashlib
 import json
 from decimal import Decimal
 
@@ -23,6 +24,8 @@ from app.services.payment_service import (
     verify_stripe_signature,
     create_stripe_checkout,
     reconcile_stripe_checkout_payment,
+    record_external_payment,
+    _stripe_retrieve_checkout_session,
 )
 from app.services.service_order_payment_plan_service import (
     create_installment_checkout,
@@ -56,6 +59,18 @@ class InstallmentReleaseRequest(BaseModel):
     trigger_type: str
     observation: str | None = None
     evidence_reference: str | None = None
+
+
+class ExternalPaymentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    amount: Decimal
+    currency: str
+    purpose: str
+    payment_method: str
+    external_reference: str
+    evidence_reference: str | None = None
+    observation: str | None = None
 
 
 def _public_base_url() -> str:
@@ -120,6 +135,26 @@ def create_public_visit_checkout(
     )
     if payment.gross_amount != amount or str(payment.currency).upper() != str(snapshot.currency).upper():
         raise HTTPException(status_code=409, detail="El pago pendiente no coincide con el snapshot")
+    checkout_idempotency_key = payment.idempotency_key
+    if payment.stripe_checkout_session_id:
+        try:
+            session = _stripe_retrieve_checkout_session(payment.stripe_checkout_session_id)
+        except HTTPException as exc:
+            if exc.status_code == 502 and payment.checkout_url:
+                db.commit()
+                return {"status": payment.status, "checkout_url": payment.checkout_url}
+            raise
+        from app.services.payment_service import _validate_livemode
+        _validate_livemode(session.get("livemode"))
+        if session.get("status") == "complete" and session.get("payment_status") == "paid":
+            payment = reconcile_stripe_checkout_payment(db, payment)
+            db.commit()
+            raise HTTPException(status_code=409, detail="VISIT_ALREADY_PAID")
+        if session.get("status") == "expired":
+            old_session = payment.stripe_checkout_session_id
+            payment.stripe_checkout_session_id = None
+            payment.checkout_url = None
+            checkout_idempotency_key = f"{payment.idempotency_key}:retry:{hashlib.sha256(old_session.encode()).hexdigest()[:16]}"
     base_url = _public_base_url()
     if not base_url:
         raise HTTPException(status_code=503, detail="Checkout publico no configurado")
@@ -129,10 +164,38 @@ def create_public_visit_checkout(
         success_url=f"{base_url}/seguimiento/{canonical_token}?payment=success",
         cancel_url=f"{base_url}/seguimiento/{canonical_token}?payment=cancelled",
         description="Total Solutions - visita tecnica",
+        idempotency_key=checkout_idempotency_key,
     )
     payment.status = "PENDING"
     db.commit()
     return {"status": payment.status, "checkout_url": payment.checkout_url}
+
+
+@router.post("/service-orders/{order_id}/external")
+def register_external_payment(
+    order_id: int,
+    payload: ExternalPaymentRequest,
+    db: Session = Depends(get_db),
+    actor=Depends(require_admin_user),
+):
+    query = db.query(ServiceOrder).filter(ServiceOrder.id == order_id)
+    if actor.role != "ROOT":
+        query = query.filter(ServiceOrder.organization_id == actor.organization_id)
+    order = query.first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Ordem de serviço não encontrada")
+    try:
+        payment = record_external_payment(
+            db, order=order, actor=actor, amount=payload.amount, currency=payload.currency,
+            purpose=payload.purpose, payment_method=payload.payment_method,
+            external_reference=payload.external_reference, evidence_reference=payload.evidence_reference,
+            observation=payload.observation,
+        )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"payment_id": payment.id, "status": payment.status, "amount": float(payment.gross_amount), "currency": payment.currency}
 
 
 @router.post("/public/service-requests/{tracking_token}/installments/{installment_sequence}/checkout")

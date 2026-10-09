@@ -16,6 +16,8 @@ from sqlalchemy.orm import Session
 
 from app.models.payment import Payment, PlatformLedgerEntry
 from app.models.service_order import ServiceOrder
+from app.models.service_order_financial import ServiceOrderFinancial
+from app.models.visit_pricing_snapshot import VisitPricingSnapshot
 from app.services.service_order_financial_service import record_visit_payment
 from app.services.service_order_financial_service import append_ledger_entry, sync_financial_account_projection
 
@@ -32,7 +34,11 @@ def stripe_currency() -> str:
 
 
 def stripe_expected_livemode() -> bool:
-    value = os.getenv("STRIPE_EXPECTED_LIVEMODE", "false").strip().lower()
+    configured = os.getenv("STRIPE_EXPECTED_LIVEMODE")
+    if configured is None:
+        environment = (os.getenv("RAILWAY_ENVIRONMENT_NAME") or os.getenv("ENVIRONMENT") or "").strip().lower()
+        return environment not in {"", "local", "development", "dev", "test", "testing"}
+    value = configured.strip().lower()
     if value not in {"true", "false"}:
         raise RuntimeError("STRIPE_EXPECTED_LIVEMODE must be true or false")
     return value == "true"
@@ -62,7 +68,10 @@ def _stripe_request(path: str, *, data: dict[str, str], idempotency_key: str) ->
     secret = os.getenv("STRIPE_SECRET_KEY", "").strip()
     if not secret:
         raise HTTPException(status_code=503, detail="Stripe sandbox nao configurado")
-    _validate_secret_mode(secret)
+    try:
+        _validate_secret_mode(secret)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="Checkout Stripe nao configurado para este ambiente") from exc
     try:
         response = httpx.post(
             f"{STRIPE_API_URL}{path}",
@@ -82,7 +91,10 @@ def _stripe_retrieve_checkout_session(session_id: str) -> dict:
     secret = os.getenv("STRIPE_SECRET_KEY", "").strip()
     if not secret:
         raise HTTPException(status_code=503, detail="Stripe sandbox nao configurado")
-    _validate_secret_mode(secret)
+    try:
+        _validate_secret_mode(secret)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="Checkout Stripe nao configurado para este ambiente") from exc
     try:
         response = httpx.get(
             f"{STRIPE_API_URL}/checkout/sessions/{session_id}",
@@ -110,6 +122,7 @@ def create_payment(
     technician_id: int | None = None,
     upgrade_intent_id: int | None = None,
     idempotency_key: str | None = None,
+    currency: str | None = None,
 ) -> Payment:
     key = idempotency_key or str(uuid4())
     existing = db.query(Payment).filter(Payment.idempotency_key == key).first()
@@ -124,7 +137,7 @@ def create_payment(
         upgrade_intent_id=upgrade_intent_id,
         payment_type=payment_type,
         payment_method=payment_method,
-        currency=stripe_currency(),
+        currency=(currency or stripe_currency()).strip(),
         gross_amount=Decimal(amount),
         provider="STRIPE" if payment_method == "STRIPE_CARD" else "INTERNAL",
         idempotency_key=key,
@@ -144,6 +157,7 @@ def create_stripe_checkout(
     description: str,
     stripe_price_id: str | None = None,
     recurring: bool = False,
+    idempotency_key: str | None = None,
 ) -> Payment:
     if payment.payment_method != "STRIPE_CARD":
         raise HTTPException(status_code=400, detail="Pagamento nao usa checkout Stripe")
@@ -183,7 +197,7 @@ def create_stripe_checkout(
         })
         if recurring:
             data["line_items[0][price_data][recurring][interval]"] = "month"
-    payload = _stripe_request("/checkout/sessions", data=data, idempotency_key=payment.idempotency_key)
+    payload = _stripe_request("/checkout/sessions", data=data, idempotency_key=idempotency_key or payment.idempotency_key)
     checkout_session_id = payload.get("id")
     checkout_url = payload.get("url")
     if not checkout_session_id or not isinstance(checkout_url, str) or not checkout_url.strip():
@@ -495,6 +509,11 @@ def handle_stripe_event(db: Session, event: dict) -> Payment | None:
             raise ValueError("Stripe event organization does not match the stored payment")
         webhook.payment_id = payment.id
         webhook.organization_id = payment.organization_id
+        if payment.status in {"CANCELLED", "SUPERSEDED"} and event_type not in {"charge.refunded", "charge.dispute.created", "charge.dispute.updated", "charge.dispute.closed"}:
+            webhook.status = "IGNORED"
+            webhook.processed_at = datetime.utcnow()
+            db.flush()
+            return payment
         if event_type == "charge.refunded":
             payment = _apply_refund(db, payment, event, object_data)
             if payment.service_order_id:
@@ -614,5 +633,120 @@ def record_cash_payment(db: Session, payment: Payment) -> Payment:
     for entry in db.query(PlatformLedgerEntry).filter(PlatformLedgerEntry.payment_id == payment.id).all():
         if entry.entry_type == "PLATFORM_FEE":
             entry.amount = fee
+    db.flush()
+    return payment
+
+
+def record_external_payment(
+    db: Session, *, order: ServiceOrder, actor, amount: Decimal, currency: str,
+    purpose: str, payment_method: str, external_reference: str,
+    evidence_reference: str | None = None, observation: str | None = None,
+) -> Payment:
+    """Record an externally confirmed receipt exactly once and audit its actor."""
+    from app.models.external_payment_confirmation import ExternalPaymentConfirmation
+    from app.services.service_order_payment_plan_service import SERVICE_PAYMENT_TYPES, record_service_installment_payment
+
+    purpose = purpose.strip().upper()
+    payment_method = payment_method.strip().upper()
+    currency = currency.strip().upper()
+    reference = external_reference.strip()
+    if purpose not in {"VISIT", "SERVICE", "INSTALLMENT"} or payment_method not in {"BANK_TRANSFER", "CASH", "CARD_EXTERNAL", "OTHER_EXTERNAL"}:
+        raise ValueError("payment purpose is not supported")
+    if not reference or len(reference) > 120 or amount <= 0:
+        raise ValueError("external payment details are invalid")
+    existing_confirmation = db.query(ExternalPaymentConfirmation).filter_by(
+        organization_id=order.organization_id, external_reference=reference,
+    ).with_for_update().first()
+    if existing_confirmation:
+        if existing_confirmation.service_order_id != order.id or existing_confirmation.amount != amount or existing_confirmation.currency != currency:
+            raise ValueError("external reference is already linked to another payment")
+        return db.query(Payment).filter_by(id=existing_confirmation.payment_id).one()
+
+    payment = None
+    if purpose == "VISIT":
+        payment = db.query(Payment).filter(
+            Payment.service_order_id == order.id, Payment.organization_id == order.organization_id,
+            Payment.payment_type == "TECHNICAL_VISIT", Payment.payment_method != "STRIPE_CARD",
+            Payment.status.in_({"PENDING", "CHECKOUT_CREATED", "FAILED"}),
+        ).order_by(Payment.id.desc()).first()
+        expected = db.query(VisitPricingSnapshot).filter_by(
+            service_order_id=order.id, organization_id=order.organization_id,
+        ).one_or_none()
+        if not expected or Decimal(str(expected.total_amount)) != amount or str(expected.currency).upper() != currency:
+            raise ValueError("external payment does not match the visit snapshot")
+        payment_type = "TECHNICAL_VISIT"
+    else:
+        payment_query = db.query(Payment).filter(
+            Payment.service_order_id == order.id, Payment.organization_id == order.organization_id,
+            Payment.status.in_({"PENDING", "CHECKOUT_CREATED", "FAILED"}),
+        )
+        if purpose == "INSTALLMENT":
+            payment_query = payment_query.filter(Payment.installment_id.isnot(None))
+        payment = payment_query.order_by(Payment.id.desc()).first()
+        payment_type = "SERVICE_FULL" if purpose == "SERVICE" else None
+        if purpose == "INSTALLMENT" and (not payment or payment.payment_type not in SERVICE_PAYMENT_TYPES):
+            raise ValueError("installment payment is not available")
+        if purpose == "SERVICE":
+            financial = db.query(ServiceOrderFinancial).filter_by(
+                service_order_id=order.id, organization_id=order.organization_id,
+            ).one_or_none()
+            outstanding = Decimal(str(financial.service_outstanding_balance or 0)) if financial else Decimal("0.00")
+            if not financial or outstanding <= 0 or amount > outstanding:
+                raise ValueError("external payment does not match the outstanding service balance")
+    if payment and payment.status in {"PAID", "PAID_CASH"}:
+        raise ValueError("payment is already confirmed")
+    if purpose == "VISIT":
+        pending_stripe_payments = db.query(Payment).filter(
+            Payment.service_order_id == order.id,
+            Payment.organization_id == order.organization_id,
+            Payment.payment_type == "TECHNICAL_VISIT",
+            Payment.payment_method == "STRIPE_CARD",
+            Payment.status.in_({"PENDING", "CHECKOUT_CREATED"}),
+        ).with_for_update().all()
+        for pending_stripe in pending_stripe_payments:
+            pending_stripe.status = "CANCELLED"
+            pending_stripe.updated_at = datetime.utcnow()
+            pending_stripe.checkout_url = None
+    if not payment:
+        payment = create_payment(
+            db, organization_id=order.organization_id, payment_type=payment_type,
+            payment_method=payment_method, amount=amount, currency=currency,
+            service_request_id=order.service_request_id, service_order_id=order.id,
+            lead_id=order.lead_id, technician_id=order.responsible_user_id,
+            idempotency_key=f"external-payment:{order.id}:{reference}",
+        )
+    if Decimal(str(payment.gross_amount)) != amount or str(payment.currency).upper() != currency:
+        raise ValueError("external payment does not match the stored amount")
+    payment.payment_method = payment_method
+    payment.provider = "INTERNAL"
+    payment.status = "PENDING"
+    mark_payment_paid(db, payment, provider_payload={})
+    if purpose == "VISIT":
+        record_visit_payment(db, payment, provider_payload={"amount_total": int(amount * 100), "currency": currency, "id": reference})
+    elif purpose == "INSTALLMENT":
+        record_service_installment_payment(db, payment, provider_payload={"amount_total": int(amount * 100), "currency": currency})
+    else:
+        append_ledger_entry(
+            db, order, organization_id=order.organization_id, entry_type="SERVICE_PAYMENT",
+            amount=amount, currency=currency, payment_method=payment_method,
+            payment_id=payment.id, external_reference=reference,
+            idempotency_key=f"external-service-payment:{payment.id}",
+        )
+        financial = db.query(ServiceOrderFinancial).filter_by(
+            service_order_id=order.id, organization_id=order.organization_id,
+        ).one_or_none()
+        if financial:
+            financial.service_paid_amount = Decimal(str(financial.service_paid_amount or 0)) + amount
+            financial.service_outstanding_balance = max(Decimal("0.00"), Decimal(str(financial.service_outstanding_balance or 0)) - amount)
+            financial.updated_at = datetime.utcnow()
+    if payment.service_order_id:
+        from app.services.technician_earning_reconciliation_service import reconcile_confirmed_payment
+        reconcile_confirmed_payment(db, payment, provider_event_key=f"external:{order.id}:{reference}", confirmed_amount=payment.gross_amount)
+    db.add(ExternalPaymentConfirmation(
+        organization_id=order.organization_id, service_order_id=order.id, payment_id=payment.id,
+        purpose=purpose, payment_method=payment_method, amount=amount, currency=currency,
+        external_reference=reference, evidence_reference=(evidence_reference or "").strip()[:240] or None,
+        observation=(observation or "").strip()[:2000] or None, confirmed_by_user_id=actor.id,
+    ))
     db.flush()
     return payment
