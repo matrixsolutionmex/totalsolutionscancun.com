@@ -28,7 +28,7 @@
       <h1 data-i18n="title">Panel del cliente</h1>
       <p data-i18n="subtitle">Consulta tus solicitudes y propiedades vinculadas.</p>
       <div class="actions">
-        <a class="button" href="/solicitar-servico?customer_portal=1" data-i18n="newRequest">Nueva solicitud</a>
+        <a class="button" id="newRequest" href="/solicitar-servico?customer_portal=1" data-i18n="newRequest">Nueva solicitud</a>
         <button class="button secondary" id="customerLogout" type="button" data-i18n="logout">Cerrar sesión</button>
       </div>
     </header>
@@ -50,15 +50,16 @@
       const properties = document.getElementById("properties");
       const empty = document.getElementById("empty");
       const copy = {
-        es: { title: "Panel del cliente", subtitle: "Consulta tus solicitudes y propiedades vinculadas.", newRequest: "Nueva solicitud", logout: "Cerrar sesión", loggingOut: "Cerrando sesión...", services: "Mis solicitudes", properties: "Mis propiedades", empty: "No hay solicitudes vinculadas." },
-        en: { title: "Customer dashboard", subtitle: "View your linked requests and properties.", newRequest: "New request", logout: "Log out", loggingOut: "Logging out...", services: "My requests", properties: "My properties", empty: "No linked requests." },
-        pt: { title: "Painel do cliente", subtitle: "Consulte suas solicitações e imóveis vinculados.", newRequest: "Nova solicitação", logout: "Sair", loggingOut: "Saindo...", services: "Minhas solicitações", properties: "Meus imóveis", empty: "Nenhuma solicitação vinculada.", loading: "Carregando..." }
+        es: { title: "Panel del cliente", subtitle: "Consulta tus solicitudes y propiedades vinculadas.", newRequest: "Nueva solicitud", logout: "Cerrar sesión", loggingOut: "Cerrando sesión...", services: "Mis solicitudes", properties: "Mis propiedades", empty: "No hay solicitudes vinculadas.", track: "Acompañar", technician: "Técnico", payment: "Pago", documents: "Documentos" },
+        en: { title: "Customer dashboard", subtitle: "View your linked requests and properties.", newRequest: "New request", logout: "Log out", loggingOut: "Logging out...", services: "My requests", properties: "My properties", empty: "No linked requests.", track: "Track service", technician: "Technician", payment: "Payment", documents: "Documents" },
+        pt: { title: "Painel do cliente", subtitle: "Consulte suas solicitações e imóveis vinculados.", newRequest: "Nova solicitação", logout: "Sair", loggingOut: "Saindo...", services: "Minhas solicitações", properties: "Meus imóveis", empty: "Nenhuma solicitação vinculada.", loading: "Carregando...", track: "Acompanhar", technician: "Técnico", payment: "Pagamento", documents: "Documentos" }
       };
       copy.es.loading = "Cargando...";
       copy.en.loading = "Loading...";
       const requestedLanguage = new URLSearchParams(window.location.search).get("lang") || navigator.language || "es";
       const language = requestedLanguage.toLowerCase().startsWith("pt") ? "pt" : requestedLanguage.toLowerCase().startsWith("en") ? "en" : "es";
       const logoutButton = document.getElementById("customerLogout");
+      const newRequest = document.getElementById("newRequest");
       const clearLegacyStorage = () => {
         try {
           for (const key of Object.keys(localStorage)) {
@@ -77,6 +78,9 @@
       };
       document.documentElement.lang = language;
       document.querySelectorAll("[data-i18n]").forEach((node) => { node.textContent = copy[language][node.dataset.i18n] || node.textContent; });
+      newRequest.addEventListener("click", (event) => {
+        event.currentTarget.href = "/solicitar-servico?customer_portal=1&lang=" + encodeURIComponent(language === "pt" ? "pt" : language);
+      });
       logoutButton.addEventListener("click", async () => {
         if (logoutButton.disabled) return;
         logoutButton.disabled = true;
@@ -103,17 +107,30 @@
       const render = (data) => {
         loading.classList.add("hidden");
         panel.classList.remove("hidden");
-        services.innerHTML = (data.services || []).map((service) => `<article class="item"><strong>${escapeHtml(service.order_number || `#${service.id}`)}</strong><div>${escapeHtml(service.service_category || "")}</div><div class="muted">${escapeHtml(service.status || "")}</div><div class="muted">${escapeHtml(service.property?.locality || "")}</div></article>`).join("");
+        services.innerHTML = (data.services || []).map((service) => `<article class="item"><strong>${escapeHtml(service.order_number || `#${service.id}`)}</strong><div>${escapeHtml(service.service_category || "")}</div><div class="muted">${escapeHtml(service.status || "")}</div><div class="muted">${escapeHtml(service.property?.profile_type || "")} · ${escapeHtml(service.property?.locality || "")}</div><div class="muted">${escapeHtml(copy[language].technician)}: ${escapeHtml(service.technician || "-")}</div><div class="muted">${escapeHtml(copy[language].payment)}: ${escapeHtml(service.payment_status || "-")}</div>${service.documents?.length ? `<div class="muted">${escapeHtml(copy[language].documents)}: ${service.documents.length}</div>` : ""}${service.tracking_url ? `<div class="actions"><a class="button secondary" href="${escapeHtml(service.tracking_url)}">${escapeHtml(copy[language].track)}</a></div>` : ""}</article>`).join("");
         properties.innerHTML = (data.properties || []).map((property) => `<article class="item"><strong>${escapeHtml(property.profile_type || "")}</strong><div class="muted">${escapeHtml(property.locality || "")}</div></article>`).join("");
         empty.classList.toggle("hidden", Boolean(data.services?.length));
       };
       const validDashboardPayload = (data) => Boolean(
         data && Array.isArray(data.services) && Array.isArray(data.properties)
       );
+      let refreshTimer = null;
       const fetchWithTimeout = (url, options = {}, timeoutMs = 10000) => {
         const controller = new AbortController();
         const timer = window.setTimeout(() => controller.abort(), timeoutMs);
         return fetch(url, { ...options, signal: controller.signal }).finally(() => window.clearTimeout(timer));
+      };
+      const refreshDashboard = async () => {
+        const response = await fetchWithTimeout("/customer-portal/me/dashboard", { credentials: "same-origin" });
+        if (response.status === 401) {
+          redirectToLogin();
+          return;
+        }
+        if (!response.ok) throw new Error("dashboard");
+        const data = await response.json();
+        if (!validDashboardPayload(data)) throw new Error("dashboard-payload");
+        newRequest.href = data.new_request_url || newRequest.href;
+        render(data);
       };
       loading.textContent = copy[language].loading;
       fetchWithTimeout("/customer-portal/config", { credentials: "same-origin" })
@@ -127,8 +144,15 @@
         .then((config) => config.customer_portal_enabled ? fetchWithTimeout("/customer-portal/me/dashboard", { credentials: "same-origin" }) : Promise.reject(new Error("disabled")))
         .then((response) => response.ok ? response.json() : Promise.reject(new Error("dashboard")))
         .then((data) => validDashboardPayload(data) ? data : Promise.reject(new Error("dashboard-payload")))
-        .then(render)
+        .then((data) => {
+          newRequest.href = data.new_request_url || newRequest.href;
+          render(data);
+          refreshTimer = window.setInterval(() => {
+            if (!document.hidden) refreshDashboard().catch(() => {});
+          }, 30000);
+        })
         .catch(() => { loading.classList.add("hidden"); panel.classList.add("hidden"); });
+      window.addEventListener("pagehide", () => { if (refreshTimer) window.clearInterval(refreshTimer); });
     })();
   </script>
 </body>

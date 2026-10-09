@@ -15,7 +15,7 @@ from app.models.service_order import ServiceOrder
 from app.models.service_property import ServiceProperty
 from app.models.service_request import ServiceRequest
 from app.models.user import User
-from app.routes.customer_portal_routes import customer_dashboard, get_customer_portal_config
+from app.routes.customer_portal_routes import customer_dashboard, create_customer_service_request, get_customer_portal_config
 from app.services.customer_account_service import (
     customer_portal_available,
     customer_portal_config,
@@ -100,6 +100,51 @@ def test_customer_dashboard_returns_only_verified_links(monkeypatch, db):
     assert dashboard["services"][0]["property"]["locality"] == "Cancun"
     assert "email" not in dashboard["services"][0]
     assert customer_portal_available(db, org.id) is True
+
+
+def test_customer_portal_request_endpoint_derives_identity_from_session(monkeypatch, db):
+    monkeypatch.setenv("CUSTOMER_PORTAL_ENABLED", "true")
+    monkeypatch.setenv("CUSTOMER_PORTAL_ROLLOUT_MODE", "all")
+    org, _, customer, _, request = make_customer_fixture(db)
+    captured = {}
+
+    def fake_create(db_session, payload, **kwargs):
+        captured.update(payload)
+        assert kwargs["actor"] is customer
+        assert kwargs["organization_id"] == org.id
+        return request
+
+    monkeypatch.setattr("app.routes.customer_portal_routes.create_customer_request_and_order", fake_create)
+    monkeypatch.setattr("app.routes.customer_portal_routes.create_opportunity_from_service_request", lambda *_args: None)
+    body = "&".join([
+        "property_type=Casa", "service_category=Eletrica", "address_line1=Casa QA",
+        "location_confirmed=true", "consent_privacy=true", "idempotency_key=portal-identity-test",
+        "requester_name=Attacker", "requester_email=attacker%40invalid.test",
+    ]).encode()
+
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    from starlette.requests import Request
+    response = __import__("asyncio").run(create_customer_service_request(
+        Request({"type": "http", "method": "POST", "path": "/customer-portal/me/service-requests", "headers": [(b"content-type", b"application/x-www-form-urlencoded"), (b"content-length", str(len(body)).encode())]}, receive),
+        customer,
+        db,
+    ))
+    assert response["order_number"] == "TS-CUSTOMER-1"
+    assert captured["requester_name"] == customer.full_name or captured["requester_name"] == customer.username
+    assert captured["requester_email"] == customer.email
+    assert captured["requester_email"] != "attacker@invalid.test"
+
+
+def test_customer_portal_frontend_uses_authenticated_request_mode():
+    index = (Path(__file__).parents[2] / "frontend" / "index.html").read_text()
+    portal = (Path(__file__).parents[2] / "frontend" / "customer-portal.html").read_text()
+    assert 'const customerPublicExperience = ["/solicitar-servico", "/solicitud-enviada"].includes(window.location.pathname);' in index
+    assert 'const customerPortalMode = isPortal && new URLSearchParams(window.location.search).get("customer_portal") === "1";' in index
+    assert '`${apiBase}/customer-portal/me/service-requests`' in index
+    assert 'href="/solicitar-servico?customer_portal=1"' in portal
+    assert 'service.tracking_url' in portal
 
 
 def test_customer_portal_config_is_tenant_and_role_scoped(monkeypatch, db):

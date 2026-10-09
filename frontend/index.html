@@ -5409,6 +5409,7 @@
       const candidate = new URLSearchParams(window.location.search).get("next") || "";
       return /^\/(?!\/)/.test(candidate) && !candidate.includes("://") ? candidate : "";
     })();
+    const customerPublicExperience = ["/solicitar-servico", "/solicitud-enviada"].includes(window.location.pathname);
     let customerRedirecting = false;
     const pendingInviteToken = window.location.pathname.startsWith("/invite/")
       ? decodeURIComponent(window.location.pathname.slice("/invite/".length).split("/")[0] || "")
@@ -12303,6 +12304,11 @@
         idioma: user.idioma || user.organization_language || currentLanguage || "es"
       };
       if (String(currentUser.role || "").toUpperCase() === "CLIENTE") {
+        if (customerPublicExperience) {
+          // The customer request/confirmation shell is public HTML, but its submit
+          // endpoint derives identity from the HttpOnly session cookie.
+          return;
+        }
         clearCustomerBrowserState();
         customerRedirecting = true;
         const customerLanguage = currentUser.idioma || currentUser.organization_language || "es";
@@ -15772,6 +15778,10 @@
     }
 
     async function restoreSession() {
+      if (customerPublicExperience) {
+        hideSplash();
+        return;
+      }
       const savedUser = localStorage.getItem("totalsolutions_user");
       if (new URLSearchParams(window.location.search).has("reset_token")) {
         showResetPasswordForm();
@@ -15826,6 +15836,7 @@
     (() => {
       const path = window.location.pathname;
       const isPortal = path === "/solicitar-servico";
+      const customerPortalMode = isPortal && new URLSearchParams(window.location.search).get("customer_portal") === "1";
       const isConfirmation = path === "/solicitud-enviada";
       const marketplacePath = path.match(/^\/m\/([^/]+)(?:\/([^/]+))?\/?$/);
       const isMarketplace = Boolean(marketplacePath);
@@ -16515,7 +16526,7 @@
                 <div class="portal-grid">
                   <div class="portal-field">
                     <label for="requester_name">${pt("name")} *</label>
-                    <input id="requester_name" name="requester_name" required autocomplete="name" />
+                    <input id="requester_name" name="requester_name" ${customerPortalMode ? "" : "required"} autocomplete="name" />
                   </div>
                   <div class="portal-field">
                     <label for="requester_phone">${pt("phone")}</label>
@@ -17226,11 +17237,14 @@
         });
         form.addEventListener("submit", async (event) => {
           event.preventDefault();
+          const submitButton = form.querySelector('button[type="submit"]');
+          if (submitButton?.disabled) return;
           if (!selectedLocation || locationConfirmed.value !== "1") {
             message.className = "portal-message error";
             message.textContent = pt("confirmBeforeSend");
             return;
           }
+          if (submitButton) submitButton.disabled = true;
           message.className = "portal-message";
           message.textContent = pt("sending");
           const formData = new FormData(form);
@@ -17241,7 +17255,9 @@
           }
           formData.set("idempotency_key", crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
           try {
-            const endpoint = marketplaceContext
+            const endpoint = customerPortalMode
+              ? `${apiBase}/customer-portal/me/service-requests`
+              : marketplaceContext
               ? `${apiBase}/public/service-requests?organization_slug=${encodeURIComponent(marketplaceOrganizationSlug)}&marketplace_link_slug=${encodeURIComponent(marketplaceLinkSlug)}`
               : `${apiBase}/public/service-requests`;
             await confirmationState.submit({
@@ -17256,6 +17272,7 @@
           } catch (error) {
             message.className = "portal-message error";
             message.textContent = error.message || pt("route");
+            if (submitButton) submitButton.disabled = false;
           }
         });
       }
