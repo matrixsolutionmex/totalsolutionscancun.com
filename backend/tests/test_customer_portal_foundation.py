@@ -126,6 +126,22 @@ def test_customer_portal_frontend_has_bounded_fail_closed_fetch():
     assert "controller.abort()" in source
     assert "loading.classList.add(\"hidden\")" in source
     assert "validDashboardPayload(data)" in source
+    assert "response.status === 401" in source
+    assert 'next=${encodeURIComponent("/cliente")}' in source
+    assert "window.location.replace" in source
+
+
+def test_customer_session_is_cookie_only_and_portal_has_logout():
+    index = (Path(__file__).parents[2] / "frontend" / "index.html").read_text()
+    portal = (Path(__file__).parents[2] / "frontend" / "customer-portal.html").read_text()
+    customer_branch = index.index('String(currentUser.role || "").toUpperCase() === "CLIENTE"')
+    assert "clearCustomerBrowserState();" in index[customer_branch:customer_branch + 500]
+    staff_persistence = index.index('localStorage.setItem("totalsolutions_user"', customer_branch)
+    assert 'localStorage.setItem("totalsolutions_user"' not in index[customer_branch:staff_persistence]
+    assert "id=\"customerLogout\"" in portal
+    assert 'fetch("/auth/logout"' in portal
+    assert 'window.location.replace(loginUrl())' in portal
+    assert "sessionStorage.clear()" in portal
 
 
 def test_customer_claim_requires_matching_verified_channel(monkeypatch, db):

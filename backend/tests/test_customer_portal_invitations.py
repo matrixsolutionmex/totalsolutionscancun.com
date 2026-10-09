@@ -6,6 +6,9 @@ import app.main  # noqa: F401
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
+from fastapi.security import HTTPAuthorizationCredentials
+from starlette.requests import Request
+from starlette.responses import Response
 
 from app.database.connection import Base
 from app.models.customer_invitation import CustomerPortalInvitation, CustomerPortalInvitationEvent
@@ -25,6 +28,8 @@ from app.services.customer_invitation_service import (
 )
 from app.models.customer_portal import CustomerServiceLink, CustomerClaimToken
 from app.services.customer_account_service import create_customer_claim_token
+from app.auth.jwt_handler import create_access_token, customer_route_allowed, get_current_user
+from app.auth.routes import issue_authenticated_response
 
 
 @pytest.fixture()
@@ -218,6 +223,98 @@ def test_activation_page_is_localized_and_requires_normal_login_after_claim():
     assert "loginDestination" in index
     assert "window.location.replace(loginDestination)" in index
     assert "!candidate.includes(\"://\")" in index
+
+
+@pytest.mark.parametrize("path", [
+    "/auth/me",
+    "/auth/logout",
+    "/auth/google/link",
+    "/auth/google/link/status",
+    "/users/me/heartbeat",
+    "/users/42/profile",
+    "/customer-portal/config",
+    "/customer-portal/me/dashboard",
+])
+def test_customer_auth_allowlist_keeps_only_account_and_portal_routes(path):
+    assert customer_route_allowed(path) is True
+
+
+@pytest.mark.parametrize("path", [
+    "/",
+    "/leads",
+    "/board",
+    "/users",
+    "/users/42",
+    "/users/42/profile-photo",
+    "/network/organizations",
+    "/payments",
+    "/ledger",
+    "/technician-earnings/me",
+    "/identity-verification/review",
+    "/admin/config",
+])
+def test_customer_auth_allowlist_blocks_staff_and_financial_routes(path):
+    assert customer_route_allowed(path) is False
+
+
+def test_customer_dependency_blocks_staff_routes_after_valid_authentication(db):
+    org = Organization(name="Isolation QA", slug="isolation-qa", status="ACTIVE")
+    db.add(org)
+    db.flush()
+    customer = User(
+        organization_id=org.id,
+        username="isolated-customer",
+        email="isolated-customer@example.test",
+        password_hash="x",
+        role="CLIENTE",
+        status="ACTIVE",
+        is_active=True,
+        email_verified=True,
+    )
+    db.add(customer)
+    db.commit()
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=create_access_token(customer))
+
+    def request_for(path):
+        return Request({"type": "http", "method": "GET", "path": path, "headers": [], "query_string": b""})
+
+    assert get_current_user(request_for("/auth/me"), credentials=credentials, db=db).id == customer.id
+    with pytest.raises(Exception) as error:
+        get_current_user(request_for("/leads"), credentials=credentials, db=db)
+    assert getattr(error.value, "status_code", None) == 403
+
+
+def test_customer_authentication_omits_bearer_token_and_sets_session_cookie(db):
+    org = Organization(name="Cookie Portal QA", slug="cookie-portal-qa", status="ACTIVE")
+    db.add(org)
+    db.flush()
+    customer = User(
+        organization_id=org.id,
+        username="cookie-customer",
+        email="cookie-customer@example.test",
+        password_hash="x",
+        role="CLIENTE",
+        status="ACTIVE",
+        is_active=True,
+        email_verified=True,
+    )
+    db.add(customer)
+    db.flush()
+    request = Request({"type": "http", "method": "POST", "path": "/auth/login", "headers": [], "client": ("127.0.0.1", 8000)})
+    response = Response()
+    result = issue_authenticated_response(db, request, response, customer, event_type="PASSWORD_LOGIN")
+    assert result.access_token is None
+    cookie = response.headers.get("set-cookie", "")
+    assert "ts_session=" in cookie
+    assert "HttpOnly" in cookie
+
+
+def test_customer_login_redirect_precedes_crm_bootstrap():
+    index = (Path(__file__).parents[2] / "frontend" / "index.html").read_text()
+    redirect = "window.location.replace(`/cliente?lang=${encodeURIComponent(customerLanguage)}`);"
+    assert redirect in index
+    assert index.index(redirect) < index.index("applyUserMode();")
+    assert "let customerRedirecting = false;" in index
 
 
 def test_existing_customer_consumes_only_invitation_094_without_duplication(monkeypatch, db):

@@ -14,7 +14,9 @@
     .hidden { display: none !important; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
     .item { border: 1px solid #dbe5ee; border-radius: 8px; padding: 14px; }
-    .button { display: inline-block; border: 0; border-radius: 6px; padding: 11px 16px; background: #16a34a; color: #fff; text-decoration: none; font-weight: 700; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    .button { display: inline-block; border: 0; border-radius: 6px; padding: 11px 16px; background: #16a34a; color: #fff; text-decoration: none; font-weight: 700; cursor: pointer; }
+    .button.secondary { background: #334155; }
     .muted { color: #667085; }
     @media (max-width: 480px) { main { width: min(100% - 20px, 960px); margin: 12px auto; } header, section { padding: 16px; } }
   </style>
@@ -25,7 +27,10 @@
     <header>
       <h1 data-i18n="title">Panel del cliente</h1>
       <p data-i18n="subtitle">Consulta tus solicitudes y propiedades vinculadas.</p>
-      <a class="button" href="/solicitar-servico?customer_portal=1" data-i18n="newRequest">Nueva solicitud</a>
+      <div class="actions">
+        <a class="button" href="/solicitar-servico?customer_portal=1" data-i18n="newRequest">Nueva solicitud</a>
+        <button class="button secondary" id="customerLogout" type="button" data-i18n="logout">Cerrar sesión</button>
+      </div>
     </header>
     <section>
       <h2 data-i18n="services">Mis solicitudes</h2>
@@ -45,15 +50,55 @@
       const properties = document.getElementById("properties");
       const empty = document.getElementById("empty");
       const copy = {
-        es: { title: "Panel del cliente", subtitle: "Consulta tus solicitudes y propiedades vinculadas.", newRequest: "Nueva solicitud", services: "Mis solicitudes", properties: "Mis propiedades", empty: "No hay solicitudes vinculadas." },
-        en: { title: "Customer dashboard", subtitle: "View your linked requests and properties.", newRequest: "New request", services: "My requests", properties: "My properties", empty: "No linked requests." },
-        pt: { title: "Painel do cliente", subtitle: "Consulte suas solicitações e imóveis vinculados.", newRequest: "Nova solicitação", services: "Minhas solicitações", properties: "Meus imóveis", empty: "Nenhuma solicitação vinculada.", loading: "Carregando..." }
+        es: { title: "Panel del cliente", subtitle: "Consulta tus solicitudes y propiedades vinculadas.", newRequest: "Nueva solicitud", logout: "Cerrar sesión", loggingOut: "Cerrando sesión...", services: "Mis solicitudes", properties: "Mis propiedades", empty: "No hay solicitudes vinculadas." },
+        en: { title: "Customer dashboard", subtitle: "View your linked requests and properties.", newRequest: "New request", logout: "Log out", loggingOut: "Logging out...", services: "My requests", properties: "My properties", empty: "No linked requests." },
+        pt: { title: "Painel do cliente", subtitle: "Consulte suas solicitações e imóveis vinculados.", newRequest: "Nova solicitação", logout: "Sair", loggingOut: "Saindo...", services: "Minhas solicitações", properties: "Meus imóveis", empty: "Nenhuma solicitação vinculada.", loading: "Carregando..." }
       };
       copy.es.loading = "Cargando...";
       copy.en.loading = "Loading...";
-      const language = (navigator.language || "es").toLowerCase().startsWith("pt") ? "pt" : (navigator.language || "").toLowerCase().startsWith("en") ? "en" : "es";
+      const requestedLanguage = new URLSearchParams(window.location.search).get("lang") || navigator.language || "es";
+      const language = requestedLanguage.toLowerCase().startsWith("pt") ? "pt" : requestedLanguage.toLowerCase().startsWith("en") ? "en" : "es";
+      const logoutButton = document.getElementById("customerLogout");
+      const clearLegacyStorage = () => {
+        try {
+          for (const key of Object.keys(localStorage)) {
+            if (key.startsWith("totalsolutions_") && !["totalsolutions_language", "totalsolutions_public_language"].includes(key)) localStorage.removeItem(key);
+          }
+          sessionStorage.clear();
+        } catch (_error) {
+          // Storage may be unavailable; cookie revocation remains authoritative.
+        }
+      };
+      const csrfCookie = () => document.cookie.split("; ").find((row) => row.startsWith("ts_csrf="))?.split("=")[1] || "";
+      const loginUrl = () => `/?next=${encodeURIComponent("/cliente")}&lang=${encodeURIComponent(requestedLanguage)}`;
+      clearLegacyStorage();
+      const redirectToLogin = () => {
+        window.location.replace(`/?next=${encodeURIComponent("/cliente")}&lang=${encodeURIComponent(requestedLanguage)}`);
+      };
       document.documentElement.lang = language;
       document.querySelectorAll("[data-i18n]").forEach((node) => { node.textContent = copy[language][node.dataset.i18n] || node.textContent; });
+      logoutButton.addEventListener("click", async () => {
+        if (logoutButton.disabled) return;
+        logoutButton.disabled = true;
+        logoutButton.textContent = copy[language].loggingOut;
+        loading.textContent = copy[language].loggingOut;
+        loading.classList.remove("hidden");
+        panel.classList.add("hidden");
+        services.replaceChildren();
+        properties.replaceChildren();
+        try {
+          await fetch("/auth/logout", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: csrfCookie() ? { "X-CSRF-Token": decodeURIComponent(csrfCookie()) } : {}
+          });
+        } catch (_error) {
+          // Redirect regardless: a failed logout must not leave stale data visible.
+        } finally {
+          clearLegacyStorage();
+          window.location.replace(loginUrl());
+        }
+      });
       const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;","\"":"&quot;"}[char]));
       const render = (data) => {
         loading.classList.add("hidden");
@@ -72,7 +117,13 @@
       };
       loading.textContent = copy[language].loading;
       fetchWithTimeout("/customer-portal/config", { credentials: "same-origin" })
-        .then((response) => response.ok ? response.json() : Promise.reject(new Error("config")))
+        .then((response) => {
+          if (response.status === 401) {
+            redirectToLogin();
+            throw new Error("unauthenticated");
+          }
+          return response.ok ? response.json() : Promise.reject(new Error("config"));
+        })
         .then((config) => config.customer_portal_enabled ? fetchWithTimeout("/customer-portal/me/dashboard", { credentials: "same-origin" }) : Promise.reject(new Error("disabled")))
         .then((response) => response.ok ? response.json() : Promise.reject(new Error("dashboard")))
         .then((data) => validDashboardPayload(data) ? data : Promise.reject(new Error("dashboard-payload")))

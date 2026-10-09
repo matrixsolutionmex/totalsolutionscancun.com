@@ -898,7 +898,8 @@ def issue_authenticated_response(db: Session, request: Request | None, response:
     audit_auth_event(db, request=safe_request(request), event_type=event_type, outcome="SUCCESS", user=user)
     db.commit()
     db.refresh(user)
-    return AuthResponse(access_token=create_access_token(user), user=authenticated_user_response(db, user))
+    access_token = None if str(user.role or "").upper() == "CLIENTE" else create_access_token(user)
+    return AuthResponse(access_token=access_token, user=authenticated_user_response(db, user))
 
 
 def auth_status_gate(db: Session, user: User) -> str | None:

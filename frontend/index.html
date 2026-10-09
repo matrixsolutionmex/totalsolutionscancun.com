@@ -5405,6 +5405,11 @@
     let googleNonceRefreshTimer = null;
     let googleCredentialInFlight = false;
     let googleInteractionActive = false;
+    const loginDestination = (() => {
+      const candidate = new URLSearchParams(window.location.search).get("next") || "";
+      return /^\/(?!\/)/.test(candidate) && !candidate.includes("://") ? candidate : "";
+    })();
+    let customerRedirecting = false;
     const pendingInviteToken = window.location.pathname.startsWith("/invite/")
       ? decodeURIComponent(window.location.pathname.slice("/invite/".length).split("/")[0] || "")
       : "";
@@ -5428,6 +5433,18 @@
         credentials: "include",
         headers: authHeaders(options.headers)
       });
+    }
+
+    function clearCustomerBrowserState() {
+      accessToken = "";
+      try {
+        for (const key of Object.keys(localStorage)) {
+          if (key.startsWith("totalsolutions_") && !["totalsolutions_language", "totalsolutions_public_language"].includes(key)) localStorage.removeItem(key);
+        }
+        sessionStorage.clear();
+      } catch (_error) {
+        // Storage may be unavailable; the server-side cookie remains authoritative.
+      }
     }
 
     async function loadAuthPublicConfig() {
@@ -12285,11 +12302,18 @@
         ...user,
         idioma: user.idioma || user.organization_language || currentLanguage || "es"
       };
+      if (String(currentUser.role || "").toUpperCase() === "CLIENTE") {
+        clearCustomerBrowserState();
+        customerRedirecting = true;
+        const customerLanguage = currentUser.idioma || currentUser.organization_language || "es";
+        window.location.replace(`/cliente?lang=${encodeURIComponent(customerLanguage)}`);
+        return;
+      }
+      localStorage.setItem("totalsolutions_user", JSON.stringify(currentUser));
       applyLanguage(currentUser.idioma || currentUser.organization_language || "es");
       const userTheme = hasStoredTheme(currentUser) ? getStoredTheme(currentUser) : getStoredTheme(null);
       applyTheme(userTheme, { persist: false, user: currentUser });
       saveThemePreference(userTheme, currentUser);
-      localStorage.setItem("totalsolutions_user", JSON.stringify(currentUser));
       applyUserMode();
       showView("vendas");
       await loadBrokers();
@@ -12310,6 +12334,9 @@
       loadMembershipFoundation().catch(() => {});
       openAdminUsersFromUrlIfPresent().catch(() => {});
       openLeadFromUrlIfPresent().catch(() => {});
+      if (loginDestination) {
+        window.location.replace(loginDestination);
+      }
     }
 
     async function loadGoogleLinkStatus() {
@@ -12433,10 +12460,7 @@
         resetTurnstile("login");
         return;
       }
-      accessToken = data.access_token;
-      if (accessToken) {
-        localStorage.setItem("totalsolutions_access_token", accessToken);
-      }
+      accessToken = data.access_token || "";
       await enterDashboard(data.user);
     }
 
@@ -12673,10 +12697,7 @@
         return;
       }
       const data = await response.json();
-      accessToken = data.access_token;
-      if (accessToken) {
-        localStorage.setItem("totalsolutions_access_token", accessToken);
-      }
+      accessToken = data.access_token || "";
       await enterDashboard(data.user);
     }
 
@@ -12732,8 +12753,7 @@
           await googleLogin(intent, { force: true });
           return;
         }
-        accessToken = data.access_token;
-        localStorage.setItem("totalsolutions_access_token", accessToken);
+        accessToken = data.access_token || "";
         await enterDashboard(data.user);
       } catch (_error) {
         setAuthStatus(statusId, "No fue posible iniciar el acceso con Google.", "error");
@@ -12820,6 +12840,8 @@
     }
 
     async function logout() {
+      const wasCustomer = String(currentUser?.role || "").toUpperCase() === "CLIENTE";
+      const customerLanguage = currentUser?.idioma || currentUser?.organization_language || currentLanguage || "es";
       closeCustomerInvitationModal(false, true);
       resetIdentityVerificationUi();
       resetHumanReviewUi();
@@ -12867,6 +12889,9 @@
       showLoginForm();
       applyLanguage(currentLanguage);
       applyTheme(getStoredTheme(null), { persist: false, user: null });
+      if (wasCustomer) {
+        window.location.replace(`/?next=${encodeURIComponent("/cliente")}&lang=${encodeURIComponent(customerLanguage)}`);
+      }
     }
 
     function syncLanguageFromCountry(countrySelectId, languageSelectId) {
@@ -15737,6 +15762,9 @@
     loadAuthPublicConfig().catch(() => {});
 
     function hideSplash() {
+      if (customerRedirecting) {
+        return;
+      }
       const splash = document.getElementById("appSplash");
       if (splash) {
         splash.classList.add("hidden");
@@ -15756,6 +15784,15 @@
         return;
       }
       if (!savedUser || !accessToken) {
+        try {
+          const cookieResponse = await fetch(`${API_BASE}/auth/me`, { credentials: "include" });
+          if (cookieResponse.ok) {
+            await enterDashboard(await cookieResponse.json());
+            return;
+          }
+        } catch (_error) {
+          // Fall through to the normal login gateway.
+        }
         localStorage.removeItem("totalsolutions_user");
         localStorage.removeItem("totalsolutions_access_token");
         accessToken = "";

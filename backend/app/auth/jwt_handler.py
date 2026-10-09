@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -76,6 +77,22 @@ def verify_access_token(token: str) -> dict:
 
 
 BLOCKED_USER_STATUSES = {"SUSPENDED", "INACTIVE", "ARCHIVED", "ANONYMIZED"}
+
+_CUSTOMER_EXACT_PATHS = {
+    "/auth/me",
+    "/auth/logout",
+    "/auth/google/link",
+    "/auth/google/link/status",
+    "/users/me/heartbeat",
+    "/users/me/logout",
+}
+
+
+def customer_route_allowed(path: str) -> bool:
+    """Return whether a CLIENTE may reach a route after authentication."""
+    if path in _CUSTOMER_EXACT_PATHS or path.startswith("/customer-portal/"):
+        return True
+    return bool(re.fullmatch(r"/users/\d+/profile", path))
 
 
 def normalize_user_status(status_value: str | None) -> str:
@@ -157,6 +174,9 @@ def get_current_user(
         raise HTTPException(status_code=401, detail="Sessao revogada")
     if payload and payload.get("organization_id") and int(payload["organization_id"]) != int(user.organization_id or 0):
         raise HTTPException(status_code=401, detail="Sessao fora da organizacao")
+
+    if (user.role or "").strip().upper() == "CLIENTE" and not customer_route_allowed(request.url.path):
+        raise HTTPException(status_code=403, detail="Acesso nao autorizado")
 
     return user
 
