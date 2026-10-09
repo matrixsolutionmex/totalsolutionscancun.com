@@ -1684,6 +1684,45 @@
       grid-column: 1 / -1;
     }
 
+    .customer-invitation-modal .modal {
+      width: min(560px, 100%);
+    }
+
+    .customer-invitation-summary,
+    .customer-invitation-contact,
+    .customer-invitation-notice {
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #f8fafc;
+    }
+
+    .customer-invitation-channel-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .customer-invitation-channel {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    .customer-invitation-channel:has(input:checked) {
+      border-color: var(--green);
+      background: rgba(22, 166, 106, 0.07);
+    }
+
+    .customer-invitation-error {
+      color: #b42318;
+      font-weight: 700;
+    }
+
     .modal-section {
       grid-column: 1 / -1;
       display: grid;
@@ -4542,6 +4581,30 @@
     </section>
   </div>
 
+  <div class="modal-backdrop customer-invitation-modal" id="customerInvitationModal" hidden>
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="customerInvitationTitle" aria-describedby="customerInvitationDescription">
+      <div class="modal-header">
+        <div class="modal-title" id="customerInvitationTitle" data-i18n="portalInviteTitle"></div>
+        <button class="ghost" type="button" id="customerInvitationClose" data-i18n="portalInviteClose"></button>
+      </div>
+      <div class="modal-body">
+        <div class="customer-invitation-summary modal-field full" id="customerInvitationSummary"></div>
+        <div class="customer-invitation-contact modal-field full" id="customerInvitationContact"></div>
+        <div class="modal-field full">
+          <span data-i18n="portalInviteChannel"></span>
+          <div class="customer-invitation-channel-list" id="customerInvitationChannels"></div>
+        </div>
+        <p class="customer-invitation-notice full" id="customerInvitationDescription"></p>
+        <p class="customer-invitation-error full" id="customerInvitationError" role="alert" hidden></p>
+        <p class="full" id="customerInvitationStatus" aria-live="polite"></p>
+      </div>
+      <div class="modal-actions">
+        <button class="ghost" type="button" id="customerInvitationCancel" data-i18n="portalInviteCancel"></button>
+        <button class="primary" type="button" id="customerInvitationSubmit" data-i18n="portalInviteSend" disabled></button>
+      </div>
+    </section>
+  </div>
+
   <section class="view" id="view-relatorios">
     <div class="view-grid">
       <div class="panel-box">
@@ -6199,6 +6262,7 @@
         languageMissing: "Idioma a confirmar",
         whatsapp: "WhatsApp",
         portalOpen: "Abrir portal do cliente", portalCopy: "Copiar link", portalWhatsapp: "Compartilhar pelo WhatsApp", portalInvite: "Convidar para o painel",
+        portalInviteTitle: "Convidar cliente para o painel", portalInviteClose: "Fechar", portalInviteOs: "OS", portalInviteContact: "Contato mascarado", portalInviteChannel: "Canal do convite", portalInviteEmail: "E-mail", portalInvitePhone: "Telefone", portalInviteValidity: "O convite será válido por 30 minutos e poderá ser usado uma vez.", portalInviteOneUse: "O link de ativação é de uso único.", portalInviteCancel: "Cancelar", portalInviteSend: "Enviar convite", portalInviteSending: "Enviando…", portalInviteNoChannel: "Nenhum canal de contato válido está disponível.", portalInviteEmailUnavailable: "E-mail não disponível", portalInvitePhoneUnavailable: "Telefone não disponível", portalInviteError: "Não foi possível enviar o convite. Tente novamente.", portalInviteConflict: "Já existe um convite ativo para este contato.", portalInviteUnauthorized: "Você não tem permissão para enviar este convite.", portalInviteServiceUnavailable: "O serviço de convites está temporariamente indisponível.",
         call: "Ligar",
         contact: "Contacto",
         leads: "clientes",
@@ -6572,6 +6636,7 @@
         languageMissing: "Language to confirm",
         whatsapp: "WhatsApp",
         portalOpen: "Open customer portal", portalCopy: "Copy link", portalWhatsapp: "Share via WhatsApp", portalInvite: "Invite to customer panel",
+        portalInviteTitle: "Invite customer to the panel", portalInviteClose: "Close", portalInviteOs: "Service order", portalInviteContact: "Masked contact", portalInviteChannel: "Invitation channel", portalInviteEmail: "Email", portalInvitePhone: "Phone", portalInviteValidity: "The invitation is valid for 30 minutes and can be used once.", portalInviteOneUse: "The activation link is single-use.", portalInviteCancel: "Cancel", portalInviteSend: "Send invitation", portalInviteSending: "Sending…", portalInviteNoChannel: "No valid contact channel is available.", portalInviteEmailUnavailable: "Email unavailable", portalInvitePhoneUnavailable: "Phone unavailable", portalInviteError: "The invitation could not be sent. Try again.", portalInviteConflict: "There is already an active invitation for this contact.", portalInviteUnauthorized: "You are not allowed to send this invitation.", portalInviteServiceUnavailable: "The invitation service is temporarily unavailable.",
         call: "Call",
         contact: "Contact",
         leads: "clientes",
@@ -6953,6 +7018,7 @@
         languageMissing: "Idioma por confirmar",
         whatsapp: "WhatsApp",
         portalOpen: "Abrir portal del cliente", portalCopy: "Copiar enlace", portalWhatsapp: "Compartir por WhatsApp", portalInvite: "Invitar al panel del cliente",
+        portalInviteTitle: "Invitar al cliente al panel", portalInviteClose: "Cerrar", portalInviteOs: "OS", portalInviteContact: "Contacto enmascarado", portalInviteChannel: "Canal de invitación", portalInviteEmail: "Correo electrónico", portalInvitePhone: "Teléfono", portalInviteValidity: "La invitación será válida por 30 minutos y podrá usarse una sola vez.", portalInviteOneUse: "El enlace de activación es de un solo uso.", portalInviteCancel: "Cancelar", portalInviteSend: "Enviar invitación", portalInviteSending: "Enviando…", portalInviteNoChannel: "No hay un canal de contacto válido disponible.", portalInviteEmailUnavailable: "Correo no disponible", portalInvitePhoneUnavailable: "Teléfono no disponible", portalInviteError: "No fue posible enviar la invitación. Inténtalo de nuevo.", portalInviteConflict: "Ya existe una invitación activa para este contacto.", portalInviteUnauthorized: "No tienes permiso para enviar esta invitación.", portalInviteServiceUnavailable: "El servicio de invitaciones no está disponible temporalmente.",
         call: "Llamar",
         contact: "Contacto",
         leads: "clientes",
@@ -7077,6 +7143,20 @@
     const leadModal = document.getElementById("leadModal");
     const leadPipeline = document.getElementById("leadPipeline");
     const userModal = document.getElementById("userModal");
+    const customerInvitationModal = document.getElementById("customerInvitationModal");
+    const customerInvitationSummary = document.getElementById("customerInvitationSummary");
+    const customerInvitationContact = document.getElementById("customerInvitationContact");
+    const customerInvitationChannels = document.getElementById("customerInvitationChannels");
+    const customerInvitationDescription = document.getElementById("customerInvitationDescription");
+    const customerInvitationError = document.getElementById("customerInvitationError");
+    const customerInvitationStatus = document.getElementById("customerInvitationStatus");
+    const customerInvitationSubmit = document.getElementById("customerInvitationSubmit");
+    const customerInvitationCancel = document.getElementById("customerInvitationCancel");
+    const customerInvitationClose = document.getElementById("customerInvitationClose");
+    const customerInvitationLeadByRequestId = new Map();
+    const CUSTOMER_INVITATION_TIMEOUT_MS = 15000;
+    let customerInvitationState = null;
+    let customerInvitationBodyOverflow = "";
     let cachedBrokers = [];
     let cachedInventory = null;
     let cachedSupportTickets = [];
@@ -8332,23 +8412,182 @@
       throw new Error("No hay teléfono válido para compartir este enlace.");
     }
 
-    async function inviteCustomerPortal(serviceRequestId, button) {
-      const channel = (window.prompt("Canal do convite: EMAIL ou PHONE", "EMAIL") || "").trim().toUpperCase();
-      if (!["EMAIL", "PHONE"].includes(channel)) return;
-      button.disabled = true;
-      try {
-        const response = await apiFetch(`${API_BASE}/customer-portal/admin/invitations`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ service_request_id: Number(serviceRequestId), channel, language: currentLanguage || "es", idempotency_key: `portal-invite:${serviceRequestId}:${channel}` })
-        });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data.detail || "No fue posible crear el convite.");
-        button.textContent = data.masked_destination ? `${t("portalInvite")}: ${data.masked_destination}` : t("portalInvite");
-      } catch (error) {
-        addPabloV2Message(error.message || "No fue posible crear el convite.", "ai");
-      } finally {
-        button.disabled = false;
+    function maskInvitationEmail(value) {
+      const email = String(value || "").trim();
+      const at = email.indexOf("@");
+      if (at <= 0 || at === email.length - 1) return "";
+      const local = email.slice(0, at);
+      const visible = local.length <= 2 ? local.slice(0, 1) : local.slice(0, 2);
+      return `${visible}${"•".repeat(Math.max(1, local.length - visible.length))}${email.slice(at)}`;
+    }
+
+    function maskInvitationPhone(value) {
+      const phone = String(value || "").replace(/\s+/g, "").trim();
+      if (phone.length < 7) return "";
+      return `${phone.slice(0, 3)}${"•".repeat(Math.max(1, phone.length - 5))}${phone.slice(-2)}`;
+    }
+
+    function invitationContactForLead(record) {
+      const lead = record?.lead || {};
+      const order = record?.order || {};
+      const email = lead.email || lead.requester_email || order.requester_email || "";
+      const phone = lead.whatsapp || lead.telefono || lead.phone || lead.requester_phone || order.requester_phone || "";
+      return {
+        email: String(email || "").trim(),
+        phone: String(phone || "").trim()
+      };
+    }
+
+    function invitationFocusableElements() {
+      if (!customerInvitationModal || customerInvitationModal.hidden) return [];
+      return [...customerInvitationModal.querySelectorAll("button, input, [href], select, textarea, [tabindex]:not([tabindex='-1'])")]
+        .filter((element) => !element.disabled && element.offsetParent !== null);
+    }
+
+    function resetCustomerInvitationModal() {
+      if (!customerInvitationModal) return;
+      customerInvitationChannels.innerHTML = "";
+      customerInvitationSummary.textContent = "";
+      customerInvitationContact.textContent = "";
+      customerInvitationDescription.textContent = "";
+      customerInvitationError.hidden = true;
+      customerInvitationError.textContent = "";
+      customerInvitationStatus.textContent = "";
+      customerInvitationSubmit.disabled = true;
+      customerInvitationSubmit.textContent = t("portalInviteSend");
+      customerInvitationCancel.disabled = false;
+      customerInvitationClose.disabled = false;
+    }
+
+    function closeCustomerInvitationModal(restoreFocus = true, force = false) {
+      if (!customerInvitationModal || !customerInvitationState || (customerInvitationState.submitting && !force)) return;
+      if (force) customerInvitationState.abortController?.abort();
+      const trigger = customerInvitationState.button;
+      customerInvitationModal.hidden = true;
+      customerInvitationModal.classList.remove("open");
+      document.body.style.overflow = customerInvitationBodyOverflow;
+      if (trigger?.isConnected) trigger.disabled = false;
+      customerInvitationState = null;
+      resetCustomerInvitationModal();
+      if (restoreFocus && trigger?.isConnected) trigger.focus();
+    }
+
+    function invitationErrorMessage(status) {
+      if (status === 401 || status === 403) return t("portalInviteUnauthorized");
+      if (status === 409) return t("portalInviteConflict");
+      if (status === 429 || status >= 500) return t("portalInviteServiceUnavailable");
+      return t("portalInviteError");
+    }
+
+    function updateCustomerInvitationSubmitState() {
+      if (!customerInvitationState || customerInvitationState.submitting) return;
+      const selected = customerInvitationChannels.querySelector("input[name='customerInvitationChannel']:checked");
+      customerInvitationState.channel = selected?.value || "";
+      customerInvitationSubmit.disabled = !customerInvitationState.channel;
+    }
+
+    function openCustomerInvitationModal(serviceRequestId, button) {
+      const record = customerInvitationLeadByRequestId.get(String(serviceRequestId));
+      if (!customerInvitationModal || !record) {
+        addPabloV2Message(t("portalInviteError"), "ai");
+        return;
       }
+      const contact = invitationContactForLead(record);
+      const channels = [];
+      if (contact.email && /\S+@\S+\.\S+/.test(contact.email)) channels.push({ value: "EMAIL", label: t("portalInviteEmail"), masked: maskInvitationEmail(contact.email) });
+      if (contact.phone && contact.phone.replace(/\D/g, "").length >= 7) channels.push({ value: "PHONE", label: t("portalInvitePhone"), masked: maskInvitationPhone(contact.phone) });
+      customerInvitationState = {
+        requestId: Number(serviceRequestId),
+        button,
+        previousFocus: document.activeElement,
+        channel: channels[0]?.value || "",
+        submitting: false,
+        abortController: null
+      };
+      if (button?.isConnected) button.disabled = true;
+      resetCustomerInvitationModal();
+      customerInvitationSummary.textContent = `${t("portalInviteOs")}: ${record.order?.order_number || serviceRequestId}`;
+      customerInvitationContact.textContent = channels.length
+        ? `${t("portalInviteContact")}: ${channels.map((item) => `${item.label} ${item.masked}`).join(" · ")}`
+        : t("portalInviteNoChannel");
+      customerInvitationDescription.textContent = `${t("portalInviteValidity")} ${t("portalInviteOneUse")}`;
+      customerInvitationChannels.innerHTML = channels.length
+        ? channels.map((item, index) => `<label class="customer-invitation-channel"><input type="radio" name="customerInvitationChannel" value="${item.value}"${index === 0 ? " checked" : ""}> <span>${escapeHtml(item.label)} · ${escapeHtml(item.masked)}</span></label>`).join("")
+        : `<span>${escapeHtml(t("portalInviteNoChannel"))}</span>`;
+      customerInvitationError.hidden = true;
+      customerInvitationModal.hidden = false;
+      customerInvitationModal.classList.add("open");
+      customerInvitationBodyOverflow = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      updateCustomerInvitationSubmitState();
+      const first = invitationFocusableElements().find((element) => element.matches("input, button"));
+      first?.focus();
+    }
+
+    async function submitCustomerInvitation() {
+      if (!customerInvitationState || customerInvitationState.submitting || customerInvitationSubmit.disabled) return;
+      const state = customerInvitationState;
+      state.submitting = true;
+      customerInvitationSubmit.disabled = true;
+      customerInvitationCancel.disabled = true;
+      customerInvitationClose.disabled = true;
+      customerInvitationSubmit.textContent = t("portalInviteSending");
+      customerInvitationStatus.textContent = t("portalInviteSending");
+      customerInvitationError.hidden = true;
+      let timeoutId = null;
+      try {
+        const abortController = new AbortController();
+        state.abortController = abortController;
+        timeoutId = window.setTimeout(() => abortController.abort(), CUSTOMER_INVITATION_TIMEOUT_MS);
+        const response = await apiFetch(`${API_BASE}/customer-portal/admin/invitations`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: abortController.signal,
+          body: JSON.stringify({
+            service_request_id: state.requestId,
+            channel: state.channel,
+            language: currentLanguage || "es",
+            idempotency_key: `portal-invite:${state.requestId}:${state.channel}`
+          })
+        });
+        const rawResponse = await response.text();
+        let data = null;
+        try {
+          data = rawResponse ? JSON.parse(rawResponse) : null;
+        } catch (_error) {
+          data = null;
+        }
+        if (!data || typeof data !== "object" || Array.isArray(data)) {
+          customerInvitationError.textContent = t("portalInviteError");
+          customerInvitationError.hidden = false;
+          return;
+        }
+        if (!response.ok) {
+          customerInvitationError.textContent = invitationErrorMessage(response.status);
+          customerInvitationError.hidden = false;
+          return;
+        }
+        if (state.button?.isConnected) state.button.textContent = data.masked_destination ? `${t("portalInvite")}: ${data.masked_destination}` : t("portalInvite");
+        state.submitting = false;
+        closeCustomerInvitationModal();
+      } catch (_error) {
+        customerInvitationError.textContent = t("portalInviteError");
+        customerInvitationError.hidden = false;
+      } finally {
+        if (timeoutId !== null) window.clearTimeout(timeoutId);
+        if (customerInvitationState === state) {
+          state.submitting = false;
+          customerInvitationSubmit.disabled = !state.channel;
+          customerInvitationCancel.disabled = false;
+          customerInvitationClose.disabled = false;
+          customerInvitationSubmit.textContent = t("portalInviteSend");
+          customerInvitationStatus.textContent = "";
+        }
+      }
+    }
+
+    async function inviteCustomerPortal(serviceRequestId, button) {
+      openCustomerInvitationModal(serviceRequestId, button);
     }
 
     async function openTrackingDiagnostic(orderId) {
@@ -8751,6 +8990,9 @@
       const urgencyClass = `urgency-${String(lead.urgencia || "NORMAL").toLowerCase()}`;
       const staleTime = timeAgo(lead.pipeline_updated_at || lead.updated_at || lead.created_at);
       const order = lead.service_order || {};
+      if (order.service_request_id) {
+        customerInvitationLeadByRequestId.set(String(order.service_request_id), { lead, order });
+      }
       const latitude = order.location_lat ?? lead.location_lat;
       const longitude = order.location_lng ?? lead.location_lng;
       const hasCoordinates = Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude));
@@ -12573,6 +12815,7 @@
     }
 
     async function logout() {
+      closeCustomerInvitationModal(false, true);
       resetIdentityVerificationUi();
       resetHumanReviewUi();
       resetTechnicianEarningsUi();
@@ -12604,6 +12847,7 @@
       }
       currentUser = { id: 1, username: "root", role: "ROOT" };
       cachedBoard = null;
+      customerInvitationLeadByRequestId.clear();
       cachedNotifications = [];
       notificationInitialized = false;
       seenNotificationIds = new Set();
@@ -15162,6 +15406,15 @@
     document.getElementById("trackingDiagnosticModal")?.addEventListener("click", (event) => {
       if (event.target === event.currentTarget) closeTrackingDiagnostic();
     });
+    customerInvitationSubmit?.addEventListener("click", () => submitCustomerInvitation());
+    customerInvitationCancel?.addEventListener("click", () => closeCustomerInvitationModal());
+    customerInvitationClose?.addEventListener("click", () => closeCustomerInvitationModal());
+    customerInvitationChannels?.addEventListener("change", (event) => {
+      if (event.target instanceof HTMLInputElement && event.target.name === "customerInvitationChannel") updateCustomerInvitationSubmitState();
+    });
+    customerInvitationModal?.addEventListener("click", (event) => {
+      if (event.target === event.currentTarget) closeCustomerInvitationModal();
+    });
 
     document.getElementById("commercialPlanCards")?.addEventListener("click", (event) => {
       const target = event.target;
@@ -15409,8 +15662,25 @@
       if (event.key === "Escape" && technicianCompensationConfirmModal && !technicianCompensationConfirmModal.hidden) {
         closeTechnicianCompensationConfirm();
       }
+      if (event.key === "Escape" && customerInvitationModal && !customerInvitationModal.hidden) {
+        event.preventDefault();
+        closeCustomerInvitationModal();
+      }
       if (event.key === "Tab" && identityHumanReviewModal && !identityHumanReviewModal.hidden) {
         const focusable = [identityHumanReviewReason, identityHumanReviewCancel, identityHumanReviewConfirm].filter((node) => node && !node.disabled);
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+      if (event.key === "Tab" && customerInvitationModal && !customerInvitationModal.hidden) {
+        const focusable = invitationFocusableElements();
         if (!focusable.length) return;
         const first = focusable[0];
         const last = focusable[focusable.length - 1];

@@ -278,3 +278,36 @@ def test_invitation_094_never_falls_back_to_legacy_claim_token(monkeypatch, db):
     with pytest.raises(Exception):
         consume_existing_customer_invitation(db, legacy_raw, customer)
     assert db.query(CustomerServiceLink).count() == 0
+
+
+def test_frontend_invitation_uses_accessible_modal_and_canonical_payload():
+    frontend = Path(__file__).parents[2] / "frontend" / "index.html"
+    index = frontend.read_text(encoding="utf-8")
+    start = index.index("function submitCustomerInvitation")
+    end = index.index("function openTrackingDiagnostic", start)
+    invitation_flow = index[start:end]
+
+    assert 'id="customerInvitationModal"' in index
+    assert 'role="dialog"' in index
+    assert 'aria-modal="true"' in index
+    assert 'aria-labelledby="customerInvitationTitle"' in index
+    assert 'aria-describedby="customerInvitationDescription"' in index
+    assert "window.prompt" not in invitation_flow
+    assert "window.confirm" not in invitation_flow
+    assert "window.alert" not in invitation_flow
+    assert "service_request_id: state.requestId" in invitation_flow
+    assert "portal-invite:${state.requestId}:${state.channel}" in invitation_flow
+    assert "language: currentLanguage || \"es\"" in invitation_flow
+    assert "new AbortController()" in invitation_flow
+    assert "CUSTOMER_INVITATION_TIMEOUT_MS" in invitation_flow
+    assert 'name="customerInvitationChannel"' in index
+    for key in (
+        "portalInviteTitle",
+        "portalInviteValidity",
+        "portalInviteOneUse",
+        "portalInviteCancel",
+        "portalInviteSend",
+        "portalInviteSending",
+        "portalInviteError",
+    ):
+        assert index.count(f"{key}:") >= 3
