@@ -7086,6 +7086,7 @@
     const boardEl = document.getElementById("board");
     const totalText = document.getElementById("totalText");
     const searchInput = document.getElementById("searchInput");
+    let searchLoadTimer = null;
     const brokerFilter = document.getElementById("brokerFilter");
     const brokerList = document.getElementById("brokerList");
     const sessionUser = document.getElementById("sessionUser");
@@ -12011,8 +12012,11 @@
         const allLeads = data.board[stage] || [];
         const leads = searchTerm
           ? allLeads.filter((lead) => {
-              const text = `${lead.nome || ""} ${lead.email || ""} ${lead.contato || ""} ${lead.nicho || ""} ${lead.pais || ""} ${lead.estado || ""} ${lead.cidade || ""}`.toLowerCase();
-              return text.includes(searchTerm);
+              const orderNumber = String(lead.service_order?.order_number || "").toLowerCase();
+              const normalizedSearch = searchTerm.replace(/[\s-]/g, "");
+              const normalizedOrderNumber = orderNumber.replace(/[\s-]/g, "");
+              const text = `${lead.nome || ""} ${lead.email || ""} ${lead.contato || ""} ${lead.nicho || ""} ${lead.pais || ""} ${lead.estado || ""} ${lead.cidade || ""} ${orderNumber}`.toLowerCase();
+              return text.includes(searchTerm) || (normalizedSearch && normalizedOrderNumber.includes(normalizedSearch));
             })
           : allLeads;
 
@@ -12059,7 +12063,8 @@
       const brokerParam = selectedBroker && selectedBroker !== "__unassigned" ? `&assigned_to_user_id=${selectedBroker}` : "";
       const unassignedParam = selectedBroker === "__unassigned" ? "&unassigned=true" : "";
       const limitPerStage = selectedBroker ? 100 : 25;
-      const response = await apiFetch(`${API_BASE}/leads/kanban?limit_per_stage=${limitPerStage}${brokerParam}${unassignedParam}`);
+      const searchParam = searchInput.value.trim() ? `&search=${encodeURIComponent(searchInput.value.trim())}` : "";
+      const response = await apiFetch(`${API_BASE}/leads/kanban?limit_per_stage=${limitPerStage}${brokerParam}${unassignedParam}${searchParam}`);
       const data = await response.json();
       if (activeTrackingOrderId) {
         const visibleLead = Object.values(data.board || {})
@@ -15721,9 +15726,9 @@
     });
     brokerFilter.addEventListener("change", loadBoard);
     searchInput.addEventListener("input", () => {
-      if (cachedBoard) {
-        renderBoard(cachedBoard);
-      }
+      if (cachedBoard) renderBoard(cachedBoard);
+      window.clearTimeout(searchLoadTimer);
+      searchLoadTimer = window.setTimeout(() => loadBoard().catch(() => {}), 250);
     });
 
     applyTheme(getStoredTheme(null), { persist: false, user: null });

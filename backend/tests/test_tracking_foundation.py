@@ -23,6 +23,7 @@ from app.models.payment import Payment, PlatformLedgerEntry
 from app.models.service_property import ServiceProperty
 from app.models.service_request import ServiceRequest
 from app.models.user import User
+from app.routes.lead_routes import kanban_leads
 from app.schemas.lead_schema import LeadResponse
 from app.services.service_order_tracking_service import (
     admin_stop_all_tracking,
@@ -68,6 +69,15 @@ def test_customer_portal_action_labels_are_localized_and_fail_closed():
     assert 'data-portal-open="${order.id}">Abrir portal' not in source
     assert 'data-portal-copy="${order.id}">Copiar enlace' not in source
     assert 'data-portal-whatsapp="${order.id}">WhatsApp' not in source
+
+
+def test_admin_frontend_normalizes_public_order_search():
+    frontend = Path(__file__).parents[2] / "frontend" / "index.html"
+    source = frontend.read_text(encoding="utf-8")
+
+    assert 'const normalizedSearch = searchTerm.replace(/[\\s-]/g, "");' in source
+    assert 'const normalizedOrderNumber = orderNumber.replace(/[\\s-]/g, "");' in source
+    assert 'normalizedOrderNumber.includes(normalizedSearch)' in source
 
 
 @pytest.fixture()
@@ -148,6 +158,57 @@ def make_order(db, org, technician, supervisor=None, status="ABERTA"):
     db.commit()
     db.refresh(order)
     return order
+
+
+def test_admin_kanban_searches_public_order_without_confusing_identifiers(db):
+    org = make_org(db, "order-search")
+    other_org = make_org(db, "other-order-search")
+    root = make_user(db, "order-search-root", "ROOT", org)
+    padding_lead = Lead(organization_id=org.id, nome="Padding", pipeline="ATENDIMENTO")
+    lead = Lead(
+        organization_id=org.id,
+        nome="Cliente OS 114",
+        pipeline="ATENDIMENTO",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    other_lead = Lead(organization_id=other_org.id, nome="Other tenant", pipeline="ATENDIMENTO")
+    db.add_all([padding_lead, lead, other_lead])
+    db.flush()
+    request = ServiceRequest(
+        organization_id=org.id,
+        lead_id=lead.id,
+        tracking_token="order-search-token",
+        service_category="ELECTRICAL",
+        requester_name="QA",
+    )
+    order = ServiceOrder(
+        organization_id=org.id,
+        lead_id=lead.id,
+        service_request_id=request.id if request.id else None,
+        order_number="TS-2026-000114",
+        status="ABERTA",
+    )
+    other_order = ServiceOrder(
+        organization_id=other_org.id,
+        lead_id=other_lead.id,
+        order_number="TS-2026-999999",
+        status="ABERTA",
+    )
+    db.add_all([request, order, other_order])
+    db.flush()
+    order.service_request_id = request.id
+    db.commit()
+
+    result = kanban_leads(db, actor=root, search=" ts 2026 000114 ", limit_per_stage=1)
+    matches = [item for rows in result["board"].values() for item in rows]
+
+    assert len(matches) == 1
+    assert matches[0]["id"] == lead.id
+    assert matches[0]["service_order"]["order_number"] == "TS-2026-000114"
+    assert matches[0]["service_order"]["service_request_id"] == request.id
+    assert matches[0]["service_order"]["lead_id"] == lead.id
+    assert matches[0]["id"] != request.id
 
 
 def test_assigned_technician_starts_with_consent_and_no_automatic_gps(db):

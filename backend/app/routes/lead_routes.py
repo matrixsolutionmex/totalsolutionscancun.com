@@ -13,6 +13,7 @@ from app.auth.jwt_handler import (
 from app.models.lead import Lead
 from app.models.lead_document import LeadDocument
 from app.models.lead_event import LeadEvent
+from app.models.service_order import ServiceOrder
 from app.models.user import User
 from app.schemas.lead_schema import (
     LeadAssignUpdate,
@@ -176,6 +177,7 @@ def list_leads(
 def kanban_leads(
     db: Session = Depends(get_db),
     actor: User | None = Depends(get_actor),
+    search: str | None = None,
     assigned_to_user_id: int | None = None,
     unassigned: bool = False,
     limit_per_stage: int = Query(default=25, ge=1, le=100),
@@ -184,6 +186,33 @@ def kanban_leads(
 
     for stage in PIPELINE_STAGES:
         query = apply_actor_scope(db.query(Lead).filter(Lead.pipeline == stage), db, actor)
+
+        if search and search.strip():
+            term = f"%{search.strip()}%"
+            normalized_order_number = func.replace(
+                func.replace(func.upper(ServiceOrder.order_number), "-", ""),
+                " ",
+                "",
+            )
+            normalized_search = search.strip().upper().replace("-", "").replace(" ", "")
+            query = query.filter(
+                or_(
+                    Lead.nome.ilike(term),
+                    Lead.email.ilike(term),
+                    Lead.contato.ilike(term),
+                    Lead.site.ilike(term),
+                    Lead.nicho.ilike(term),
+                    Lead.pais.ilike(term),
+                    Lead.estado.ilike(term),
+                    Lead.cidade.ilike(term),
+                    Lead.service_orders.any(
+                        or_(
+                            ServiceOrder.order_number.ilike(term),
+                            normalized_order_number == normalized_search,
+                        )
+                    ),
+                )
+            )
 
         if assigned_to_user_id is not None:
             query = query.filter(Lead.assigned_to_user_id == assigned_to_user_id)
