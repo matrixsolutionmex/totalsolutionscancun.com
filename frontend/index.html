@@ -5387,7 +5387,8 @@
       : window.location.origin;
     const FRONTEND_BUILD_SHA = "unknown";
     let accessToken = localStorage.getItem("totalsolutions_access_token") || "";
-    let csrfToken = document.cookie.split("; ").find((row) => row.startsWith("ts_csrf="))?.split("=")[1] || "";
+    const readCookie = (name) => document.cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${name}=`))?.slice(name.length + 1) || "";
+    let csrfToken = readCookie("ts_csrf");
     let authPublicConfig = { turnstile_required: false, turnstile_site_key: null, google_client_id: null, public_signup_enabled: true, technician_compensation_enabled: false };
     let turnstileWidgets = {};
     let pendingVerificationEmail = "";
@@ -5409,7 +5410,9 @@
       const candidate = new URLSearchParams(window.location.search).get("next") || "";
       return /^\/(?!\/)/.test(candidate) && !candidate.includes("://") ? candidate : "";
     })();
-    const customerPublicExperience = ["/solicitar-servico", "/solicitud-enviada"].includes(window.location.pathname);
+    const customerPublicExperience = ["/solicitar-servico", "/solicitud-enviada"].includes(window.location.pathname)
+      || window.location.pathname.startsWith("/acompanhar/")
+      || window.location.pathname.startsWith("/seguimiento/");
     let customerRedirecting = false;
     const pendingInviteToken = window.location.pathname.startsWith("/invite/")
       ? decodeURIComponent(window.location.pathname.slice("/invite/".length).split("/")[0] || "")
@@ -5421,7 +5424,7 @@
       if (accessToken) {
         authenticatedHeaders.set("Authorization", `Bearer ${accessToken}`);
       }
-      csrfToken = document.cookie.split("; ").find((row) => row.startsWith("ts_csrf="))?.split("=")[1] || csrfToken;
+      csrfToken = readCookie("ts_csrf") || csrfToken;
       if (csrfToken) {
         authenticatedHeaders.set("X-CSRF-Token", decodeURIComponent(csrfToken));
       }
@@ -17260,12 +17263,19 @@
               : marketplaceContext
               ? `${apiBase}/public/service-requests?organization_slug=${encodeURIComponent(marketplaceOrganizationSlug)}&marketplace_link_slug=${encodeURIComponent(marketplaceLinkSlug)}`
               : `${apiBase}/public/service-requests`;
+            const submitFetch = customerPortalMode
+              ? (url, options = {}) => fetch(url, {
+                  ...options,
+                  credentials: "include",
+                  headers: authHeaders(options.headers),
+                })
+              : window.fetch.bind(window);
             await confirmationState.submit({
               endpoint,
               body: formData,
               language: portalLanguage,
               storage: sessionStorage,
-              fetchImpl: window.fetch.bind(window),
+              fetchImpl: submitFetch,
               navigate: (url) => window.location.assign(url),
               baseUrl: window.location.origin,
             });

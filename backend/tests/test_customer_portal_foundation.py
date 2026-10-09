@@ -15,7 +15,7 @@ from app.models.service_order import ServiceOrder
 from app.models.service_property import ServiceProperty
 from app.models.service_request import ServiceRequest
 from app.models.user import User
-from app.routes.customer_portal_routes import customer_dashboard, create_customer_service_request, get_customer_portal_config
+from app.routes.customer_portal_routes import customer_dashboard, create_customer_service_request, customer_service_request_detail, get_customer_portal_config
 from app.services.customer_account_service import (
     customer_portal_available,
     customer_portal_config,
@@ -140,11 +140,28 @@ def test_customer_portal_request_endpoint_derives_identity_from_session(monkeypa
 def test_customer_portal_frontend_uses_authenticated_request_mode():
     index = (Path(__file__).parents[2] / "frontend" / "index.html").read_text()
     portal = (Path(__file__).parents[2] / "frontend" / "customer-portal.html").read_text()
-    assert 'const customerPublicExperience = ["/solicitar-servico", "/solicitud-enviada"].includes(window.location.pathname);' in index
+    assert 'const customerPublicExperience = ["/solicitar-servico", "/solicitud-enviada"].includes(window.location.pathname)' in index
+    assert 'window.location.pathname.startsWith("/seguimiento/")' in index
     assert 'const customerPortalMode = isPortal && new URLSearchParams(window.location.search).get("customer_portal") === "1";' in index
     assert '`${apiBase}/customer-portal/me/service-requests`' in index
     assert 'href="/solicitar-servico?customer_portal=1"' in portal
     assert 'service.tracking_url' in portal
+    assert 'credentials: "include"' in index[index.index("const submitFetch"):]
+    assert 'headers: authHeaders(options.headers)' in index
+    assert 'customer_service_request_detail' not in portal
+    assert 'service_request_id=${encodeURIComponent(service.service_request_id)}' in portal
+
+
+def test_customer_service_request_detail_is_link_and_tenant_scoped(monkeypatch, db):
+    monkeypatch.setenv("CUSTOMER_PORTAL_ENABLED", "true")
+    monkeypatch.setenv("CUSTOMER_PORTAL_ROLLOUT_MODE", "all")
+    org, _, customer, other_customer, request = make_customer_fixture(db)
+    detail = customer_service_request_detail(request.id, customer, db)
+    assert detail["service_request_id"] == request.id
+    assert detail["order_number"] == "TS-CUSTOMER-1"
+    with pytest.raises(Exception) as exc_info:
+        customer_service_request_detail(request.id, other_customer, db)
+    assert getattr(exc_info.value, "status_code", None) == 404
 
 
 def test_customer_portal_config_is_tenant_and_role_scoped(monkeypatch, db):

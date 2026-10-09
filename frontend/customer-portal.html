@@ -37,6 +37,11 @@
       <div id="services" class="grid"></div>
       <p id="empty" class="muted hidden" data-i18n="empty">No hay solicitudes vinculadas.</p>
     </section>
+    <section id="service-detail" class="hidden" aria-live="polite">
+      <div class="actions"><button class="button secondary" id="closeDetail" type="button" data-i18n="backToList">Voltar</button></div>
+      <h2 id="detail-title"></h2>
+      <div id="detail-content" class="muted"></div>
+    </section>
     <section>
       <h2 data-i18n="properties">Mis propiedades</h2>
       <div id="properties" class="grid"></div>
@@ -49,10 +54,14 @@
       const services = document.getElementById("services");
       const properties = document.getElementById("properties");
       const empty = document.getElementById("empty");
+      const detail = document.getElementById("service-detail");
+      const detailTitle = document.getElementById("detail-title");
+      const detailContent = document.getElementById("detail-content");
+      const closeDetail = document.getElementById("closeDetail");
       const copy = {
-        es: { title: "Panel del cliente", subtitle: "Consulta tus solicitudes y propiedades vinculadas.", newRequest: "Nueva solicitud", logout: "Cerrar sesión", loggingOut: "Cerrando sesión...", services: "Mis solicitudes", properties: "Mis propiedades", empty: "No hay solicitudes vinculadas.", track: "Acompañar", technician: "Técnico", payment: "Pago", documents: "Documentos" },
-        en: { title: "Customer dashboard", subtitle: "View your linked requests and properties.", newRequest: "New request", logout: "Log out", loggingOut: "Logging out...", services: "My requests", properties: "My properties", empty: "No linked requests.", track: "Track service", technician: "Technician", payment: "Payment", documents: "Documents" },
-        pt: { title: "Painel do cliente", subtitle: "Consulte suas solicitações e imóveis vinculados.", newRequest: "Nova solicitação", logout: "Sair", loggingOut: "Saindo...", services: "Minhas solicitações", properties: "Meus imóveis", empty: "Nenhuma solicitação vinculada.", loading: "Carregando...", track: "Acompanhar", technician: "Técnico", payment: "Pagamento", documents: "Documentos" }
+        es: { title: "Panel del cliente", subtitle: "Consulta tus solicitudes y propiedades vinculadas.", newRequest: "Nueva solicitud", logout: "Cerrar sesión", loggingOut: "Cerrando sesión...", services: "Mis solicitudes", properties: "Mis propiedades", empty: "No hay solicitudes vinculadas.", track: "Acompañar", details: "Ver detalles", backToList: "Volver", technician: "Técnico", payment: "Pago", documents: "Documentos" },
+        en: { title: "Customer dashboard", subtitle: "View your linked requests and properties.", newRequest: "New request", logout: "Log out", loggingOut: "Logging out...", services: "My requests", properties: "My properties", empty: "No linked requests.", track: "Track service", details: "View details", backToList: "Back", technician: "Technician", payment: "Payment", documents: "Documents" },
+        pt: { title: "Painel do cliente", subtitle: "Consulte suas solicitações e imóveis vinculados.", newRequest: "Nova solicitação", logout: "Sair", loggingOut: "Saindo...", services: "Minhas solicitações", properties: "Meus imóveis", empty: "Nenhuma solicitação vinculada.", loading: "Carregando...", track: "Acompanhar", details: "Ver detalhes", backToList: "Voltar", technician: "Técnico", payment: "Pagamento", documents: "Documentos" }
       };
       copy.es.loading = "Cargando...";
       copy.en.loading = "Loading...";
@@ -70,7 +79,7 @@
           // Storage may be unavailable; cookie revocation remains authoritative.
         }
       };
-      const csrfCookie = () => document.cookie.split("; ").find((row) => row.startsWith("ts_csrf="))?.split("=")[1] || "";
+      const csrfCookie = () => document.cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith("ts_csrf="))?.slice("ts_csrf=".length) || "";
       const loginUrl = () => `/?next=${encodeURIComponent("/cliente")}&lang=${encodeURIComponent(requestedLanguage)}`;
       clearLegacyStorage();
       const redirectToLogin = () => {
@@ -107,9 +116,14 @@
       const render = (data) => {
         loading.classList.add("hidden");
         panel.classList.remove("hidden");
-        services.innerHTML = (data.services || []).map((service) => `<article class="item"><strong>${escapeHtml(service.order_number || `#${service.id}`)}</strong><div>${escapeHtml(service.service_category || "")}</div><div class="muted">${escapeHtml(service.status || "")}</div><div class="muted">${escapeHtml(service.property?.profile_type || "")} · ${escapeHtml(service.property?.locality || "")}</div><div class="muted">${escapeHtml(copy[language].technician)}: ${escapeHtml(service.technician || "-")}</div><div class="muted">${escapeHtml(copy[language].payment)}: ${escapeHtml(service.payment_status || "-")}</div>${service.documents?.length ? `<div class="muted">${escapeHtml(copy[language].documents)}: ${service.documents.length}</div>` : ""}${service.tracking_url ? `<div class="actions"><a class="button secondary" href="${escapeHtml(service.tracking_url)}">${escapeHtml(copy[language].track)}</a></div>` : ""}</article>`).join("");
+        services.innerHTML = (data.services || []).map((service) => `<article class="item"><strong>${escapeHtml(service.order_number || `#${service.id}`)}</strong><div>${escapeHtml(service.service_category || "")}</div><div class="muted">${escapeHtml(service.status || "")}</div><div class="muted">${escapeHtml(service.property?.profile_type || "")} · ${escapeHtml(service.property?.locality || "")}</div><div class="muted">${escapeHtml(copy[language].technician)}: ${escapeHtml(service.technician || "-")}</div><div class="muted">${escapeHtml(copy[language].payment)}: ${escapeHtml(service.payment_status || "-")}</div>${service.documents?.length ? `<div class="muted">${escapeHtml(copy[language].documents)}: ${service.documents.length}</div>` : ""}<div class="actions"><a class="button secondary" href="/cliente?service_request_id=${encodeURIComponent(service.service_request_id)}&lang=${encodeURIComponent(language)}">${escapeHtml(copy[language].details)}</a>${service.tracking_url ? `<a class="button secondary" href="${escapeHtml(service.tracking_url)}">${escapeHtml(copy[language].track)}</a>` : ""}</div></article>`).join("");
         properties.innerHTML = (data.properties || []).map((property) => `<article class="item"><strong>${escapeHtml(property.profile_type || "")}</strong><div class="muted">${escapeHtml(property.locality || "")}</div></article>`).join("");
         empty.classList.toggle("hidden", Boolean(data.services?.length));
+      };
+      const renderDetail = (data) => {
+        detailTitle.textContent = data.order_number || `#${data.id}`;
+        detailContent.innerHTML = `<div>${escapeHtml(data.service_category || "")}</div><div>${escapeHtml(data.status || "")}</div><div>${escapeHtml(data.property?.profile_type || "")} · ${escapeHtml(data.property?.locality || "")}</div><div>${escapeHtml(copy[language].technician)}: ${escapeHtml(data.technician || "-")}</div><div>${escapeHtml(copy[language].payment)}: ${escapeHtml(data.payment_status || "-")}</div>`;
+        detail.classList.remove("hidden");
       };
       const validDashboardPayload = (data) => Boolean(
         data && Array.isArray(data.services) && Array.isArray(data.properties)
@@ -132,6 +146,13 @@
         newRequest.href = data.new_request_url || newRequest.href;
         render(data);
       };
+      closeDetail.addEventListener("click", () => {
+        detail.classList.add("hidden");
+        const url = new URL(window.location.href);
+        url.searchParams.delete("service_request_id");
+        history.replaceState({}, "", url);
+      });
+      const requestedServiceRequestId = new URLSearchParams(window.location.search).get("service_request_id");
       loading.textContent = copy[language].loading;
       fetchWithTimeout("/customer-portal/config", { credentials: "same-origin" })
         .then((response) => {
@@ -147,6 +168,12 @@
         .then((data) => {
           newRequest.href = data.new_request_url || newRequest.href;
           render(data);
+          if (requestedServiceRequestId && /^\d+$/.test(requestedServiceRequestId)) {
+            fetchWithTimeout(`/customer-portal/me/service-requests/${encodeURIComponent(requestedServiceRequestId)}`, { credentials: "same-origin" })
+              .then((response) => response.ok ? response.json() : Promise.reject(new Error("detail")))
+              .then(renderDetail)
+              .catch(() => { detail.classList.add("hidden"); });
+          }
           refreshTimer = window.setInterval(() => {
             if (!document.hidden) refreshDashboard().catch(() => {});
           }, 30000);
