@@ -18,6 +18,7 @@ body.public-site { margin: 0; color: var(--public-ink); background: #f8fbfa; fon
 .public-links a, .public-language button { color: var(--public-ink); text-decoration: none; font-size: 14px; font-weight: 750; }
 .public-links a:hover, .public-links a:focus-visible { color: var(--public-green-dark); }
 .public-cta { padding: 11px 16px; color: #062313 !important; background: var(--public-green); border-radius: 7px; }
+.public-whatsapp { color: var(--public-green-dark) !important; }
 .public-language { display: inline-flex; gap: 3px; padding: 3px; border: 1px solid var(--public-line); border-radius: 7px; }
 .public-language button { padding: 7px 8px; border: 0; border-radius: 4px; background: transparent; cursor: pointer; }
 .public-language button[aria-pressed="true"] { background: var(--public-navy); color: #fff; }

@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Solicita una cotización | Total Solutions Cancún</title>
+  <meta name="description" content="Solicita mantenimiento o reparación para tu propiedad en Cancún por WhatsApp o con un formulario breve.">
+  <link rel="canonical" href="https://totalsolutionscancun.com/cotizar">
+  <link rel="icon" href="/assets/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/public-site.css?v=9728e26">
+  <style>
+    :root { --quote-ink: #102032; --quote-muted: #526174; --quote-green: #22c55e; --quote-dark: #07140f; --quote-line: #dce6e3; }
+    body.quote-page { margin: 0; color: var(--quote-ink); background: #f8fbfa; font-family: Inter, Arial, sans-serif; }
+    .quote-nav { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px clamp(18px, 5vw, 72px); background: #fff; border-bottom: 1px solid var(--quote-line); }
+    .quote-nav img { width: 178px; height: auto; max-height: 54px; object-fit: contain; }
+    .quote-nav a { color: var(--quote-ink); font-size: 14px; font-weight: 800; text-decoration: none; }
+    .quote-nav-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    .quote-nav-actions a:first-child { color: #128044; }
+    .quote-hero { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(320px, .9fr); gap: clamp(24px, 6vw, 80px); align-items: center; max-width: 1180px; margin: 0 auto; padding: clamp(54px, 9vw, 112px) 18px 76px; }
+    .quote-kicker { margin: 0 0 14px; color: #128044; font-size: 13px; font-weight: 850; letter-spacing: .12em; text-transform: uppercase; }
+    .quote-hero h1 { max-width: 720px; margin: 0 0 18px; color: var(--quote-dark); font-size: clamp(38px, 6vw, 74px); line-height: 1.02; }
+    .quote-hero > div > p { max-width: 650px; margin: 0; color: var(--quote-muted); font-size: clamp(18px, 2vw, 23px); line-height: 1.5; }
+    .quote-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+    .quote-button { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 12px 18px; border: 1px solid transparent; border-radius: 7px; font-weight: 850; text-decoration: none; cursor: pointer; }
+    .quote-button-primary { color: #062313; background: var(--quote-green); }
+    .quote-button-secondary { color: var(--quote-ink); background: #fff; border-color: var(--quote-line); }
+    .quote-proof { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 34px; max-width: 700px; }
+    .quote-proof span { padding: 12px; color: var(--quote-muted); background: #fff; border: 1px solid var(--quote-line); border-radius: 6px; font-size: 13px; font-weight: 750; }
+    .quote-form-card { padding: clamp(22px, 4vw, 32px); background: #fff; border: 1px solid var(--quote-line); border-radius: 8px; box-shadow: 0 18px 44px rgba(16,32,50,.08); }
+    .quote-form-card h2 { margin: 0 0 8px; font-size: 26px; }
+    .quote-form-card > p { margin: 0 0 22px; color: var(--quote-muted); line-height: 1.5; }
+    .quote-field { display: grid; gap: 7px; margin-top: 15px; }
+    .quote-field label { font-size: 14px; font-weight: 800; }
+    .quote-field input, .quote-field select, .quote-field textarea { width: 100%; padding: 12px 13px; color: var(--quote-ink); background: #fff; border: 1px solid #bfd3ca; border-radius: 6px; font: inherit; }
+    .quote-field textarea { min-height: 92px; resize: vertical; }
+    .quote-field input:focus, .quote-field select:focus, .quote-field textarea:focus { outline: 3px solid rgba(34,197,94,.24); border-color: #128044; }
+    .quote-consent { display: flex; align-items: flex-start; gap: 9px; margin-top: 17px; color: var(--quote-muted); font-size: 13px; line-height: 1.4; }
+    .quote-consent input { width: 18px; height: 18px; flex: 0 0 auto; margin-top: 1px; accent-color: #128044; }
+    .quote-submit { width: 100%; margin-top: 18px; }
+    .quote-status { min-height: 22px; margin: 12px 0 0; color: #a33b19; font-size: 14px; line-height: 1.4; }
+    .quote-status:empty { display: none; }
+    .quote-footer { display: flex; justify-content: space-between; gap: 20px; padding: 26px clamp(18px, 7vw, 104px); color: #d8e5df; background: var(--quote-dark); font-size: 14px; }
+    .quote-footer a { color: #78f497; }
+    @media (max-width: 820px) {
+      .quote-hero { grid-template-columns: 1fr; padding-top: 48px; }
+      .quote-hero h1 { font-size: clamp(38px, 12vw, 58px); }
+    }
+    @media (max-width: 560px) {
+      .quote-nav { align-items: flex-start; flex-direction: column; }
+      .quote-nav img { width: 150px; }
+      .quote-nav-actions { width: 100%; justify-content: space-between; }
+      .quote-proof { grid-template-columns: 1fr; }
+      .quote-actions { align-items: stretch; flex-direction: column; }
+      .quote-button { width: 100%; }
+      .quote-footer { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body class="quote-page">
+  <nav class="quote-nav" aria-label="Navegación principal">
+    <a href="/" aria-label="Total Solutions Cancún"><img src="/assets/assets/total-solutions-logo.svg" alt="Total Solutions Cancún"></a>
+    <div class="quote-nav-actions">
+      <a data-whatsapp href="https://wa.me/529984078199" target="_blank" rel="noopener">WhatsApp</a>
+      <a href="/quienes-somos?lang=es">Quiénes somos</a>
+    </div>
+  </nav>
+  <main>
+    <section class="quote-hero" aria-labelledby="quote-title">
+      <div>
+        <p class="quote-kicker">Total Solutions Cancún</p>
+        <h1 id="quote-title">¿Necesitas mantenimiento o reparación en Cancún?</h1>
+        <p>Coordinamos visitas, diagnóstico, servicio y evidencia para tu propiedad.</p>
+        <div class="quote-actions">
+          <a class="quote-button quote-button-primary" data-whatsapp href="https://wa.me/529984078199" target="_blank" rel="noopener">Solicitar cotización por WhatsApp</a>
+          <a class="quote-button quote-button-secondary" data-phone href="tel:+529984078199">Llamar ahora</a>
+        </div>
+        <div class="quote-proof" aria-label="Qué puedes esperar">
+          <span>Atención organizada</span>
+          <span>Evidencia profesional</span>
+          <span>Seguimiento de la solicitud</span>
+        </div>
+      </div>
+      <form id="quote-form" class="quote-form-card" novalidate>
+        <h2>Cuéntanos lo esencial</h2>
+        <p>Déjanos tus datos y coordinamos el siguiente paso contigo.</p>
+        <div class="quote-field">
+          <label for="quote-service">Tipo de servicio *</label>
+          <select id="quote-service" name="service_category" required>
+            <option value="">Selecciona un servicio</option>
+            <option value="HIDRAULICA">Plomería</option>
+            <option value="ELECTRICA">Electricidad</option>
+            <option value="AIRE_ACONDICIONADO">Aire acondicionado</option>
+            <option value="PINTURA">Pintura</option>
+            <option value="IMPERMEABILIZACION">Impermeabilización</option>
+            <option value="LIMPIEZA">Limpieza</option>
+            <option value="OTRO">Otro servicio</option>
+          </select>
+        </div>
+        <div class="quote-field">
+          <label for="quote-name">Nombre *</label>
+          <input id="quote-name" name="requester_name" autocomplete="name" maxlength="160" required>
+        </div>
+        <div class="quote-field">
+          <label for="quote-phone">Teléfono o WhatsApp *</label>
+          <input id="quote-phone" name="requester_phone" type="tel" autocomplete="tel" maxlength="40" required>
+        </div>
+        <div class="quote-field">
+          <label for="quote-description">Descripción breve (opcional)</label>
+          <textarea id="quote-description" name="problem_description" maxlength="1200"></textarea>
+        </div>
+        <div class="quote-field">
+          <label for="quote-photo">Foto opcional</label>
+          <input id="quote-photo" name="files" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif">
+        </div>
+        <label class="quote-consent" for="quote-consent">
+          <input id="quote-consent" name="consent_privacy" type="checkbox" required>
+          <span>Acepto el <a href="/aviso-de-privacidad?lang=es" target="_blank" rel="noopener">Aviso de Privacidad</a>.</span>
+        </label>
+        <button id="quote-submit" class="quote-button quote-button-primary quote-submit" type="submit">Recibir cotización</button>
+        <p id="quote-status" class="quote-status" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+  </main>
+  <footer class="quote-footer"><span>Mantenimiento profesional y seguimiento operativo en Cancún.</span><span><a href="/aviso-de-privacidad?lang=es">Aviso de Privacidad</a> · <a data-whatsapp href="https://wa.me/529984078199" target="_blank" rel="noopener">WhatsApp</a></span></footer>
+  <script src="/assets/public-confirmation.js?v=9728e26"></script>
+  <script src="/assets/cotizar.js?v=1"></script>
+</body>
+</html>

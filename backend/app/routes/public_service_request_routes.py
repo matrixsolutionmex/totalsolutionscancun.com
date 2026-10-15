@@ -102,6 +102,9 @@ def create_public_service_request(
     customer_budget_min: str | None = Form(default=None),
     customer_budget_max: str | None = Form(default=None),
     pricing_zone: str | None = Form(default=None),
+    lead_origin: str | None = Form(default=None),
+    attribution: str | None = Form(default=None),
+    funnel: str | None = Query(default=None),
     files: list[UploadFile] | None = File(default=None),
     db: Session = Depends(get_db),
     accept_language: str | None = Header(default=None),
@@ -112,15 +115,16 @@ def create_public_service_request(
         organization, marketplace_link = resolve_marketplace_link(db, organization_slug, marketplace_link_slug)
         marketplace_organization_id = organization.id
     effective_service_category = marketplace_link.service_category if marketplace_link and marketplace_link.service_category else service_category
+    quote_funnel = funnel == "quote"
     payload = {
         "requester_name": requester_name,
         "requester_phone": requester_phone,
         "requester_email": requester_email,
-        "property_type": property_type,
+        "property_type": property_type or ("Casa" if quote_funnel else property_type),
         "service_category": effective_service_category,
-        "problem_description": problem_description,
+        "problem_description": problem_description or ("Solicitud de cotización desde landing" if quote_funnel else None),
         "urgency": urgency,
-        "address_line1": address_line1,
+        "address_line1": address_line1 or ("Por confirmar" if quote_funnel else address_line1),
         "address_line2": address_line2,
         "district": district,
         "locality": locality,
@@ -144,6 +148,9 @@ def create_public_service_request(
         "customer_budget_min": customer_budget_min,
         "customer_budget_max": customer_budget_max,
         "pricing_zone": pricing_zone,
+        "funnel": "quote" if quote_funnel else None,
+        "lead_origin": lead_origin,
+        "attribution": attribution,
     }
     try:
         service_request = create_customer_request_and_order(

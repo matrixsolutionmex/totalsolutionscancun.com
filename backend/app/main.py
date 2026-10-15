@@ -55,6 +55,7 @@ from app.services.service_order_service import ensure_service_order
 from app.services.notification_service import process_email_outbox
 from app.services.commercial_upgrade_service import normalize_existing_upgrade_intents
 from app.services.pricing_engine_service import seed_default_pricing_rates
+from app.services.public_marketing_config import public_marketing_config
 
 app = FastAPI(
     title="Total Solutions CRM",
@@ -171,7 +172,7 @@ async def security_headers(request: Request, call_next):
     if request.url.path.startswith("/uploads/professional-applications/"):
         return JSONResponse(status_code=404, content={"detail": "Archivo no encontrado"})
     response = await call_next(request)
-    no_store_paths = {"/", "/sw.js", "/solicitar-servico", "/solicitud-enviada", "/aviso-de-privacidad", "/preferencias-comunicacion"}
+    no_store_paths = {"/", "/cotizar", "/public/marketing-config", "/sw.js", "/solicitar-servico", "/solicitud-enviada", "/aviso-de-privacidad", "/preferencias-comunicacion"}
     if request.url.path in no_store_paths or request.url.path.startswith(("/m/", "/acompanhar/", "/seguimiento/")):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
@@ -184,11 +185,11 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://unpkg.com https://challenges.cloudflare.com https://accounts.google.com https://web-button.metamap.com; "
+        "script-src 'self' 'unsafe-inline' https://unpkg.com https://www.googletagmanager.com https://www.google-analytics.com https://challenges.cloudflare.com https://accounts.google.com https://web-button.metamap.com; "
         "style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
-        "img-src 'self' data: blob: https://unpkg.com https://*.tile.openstreetmap.org https://lh3.googleusercontent.com; "
-        "connect-src 'self' https://unpkg.com https://*.tile.openstreetmap.org https://nominatim.openstreetmap.org https://challenges.cloudflare.com https://accounts.google.com https://web-button.metamap.com https://api.prod.metamap.com; "
+        "img-src 'self' data: blob: https://unpkg.com https://www.google-analytics.com https://www.google.com https://googleads.g.doubleclick.net https://*.tile.openstreetmap.org https://lh3.googleusercontent.com; "
+        "connect-src 'self' https://unpkg.com https://www.googletagmanager.com https://www.google-analytics.com https://analytics.google.com https://www.googleadservices.com https://googleads.g.doubleclick.net https://pagead2.googlesyndication.com https://www.google.com https://*.tile.openstreetmap.org https://nominatim.openstreetmap.org https://challenges.cloudflare.com https://accounts.google.com https://web-button.metamap.com https://api.prod.metamap.com; "
         "frame-src https://challenges.cloudflare.com https://accounts.google.com https://signup.metamap.com; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; form-action 'self'",
@@ -752,6 +753,27 @@ def service_portal():
             },
         )
     return {"status": "portal-not-found"}
+
+
+@app.get("/cotizar", include_in_schema=False)
+def quote_landing_page():
+    quote_page = frontend_dir / "cotizar.html"
+    if quote_page.exists():
+        return FileResponse(
+            quote_page,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+                "CDN-Cache-Control": "no-store",
+            },
+        )
+    raise HTTPException(status_code=404, detail="Página no disponible")
+
+
+@app.get("/public/marketing-config", include_in_schema=False)
+def public_marketing_configuration():
+    return public_marketing_config()
 
 
 @app.get("/cliente", include_in_schema=False)

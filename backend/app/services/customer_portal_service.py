@@ -61,6 +61,32 @@ ALLOWED_MEDIA_TYPES = {
     "application/pdf",
 }
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+PUBLIC_LEAD_ORIGINS = {
+    "WHATSAPP",
+    "GOOGLE_BUSINESS",
+    "GOOGLE_ADS",
+    "META_ADS",
+    "INSTAGRAM",
+    "FACEBOOK",
+    "LANDING_PAGE",
+    "LLAMADA",
+    "INDICACION",
+    "CLIENTE_ANTIGUO",
+    "PROSPECCION",
+    "LEADVAULT",
+    "SOCIO_COMERCIAL",
+    "OTRO",
+}
+PUBLIC_ATTRIBUTION_KEYS = {
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "gclid",
+    "wbraid",
+    "gbraid",
+}
 
 
 def _default_organization_id(db: Session) -> int | None:
@@ -175,6 +201,22 @@ def _validate_uploads_before_persisting(uploads: list[Any]):
         _read_upload(upload)
 
 
+def _public_lead_attribution(payload: dict[str, Any]) -> tuple[str, str | None]:
+    origin = (clean_text(payload.get("lead_origin")) or "").upper()
+    if origin not in PUBLIC_LEAD_ORIGINS:
+        origin = "PORTAL_CLIENTE"
+    raw_detail = clean_text(payload.get("attribution")) or ""
+    pairs = []
+    for item in raw_detail.split(";"):
+        key, separator, value = item.partition("=")
+        key = (clean_text(key) or "").lower()
+        value = clean_text(value) or ""
+        if separator and key in PUBLIC_ATTRIBUTION_KEYS and value:
+            pairs.append(f"{key}={value[:120]}")
+    detail = ";".join(pairs)
+    return origin, detail[:240] if detail else None
+
+
 def create_customer_request_and_order(
     db: Session,
     payload: dict[str, Any],
@@ -185,7 +227,9 @@ def create_customer_request_and_order(
     marketplace_link: OrganizationMarketplaceLink | None = None,
 ) -> ServiceRequest:
     organization_id = organization_id or (actor.organization_id if actor and actor.organization_id else _default_organization_id(db))
-    request_source = "MARKETPLACE_LINK" if marketplace_link else "CLIENT_PORTAL"
+    funnel = (clean_text(payload.get("funnel")) or "").lower()
+    request_source = "MARKETPLACE_LINK" if marketplace_link else "PUBLIC_FUNNEL" if funnel == "quote" else "CLIENT_PORTAL"
+    lead_origin, lead_attribution = _public_lead_attribution(payload)
     location = normalize_service_location(
         payload.get("location_lat") or payload.get("latitude"),
         payload.get("location_lng") or payload.get("longitude"),
@@ -248,7 +292,8 @@ def create_customer_request_and_order(
             nicho=clean_text(payload.get("service_category")),
             descripcion_problema=clean_text(payload.get("problem_description")),
             urgencia=clean_text(payload.get("urgency")) or "NORMAL",
-            origen="PORTAL_CLIENTE",
+            origen=lead_origin,
+            origen_detalle=lead_attribution,
             pipeline="NOVO LEAD",
             score=0,
             received_at=datetime.utcnow(),
