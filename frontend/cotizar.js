@@ -62,6 +62,29 @@
     }
     return safeParams;
   };
+  const isSuccessfulResponse = response => {
+    if (!response) return false;
+    const status = Number(response.status);
+    if (Number.isFinite(status) && status > 0) return status >= 200 && status < 300;
+    return response.ok === true;
+  };
+  const readSuccessfulPayload = async response => {
+    if (!isSuccessfulResponse(response)) throw new Error("request_failed");
+    if (typeof response.text === "function") {
+      const raw = await response.text();
+      if (!raw.trim()) return null;
+      try { return JSON.parse(raw); } catch (_error) { return null; }
+    }
+    if (typeof response.json === "function") {
+      try { return await response.json(); } catch (_error) { return null; }
+    }
+    return null;
+  };
+  const requestSuccessfulPayload = async (fetchImpl, endpoint, options) => {
+    const response = await fetchImpl(endpoint, options);
+    return readSuccessfulPayload(response);
+  };
+  const canStartSubmission = submit => Boolean(submit) && !submit.disabled;
   const dispatchTrackedEvent = (eventName, params) => {
     const payload = { event: eventName, ...params };
     try {
@@ -144,7 +167,7 @@
     document.querySelectorAll("[data-phone]").forEach(link => link.addEventListener("click", () => track("phone_click", { funnel: "quote" })));
     form.addEventListener("submit", async event => {
       event.preventDefault();
-      if (submit.disabled) return;
+      if (!canStartSubmission(submit)) return;
       if (!form.reportValidity()) return;
       submit.disabled = true;
       submit.setAttribute("aria-busy", "true");
@@ -168,13 +191,16 @@
       const controller = new AbortController();
       const timer = root.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
       try {
-        const response = await root.fetch("/public/service-requests?funnel=quote", { method: "POST", body, headers: { Accept: "application/json" }, signal: controller.signal });
-        const data = await response.json();
-        if (!response.ok) throw new Error("request_failed");
+        const data = await requestSuccessfulPayload(root.fetch, "/public/service-requests?funnel=quote", { method: "POST", body, headers: { Accept: "application/json" }, signal: controller.signal });
         const confirmation = root.TotalSolutionsConfirmation;
-        if (!confirmation) throw new Error("confirmation_unavailable");
-        const state = confirmation.createState(data, "es", Date.now(), root.location.origin);
-        confirmation.write(storage("localStorage"), state, root.location.origin);
+        if (confirmation && data && typeof confirmation.createState === "function" && typeof confirmation.write === "function") {
+          try {
+            const state = confirmation.createState(data, "es", Date.now(), root.location.origin);
+            confirmation.write(storage("sessionStorage"), state, root.location.origin);
+          } catch (_error) {
+            // The backend already confirmed creation; optional confirmation storage must not re-submit.
+          }
+        }
         const conversionKey = `${CONVERSION_KEY_PREFIX}${key}`;
         if (!read(session, conversionKey)) {
           write(session, conversionKey, "1");
@@ -193,7 +219,17 @@
     });
   }
 
-  if (typeof module === "object" && module.exports) module.exports = { safeAttribution, attributionDetail, originFor, normalizeMarketingConfig, eventParams };
+  if (typeof module === "object" && module.exports) module.exports = {
+    safeAttribution,
+    attributionDetail,
+    originFor,
+    normalizeMarketingConfig,
+    eventParams,
+    isSuccessfulResponse,
+    readSuccessfulPayload,
+    requestSuccessfulPayload,
+    canStartSubmission,
+  };
   if (document?.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });
   else init();
 })(typeof globalThis !== "undefined" ? globalThis : this, typeof document !== "undefined" ? document : null);

@@ -46,3 +46,40 @@ test("adds Google Ads send_to only to the deduplicated lead conversion", () => {
     google_ads_lead_conversion_label: "Lead_Label-01",
   }), { funnel: "quote", send_to: "AW-123456/Lead_Label-01" });
 });
+
+test("accepts JSON success responses across the full 2xx range", async () => {
+  for (const status of [200, 201, 204, 299]) {
+    const payload = await funnel.readSuccessfulPayload({
+      status,
+      ok: true,
+      text: async () => status === 204 ? "" : JSON.stringify({ accepted: true }),
+    });
+    assert.deepEqual(payload, status === 204 ? null : { accepted: true });
+  }
+});
+
+test("accepts a successful empty response without requiring JSON", async () => {
+  assert.equal(await funnel.readSuccessfulPayload({ status: 201, ok: true, text: async () => "" }), null);
+});
+
+test("rejects non-2xx responses before parsing or tracking success", async () => {
+  await assert.rejects(
+    funnel.readSuccessfulPayload({ status: 422, ok: false, text: async () => JSON.stringify({ detail: "invalid" }) }),
+    /request_failed/,
+  );
+  assert.equal(funnel.isSuccessfulResponse({ status: 503, ok: false }), false);
+});
+
+test("does not convert a network failure into a successful response", async () => {
+  await assert.rejects(
+    funnel.requestSuccessfulPayload(async () => { throw new Error("network"); }, "/public/service-requests", {}),
+    /network/,
+  );
+});
+
+test("locks the submit control while the first request is pending", () => {
+  const submit = { disabled: false };
+  assert.equal(funnel.canStartSubmission(submit), true);
+  submit.disabled = true;
+  assert.equal(funnel.canStartSubmission(submit), false);
+});
