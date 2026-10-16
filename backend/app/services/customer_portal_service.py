@@ -241,6 +241,9 @@ def create_customer_request_and_order(
         raise HTTPException(status_code=400, detail="Confirme la ubicacion exacta antes de enviar")
     idempotency_key = clean_text(payload.get("idempotency_key"))
     if idempotency_key and organization_id:
+        # Serialize retries for one organization before checking the request key.
+        # This closes the race that a unique index alone cannot prevent without a migration.
+        db.query(Organization.id).filter(Organization.id == organization_id).with_for_update().first()
         existing = (
             db.query(ServiceRequest)
             .filter(

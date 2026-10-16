@@ -15966,6 +15966,12 @@
       };
       const confirmationState = window.TotalSolutionsConfirmation;
       const normalizePortalLanguage = confirmationState.normalizeLanguage;
+      const confirmationActionCopy = {
+        es: { payVisit: "Pagar visita técnica", continueWithoutPayment: "Continuar sin pagar" },
+        en: { payVisit: "Pay technical visit", continueWithoutPayment: "Continue without paying" },
+        "pt-BR": { payVisit: "Pagar visita técnica", continueWithoutPayment: "Continuar sem pagar" },
+      };
+      const confirmationActionText = (key) => confirmationActionCopy[portalLanguage]?.[key] || confirmationActionCopy.es[key];
       const trackingTranslations = {
         es: { interrupted: "Ubicación interrumpida", stale: "Ubicación sin actualización reciente", onWay: "Tu técnico está en camino", waiting: "Esperando ubicación del técnico", updatedNow: "Actualizada ahora", lastUpdate: "Última actualización hace", seconds: "segundos", recalculating: "Recalculando ruta...", approximateEta: "Llegada estimada aproximada", estimatedArrival: "Llegada estimada", distance: "Distancia restante", time: "Hora", etaUnavailable: "ETA temporalmente no disponible", accuracy: "Precisión", map: "Mapa de seguimiento del servicio", technician: "Técnico", destination: "Destino del servicio", visitPayment: "Pago de la visita", visitPending: "Estamos confirmando tu pago.", visitPaid: "Visita pagada ✓", checkoutUnavailable: "Pago de visita no disponible.", diagnosis: "Diagnóstico", problemFound: "Problema encontrado", solution: "Solución recomendada", observations: "Observaciones", quote: "Presupuesto", quoteItems: "Ítems", itemDescription: "Descripción", quantity: "Cantidad", unit: "Unidad", unitPrice: "Precio", subtotal: "Subtotal", discount: "Descuento", tax: "Impuestos", total: "Total", validUntil: "Válido hasta", approveQuote: "Aprobar presupuesto", rejectQuote: "Rechazar presupuesto", approved: "Presupuesto aprobado", rejected: "Presupuesto rechazado", quoteError: "No fue posible actualizar el presupuesto.", paymentPlan: "Plan de pago", installment: "Parcela", payInstallment: "Pagar", installmentPaid: "Pagada", installmentPending: "Pendiente", installmentAvailable: "Disponible", serviceTotal: "Total del servicio", paid: "Pagado", outstanding: "Saldo restante", paymentTypeFull: "Pago total", paymentTypeDeposit: "Anticipo", paymentTypeProgress: "Pago intermedio", paymentTypeFinal: "Pago final", installmentWaiting: "Esperando liberación" },
         en: { interrupted: "Location interrupted", stale: "Location has not updated recently", onWay: "Your technician is on the way", waiting: "Waiting for technician location", updatedNow: "Updated now", lastUpdate: "Last update", seconds: "seconds ago", recalculating: "Recalculating route...", approximateEta: "Approximate ETA", estimatedArrival: "Estimated arrival", distance: "Distance remaining", time: "Time", etaUnavailable: "ETA temporarily unavailable", accuracy: "Accuracy", map: "Service tracking map", technician: "Technician", destination: "Service destination", visitPayment: "Visit payment", visitPending: "We are confirming your payment.", visitPaid: "Visit paid ✓", checkoutUnavailable: "Visit payment unavailable.", diagnosis: "Diagnosis", problemFound: "Problem found", solution: "Recommended solution", observations: "Observations", quote: "Quote", quoteItems: "Items", itemDescription: "Description", quantity: "Quantity", unit: "Unit", unitPrice: "Price", subtotal: "Subtotal", discount: "Discount", tax: "Tax", total: "Total", validUntil: "Valid until", approveQuote: "Approve quote", rejectQuote: "Reject quote", approved: "Quote approved", rejected: "Quote rejected", quoteError: "The quote could not be updated.", paymentPlan: "Payment plan", installment: "Installment", payInstallment: "Pay", installmentPaid: "Paid", installmentPending: "Pending", installmentAvailable: "Available" },
@@ -16727,6 +16733,9 @@
 
       function renderResult(data) {
         const trackingUrl = data.tracking_url;
+        const visitAmount = Number(data.pricing?.visit_calculated_price);
+        const visitPaymentAvailable = Number.isFinite(visitAmount) && visitAmount > 0;
+        const paymentTrackingUrl = `${trackingUrl}#publicVisitPayment`;
         renderShell(`
           <section class="portal-panel">
             <header class="portal-panel-header">
@@ -16751,6 +16760,8 @@
               </div>
               <div class="portal-actions" style="margin-top: 18px;">
                 <a class="portal-button" href="${escapeHtml(trackingUrl)}">${pt("track")}</a>
+                ${visitPaymentAvailable ? `<a class="portal-button secondary" href="${escapeHtml(paymentTrackingUrl)}">${confirmationActionText("payVisit")}</a>` : ""}
+                <a class="portal-button secondary" href="${escapeHtml(trackingUrl)}">${confirmationActionText("continueWithoutPayment")}</a>
                 <button id="newServiceRequest" class="portal-button secondary" type="button">${pt("newRequestButton")}</button>
               </div>
             </div>

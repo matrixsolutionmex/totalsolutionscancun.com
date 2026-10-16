@@ -63,6 +63,7 @@ from app.routes.service_request_routes import (
 from app.schemas.lead_schema import IntegrationLeadCreate, LeadAssignUpdate, LeadCreate, LeadPipelineUpdate, LeadUpdate
 from app.schemas.notification_schema import WebPushDeactivateRequest, WebPushKeys, WebPushSubscriptionCreate
 from app.services.customer_portal_service import create_customer_request_and_order, service_request_public_status, service_request_public_tracking
+from app.services.marketplace_service import create_opportunity_from_service_request
 from app.services.service_order_tracking_service import list_active_tracking_for_actor, start_tracking, stop_tracking, update_tracking_position
 from app.services.import_service import import_lead_records
 from app.services.notification_service import notification_push_payload, notify_client_created
@@ -1519,6 +1520,40 @@ def test_customer_portal_is_idempotent_per_request_key(db):
     assert first.id == second.id
     assert db.query(ServiceRequest).count() == 1
     assert db.query(ServiceOrder).count() == 1
+
+
+def test_public_funnel_creates_order_alert_and_tracking_before_optional_payment(db):
+    organization = make_organization(db, "portal-decoupled-payment", "Portal Decoupled Payment")
+    make_user(db, "portal-decoupled-root", "ROOT", organization_id=organization.id)
+    payload = make_portal_payload(idempotency_key="decoupled-payment-1")
+
+    service_request = create_customer_request_and_order(db, payload)
+    assert service_request.service_order is not None
+    assert db.query(Payment).filter(Payment.service_order_id == service_request.service_order.id).count() == 0
+
+    opportunity = create_opportunity_from_service_request(db, service_request)
+    db.commit()
+    status = service_request_public_status(service_request)
+
+    assert opportunity.service_request_id == service_request.id
+    assert status["order_number"] == service_request.service_order.order_number
+    assert status["tracking_url"].endswith(f"/seguimiento/{service_request.tracking_token}")
+    assert len(getattr(opportunity, "_notification_ids", [])) == 1
+    assert db.query(Notification).filter(Notification.id.in_(opportunity._notification_ids)).count() == 1
+
+    repeated_request = create_customer_request_and_order(db, payload)
+    repeated_opportunity = create_opportunity_from_service_request(db, repeated_request)
+    db.commit()
+
+    assert repeated_request.id == service_request.id
+    assert repeated_request.service_order.id == service_request.service_order.id
+    assert repeated_request.tracking_token == service_request.tracking_token
+    assert repeated_opportunity.id == opportunity.id
+    assert db.query(ServiceRequest).count() == 1
+    assert db.query(ServiceOrder).count() == 1
+    assert db.query(ServiceOpportunity).count() == 1
+    assert db.query(Notification).count() == 1
+    assert db.query(Payment).count() == 0
 
 
 def test_customer_portal_rejects_invalid_upload(db):

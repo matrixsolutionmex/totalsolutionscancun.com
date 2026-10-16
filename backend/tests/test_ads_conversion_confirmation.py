@@ -52,6 +52,10 @@ def test_confirmation_ui_preserves_content_accessibility_and_tracking_link():
     result = html.split("function renderResult(data)", 1)[1].split("async function renderTracking", 1)[0]
     for translation_key in ("registered", "order", "trackingCode", "status", "visitReference", "track", "newRequestButton"):
         assert f'pt("{translation_key}")' in result
+    assert 'confirmationActionText("payVisit")' in result
+    assert 'confirmationActionText("continueWithoutPayment")' in result
+    assert 'href="${escapeHtml(paymentTrackingUrl)}"' in result
+    assert "publicVisitPayment" in result
     assert 'id="confirmationTitle" tabindex="-1"' in result
     assert 'document.getElementById("confirmationTitle")?.focus()' in result
     assert 'href="${escapeHtml(trackingUrl)}"' in result
