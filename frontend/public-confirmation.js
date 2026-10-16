@@ -158,6 +158,7 @@
     createState,
     validState,
     read,
+    write,
     clear,
     submit,
   };

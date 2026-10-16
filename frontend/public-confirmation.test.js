@@ -59,6 +59,34 @@ test("successful confirmed response stores only display data and navigates with 
   }
 });
 
+test("the production quote contract can be persisted through the public writer API", () => {
+  const storage = new MemoryStorage();
+  const token = "a".repeat(32);
+  const payload = {
+    order_number: "TS-2026-000000",
+    tracking_token: token,
+    tracking_url: `/seguimiento/${token}`,
+    status: "Solicitud recibida",
+    pricing: {
+      currency: "MXN",
+      visit_calculated_price: null,
+      zone: "Z0",
+      urgency_multiplier: 1,
+      market_reference_min: null,
+      market_reference_max: null,
+    },
+  };
+
+  const state = confirmation.createState(payload, "es", 1000, "https://totalsolutionscancun.com", "quote");
+  const saved = confirmation.write(storage, state, "https://totalsolutionscancun.com");
+
+  assert.equal(typeof confirmation.write, "function");
+  assert.equal(saved.confirmation.order_number, payload.order_number);
+  assert.equal(saved.confirmation.tracking_token, token);
+  assert.equal(saved.confirmation.tracking_url, `/seguimiento/${token}`);
+  assert.equal(confirmation.read(storage, 1001, "https://totalsolutionscancun.com").confirmation.order_number, payload.order_number);
+});
+
 test("API error, invalid JSON and incomplete confirmations fail closed without navigation", async () => {
   const cases = [
     { ok: false, json: async () => ({ detail: "Synthetic API error" }) },
