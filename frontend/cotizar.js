@@ -11,6 +11,7 @@
   let marketingConfig = {};
   let marketingReady = Promise.resolve();
   let pendingEvents = [];
+  const sharedMarketing = root.TotalSolutionsMarketing;
 
   const trim = value => String(value || "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 120);
   const storage = (name) => {
@@ -46,21 +47,13 @@
     if (!config || typeof config !== "object") return {};
     const normalized = {};
     const ga4 = trim(config.ga4_measurement_id).toUpperCase();
-    const ads = trim(config.google_ads_conversion_id).toUpperCase();
-    const label = trim(config.google_ads_lead_conversion_label);
     const gtm = trim(config.gtm_container_id).toUpperCase();
     if (/^G-[A-Z0-9]+$/.test(ga4)) normalized.ga4_measurement_id = ga4;
-    if (/^AW-[0-9]+$/.test(ads)) normalized.google_ads_conversion_id = ads;
-    if (/^[A-Za-z0-9_-]+$/.test(label)) normalized.google_ads_lead_conversion_label = label;
     if (/^GTM-[A-Z0-9]+$/.test(gtm)) normalized.gtm_container_id = gtm;
     return normalized;
   };
   const eventParams = (eventName, params = {}, config = marketingConfig) => {
-    const safeParams = { ...params };
-    if (eventName === "generate_lead" && config.google_ads_conversion_id && config.google_ads_lead_conversion_label) {
-      safeParams.send_to = `${config.google_ads_conversion_id}/${config.google_ads_lead_conversion_label}`;
-    }
-    return safeParams;
+    return { ...params };
   };
   const isSuccessfulResponse = response => {
     if (!response) return false;
@@ -110,6 +103,10 @@
   };
   const track = (eventName, params = {}) => {
     const safeParams = eventParams(eventName, params);
+    if (sharedMarketing?.track) {
+      sharedMarketing.track(root, eventName, safeParams);
+      return;
+    }
     if (typeof root.gtag === "function" || Array.isArray(root.dataLayer)) dispatchTrackedEvent(eventName, safeParams);
     else pendingEvents.push({ eventName, params: safeParams });
   };
@@ -131,6 +128,10 @@
     document.head.appendChild(script);
   });
   const configureMarketing = async () => {
+    if (sharedMarketing?.configure) {
+      marketingConfig = await sharedMarketing.configure(root, document, MARKETING_CONFIG_ENDPOINT);
+      return marketingConfig;
+    }
     try {
       const response = await root.fetch(MARKETING_CONFIG_ENDPOINT, { headers: { Accept: "application/json" }, cache: "no-store" });
       if (!response.ok) return;
@@ -140,14 +141,13 @@
         root.dataLayer.push({ "gtm.start": Date.now(), event: "gtm.js" });
         await loadScript(`https://www.googletagmanager.com/gtm.js?id=${encodeURIComponent(marketingConfig.gtm_container_id)}`, "total-solutions-gtm");
       } else {
-        const tagId = marketingConfig.ga4_measurement_id || marketingConfig.google_ads_conversion_id;
+        const tagId = marketingConfig.ga4_measurement_id;
         if (tagId) {
           root.dataLayer = Array.isArray(root.dataLayer) ? root.dataLayer : [];
           root.gtag = root.gtag || function () { root.dataLayer.push(arguments); };
           await loadScript(`https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(tagId)}`, "total-solutions-gtag");
           root.gtag("js", new Date());
           if (marketingConfig.ga4_measurement_id) root.gtag("config", marketingConfig.ga4_measurement_id);
-          if (marketingConfig.google_ads_conversion_id) root.gtag("config", marketingConfig.google_ads_conversion_id);
         }
       }
     } catch (_error) {
@@ -156,11 +156,10 @@
       flushPendingEvents();
     }
   };
-  const errorText = error => {
-    if (error?.name === "AbortError") return "La solicitud tardó demasiado. Inténtalo nuevamente.";
-    if (error?.code === "confirmation_unavailable") return "La solicitud fue registrada, pero no pudimos preparar la confirmación. No la envíes nuevamente.";
-    return "No fue posible enviar la solicitud. Inténtalo nuevamente.";
-  };
+  const errorText = error => error?.name === "AbortError" ? "La solicitud tardó demasiado. Inténtalo nuevamente." : "No fue posible enviar la solicitud. Inténtalo nuevamente.";
+  const confirmationFailureText = error => error?.code === "confirmation_unavailable"
+    ? "La solicitud fue registrada, pero no pudimos guardar la confirmación en esta pestaña. No la envíes nuevamente."
+    : errorText(error);
 
   function init() {
     if (!document) return;
@@ -177,14 +176,14 @@
     if (Object.keys(attribution).length) write(session, ATTRIBUTION_KEY, JSON.stringify(attribution));
     let formStarted = false;
     form.addEventListener("focusin", () => {
-      if (!formStarted) { formStarted = true; track("form_start", { funnel: "quote" }); }
+      if (!formStarted) { formStarted = true; track("form_start", { funnel: "cotizar" }); }
     });
     document.querySelectorAll("[data-whatsapp]").forEach(link => link.addEventListener("click", () => {
-      track("whatsapp_click", { funnel: "quote" });
+      track("whatsapp_click", { funnel: "cotizar" });
       const message = encodeURIComponent("Hola, quiero solicitar una cotización de mantenimiento en Cancún.");
       link.href = `${WHATSAPP_URL}?text=${message}`;
     }));
-    document.querySelectorAll("[data-phone]").forEach(link => link.addEventListener("click", () => track("phone_click", { funnel: "quote" })));
+    document.querySelectorAll("[data-phone]").forEach(link => link.addEventListener("click", () => track("phone_click", { funnel: "cotizar" })));
     form.addEventListener("submit", async event => {
       event.preventDefault();
       if (!canStartSubmission(submit)) return;
@@ -212,17 +211,34 @@
       const timer = root.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
       try {
         const data = await requestSuccessfulPayload(root.fetch, "/public/service-requests?funnel=quote", { method: "POST", body, headers: { Accept: "application/json" }, signal: controller.signal });
-        saveConfirmationState(root.TotalSolutionsConfirmation, storage("sessionStorage"), data, root.location.origin);
-        const conversionKey = `${CONVERSION_KEY_PREFIX}${key}`;
-        if (!read(session, conversionKey)) {
-          write(session, conversionKey, "1");
-          await marketingReady;
-          track("generate_lead", { funnel: "quote", method: "quote_form" });
+        let confirmationError = null;
+        try {
+          saveConfirmationState(root.TotalSolutionsConfirmation, storage("sessionStorage"), data, root.location.origin);
+        } catch (error) {
+          confirmationError = error;
         }
+        try {
+          if (sharedMarketing?.trackLeadOnce) {
+            sharedMarketing.trackLeadOnce(root, session, key, "cotizar", "quote_form");
+          } else {
+            const conversionKey = `${CONVERSION_KEY_PREFIX}${key}`;
+            if (!read(session, conversionKey)) {
+              write(session, conversionKey, "1");
+              track("generate_lead", { funnel: "cotizar", method: "quote_form" });
+            }
+          }
+        } catch (_error) { /* Measurement must never block a confirmed request. */ }
+        if (confirmationError) throw confirmationError;
         try { session?.removeItem(IDEMPOTENCY_KEY); } catch (_error) { /* Storage is optional. */ }
         root.location.assign("/solicitud-enviada?lang=es");
       } catch (error) {
-        status.textContent = errorText(error);
+        status.textContent = confirmationFailureText(error);
+        if (error?.code === "confirmation_unavailable") {
+          status.className = "quote-status quote-status-confirmed";
+          submit.setAttribute("data-confirmed", "true");
+          submit.removeAttribute("aria-busy");
+          return;
+        }
         submit.disabled = false;
         submit.removeAttribute("aria-busy");
       } finally {
@@ -241,6 +257,7 @@
     readSuccessfulPayload,
     requestSuccessfulPayload,
     saveConfirmationState,
+    confirmationFailureText,
     canStartSubmission,
   };
   if (document?.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });

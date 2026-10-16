@@ -596,6 +596,8 @@ def service_request_sales_summary(request: ServiceRequest) -> dict[str, Any]:
         "order_number": order.order_number if order else None,
         "client_id": request.lead_id,
         "client_name": lead.nome if lead else request.requester_name,
+        "lead_origin": lead.origen if lead else None,
+        "lead_attribution": lead.origen_detalle if lead else None,
         "property_type": request.property_record.profile_type if request.property_record else None,
         "address": request.property_record.address_line1 if request.property_record else None,
         "service_category": request.service_category,

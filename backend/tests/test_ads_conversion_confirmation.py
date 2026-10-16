@@ -35,6 +35,7 @@ def test_confirmation_page_is_fail_closed_and_never_posts_on_reload():
     assert "confirmationState.read(sessionStorage" in confirmation_branch
     assert "window.location.replace(`/solicitar-servico?lang=" in confirmation_branch
     assert "renderResult(state.confirmation, state.funnel)" in confirmation_branch
+    assert "confirmationUnavailable" in html
     assert "fetch(" not in confirmation_branch.split("} else if (isTracking)", 1)[0]
 
 
@@ -60,7 +61,6 @@ def test_confirmation_ui_preserves_content_accessibility_and_tracking_link():
     assert 'document.getElementById("confirmationTitle")?.focus()' in result
     assert 'href="${escapeHtml(trackingUrl)}"' in result
     assert "confirmationState.clear(sessionStorage)" in result
-    assert 'const destination = funnel === "quote" ? "/cotizar" : "/solicitar-servico"' in result
     assert 'document.documentElement.lang = portalLanguage === "pt-BR" ? "pt-BR" : portalLanguage' in html
     assert 'aria-pressed="${portalLanguage === "es"}"' in html
 

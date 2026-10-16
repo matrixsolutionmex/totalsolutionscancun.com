@@ -1,9 +1,10 @@
 import asyncio
+from types import SimpleNamespace
 
 import httpx
 
 from app.main import app
-from app.services.customer_portal_service import _public_lead_attribution
+from app.services.customer_portal_service import _public_lead_attribution, service_request_sales_summary
 
 
 def get_page(path: str) -> httpx.Response:
@@ -28,7 +29,7 @@ def test_quote_landing_is_public_and_preserves_operational_form():
     assert 'id="quote-name"' in response.text
     assert 'id="quote-phone"' in response.text
     assert 'id="quote-photo"' in response.text
-    assert "/assets/cotizar.js?v=3" in response.text
+    assert "/assets/cotizar.js?v=sha256-6ec40746327f7f9a" in response.text
     assert get_page("/solicitar-servico?lang=es").status_code == 200
 
 
@@ -47,6 +48,27 @@ def test_quote_attribution_accepts_google_ads_without_pii_or_untrusted_origin():
     })
     assert fallback_origin == "PORTAL_CLIENTE"
     assert fallback_detail is None
+
+
+def test_sales_summary_exposes_attribution_separately_from_operational_data():
+    request = SimpleNamespace(
+        id=7,
+        status="SALES_QUEUE",
+        service_order=SimpleNamespace(order_number="TS-2026-000007", supervisor_user_id=None),
+        lead_id=11,
+        lead=SimpleNamespace(nome="Synthetic Lead", origen="GOOGLE_ADS", origen_detalle="utm_source=google;gclid=synthetic"),
+        requester_name="Synthetic Lead",
+        property_record=None,
+        service_category="Hidraulica",
+        urgency="NORMAL",
+        media=[],
+        created_at=None,
+    )
+
+    summary = service_request_sales_summary(request)
+
+    assert summary["lead_origin"] == "GOOGLE_ADS"
+    assert summary["lead_attribution"] == "utm_source=google;gclid=synthetic"
 
 
 def test_sitemap_contains_quote_landing():

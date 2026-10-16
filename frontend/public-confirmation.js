@@ -116,9 +116,15 @@
     return saved;
   }
 
+  function confirmationUnavailableError() {
+    const error = new Error("Confirmation unavailable");
+    error.code = "confirmation_unavailable";
+    return error;
+  }
+
   async function submit(options) {
     const {
-      endpoint, body, language, storage, fetchImpl, navigate, baseUrl,
+      endpoint, body, language, storage, fetchImpl, navigate, baseUrl, onConfirmed,
       timeoutMs = REQUEST_TIMEOUT_MS, now = Date.now(),
       AbortControllerImpl = typeof AbortController !== "undefined" ? AbortController : null,
       setTimer = setTimeout, clearTimer = clearTimeout,
@@ -134,10 +140,31 @@
         headers: { Accept: "application/json" },
         signal: controller.signal,
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data?.detail || "No fue posible registrar la solicitud");
-      const state = createState(data, language, now, baseUrl);
-      write(storage, state, baseUrl);
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.detail || "No fue posible registrar la solicitud");
+      }
+      let data = null;
+      let confirmationError = null;
+      try {
+        data = await response.json();
+      } catch (_error) {
+        confirmationError = confirmationUnavailableError();
+      }
+      let state;
+      if (!confirmationError) try {
+        state = createState(data, language, now, baseUrl);
+        write(storage, state, baseUrl);
+      } catch (_error) {
+        confirmationError = confirmationUnavailableError();
+      }
+      try {
+        const result = typeof onConfirmed === "function" ? onConfirmed({ data, state }) : null;
+        if (result && typeof result.catch === "function") result.catch(() => {});
+      } catch (_error) {
+        // Optional telemetry must never block confirmation navigation.
+      }
+      if (confirmationError) throw confirmationError;
       navigate(`/solicitud-enviada?lang=${languageQuery(language)}`);
       return state;
     } catch (error) {
@@ -159,6 +186,7 @@
     validState,
     read,
     write,
+    confirmationUnavailableError,
     clear,
     submit,
   };

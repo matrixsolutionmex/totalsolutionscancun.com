@@ -15921,7 +15921,8 @@
     window.setTimeout(hideSplash, 1400);
     restoreSession();
   </script>
-  <script src="/assets/public-confirmation.js?v=ads-conversion-01"></script>
+  <script src="/assets/marketing-analytics.js?v=sha256-3bb1db9bd00450ca"></script>
+  <script src="/assets/public-confirmation.js?v=sha256-aec6013f8baf0c29"></script>
   <script>
     (() => {
       const path = window.location.pathname;
@@ -15936,6 +15937,15 @@
       }
 
       const apiBase = window.location.origin;
+      const marketingAnalytics = window.TotalSolutionsMarketing;
+      const marketingStorage = window.sessionStorage;
+      const marketingAttribution = marketingAnalytics?.captureAttribution(
+        window.location.search,
+        marketingStorage,
+        "totalsolutions_solicitar_servico_attribution_v1",
+      ) || {};
+      const marketingRequestKeyName = "totalsolutions_solicitar_servico_idempotency_v1";
+      marketingAnalytics?.configure(window, document);
       let marketplaceContext = null;
       const marketplaceOrganizationSlug = marketplacePath ? decodeURIComponent(marketplacePath[1]) : null;
       const marketplaceLinkSlug = marketplacePath?.[2] ? decodeURIComponent(marketplacePath[2]) : "default";
@@ -15964,6 +15974,9 @@
           newRequest: "Nova solicitação", newRequestText: "Registre o serviço e nossa equipe o enviará para revisão comercial antes de atribuir supervisor e técnico.", requestInfo: "Informações da solicitação", property: "Tipo de imóvel", service: "Tipo de serviço", urgency: "Urgência", date: "Data preferida", description: "Descrição do problema", descriptionPlaceholder: "Ex.: vazamento na cozinha, ar não gela, pintura do quarto...", customer: "Cliente", name: "Nome", phone: "Telefone ou WhatsApp", email: "E-mail", budget: "Orçamento aproximado", budgetHelp: "Você pode informar uma faixa indicativa. A visita usa a matriz vigente e o preço final exige diagnóstico.", hasBudget: "Tenho um orçamento aproximado", from: "A partir de (MXN)", to: "Até (MXN)", location: "Local do serviço", address: "Endereço", district: "Colônia", city: "Cidade", state: "Estado", postal: "Código postal", mapLink: "Link do mapa (opcional)", exactLocation: "Localização exata do serviço", exactHelp: "Marque o ponto exato no mapa ou use sua localização atual.", useGps: "Usar minha localização atual", confirmLocation: "Confirmar localização", selectPoint: "Selecione um ponto no mapa.", evidenceSection: "Evidências iniciais", files: "Fotos, vídeos, áudio ou documentos", chooseFiles: "Selecionar arquivos", noFiles: "Nenhum arquivo selecionado", privacy: "Aceito o uso dos meus dados para registrar e atender esta solicitação.", images: "Autorizo o uso de imagens enviadas como evidência técnica do serviço.", submit: "Enviar solicitação", back: "Voltar ao acesso", registered: "Solicitação registrada", registeredText: "Sua solicitação foi enviada para revisão comercial. A operação atribuirá supervisor e técnico após validar os dados.", order: "Número da OS", trackingCode: "Código de acompanhamento", status: "Status", visitReference: "Referência da visita", diagnosis: "A definir após diagnóstico", marketReference: "Referência Total Solutions", waitingDiagnosis: "Aguardando diagnóstico", marketHelp: "Referência preliminar baseada na categoria do serviço. O preço final depende do diagnóstico técnico.", track: "Acompanhar solicitação", newRequestButton: "Criar outra solicitação", tracking: "Acompanhamento", trackingText: "Consultando o status público da sua solicitação.", loading: "Carregando...", preparing: "Sua solicitação está sendo preparada", technician: "Técnico", departure: "Saída", route: "Rota temporariamente indisponível", noRequest: "Não encontramos esta solicitação. Verifique o código de acompanhamento.", createRequest: "Criar solicitação", newService: "Nova solicitação", language: "Idioma", selected: "Localização selecionada. Confirme para continuar.", confirmed: "Localização confirmada. Você pode revisar o endereço sugerido.", sending: "Enviando solicitação...", sent: "Solicitação registrada com sucesso.", confirmBeforeSend: "Confirme a localização exata do serviço antes de enviar.", retry: "Tentando atualizar novamente.", mapHint: "O marcador azul representa o técnico e o verde representa o destino.", preparingShort: "Sua solicitação está sendo preparada.", visitPayment: "Pagamento da visita", visitPaymentHelp: "Inclui deslocamento e diagnóstico inicial. O reparo requer sua aprovação.", confirmVisit: "Confirmar visita", confirmingPayment: "Confirmando pagamento...", visitPending: "Estamos confirmando seu pagamento.", visitPaid: "Visita paga ✓", checkoutUnavailable: "Pagamento da visita indisponível."
         }
       };
+      portalTranslations.es.confirmationUnavailable = "La solicitud fue registrada, pero no pudimos guardar la confirmación en esta pestaña. No la envíes nuevamente.";
+      portalTranslations.en.confirmationUnavailable = "The request was registered, but we could not save the confirmation in this tab. Do not send it again.";
+      portalTranslations["pt-BR"].confirmationUnavailable = "A solicitação foi registrada, mas não foi possível salvar a confirmação nesta aba. Não envie novamente.";
       const confirmationState = window.TotalSolutionsConfirmation;
       const normalizePortalLanguage = confirmationState.normalizeLanguage;
       const confirmationActionCopy = {
@@ -17341,6 +17354,13 @@
             fileName.textContent = `${files.length} ${portalLanguage === "en" ? "files selected" : portalLanguage === "pt-BR" ? "arquivos selecionados" : "archivos seleccionados"}`;
           }
         });
+        let formStarted = false;
+        form.addEventListener("focusin", () => {
+          if (!formStarted) {
+            formStarted = true;
+            marketingAnalytics?.track(window, "form_start", { funnel: "solicitar_servico" });
+          }
+        });
         form.addEventListener("submit", async (event) => {
           event.preventDefault();
           const submitButton = form.querySelector('button[type="submit"]');
@@ -17359,7 +17379,13 @@
             formData.delete("customer_budget_min");
             formData.delete("customer_budget_max");
           }
-          formData.set("idempotency_key", crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+          const requestKey = marketingAnalytics?.getOrCreateRequestKey(marketingStorage, marketingRequestKeyName, window)
+            || (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+          formData.set("idempotency_key", requestKey);
+          if (marketingAnalytics) {
+            formData.set("lead_origin", marketingAnalytics.originFor(marketingAttribution));
+            formData.set("attribution", marketingAnalytics.attributionDetail(marketingAttribution));
+          }
           try {
             const endpoint = customerPortalMode
               ? `${apiBase}/customer-portal/me/service-requests`
@@ -17379,10 +17405,19 @@
               language: portalLanguage,
               storage: sessionStorage,
               fetchImpl: submitFetch,
+              onConfirmed: () => {
+                try { marketingStorage?.removeItem(marketingRequestKeyName); } catch (_error) { /* Storage is optional. */ }
+              },
               navigate: (url) => window.location.assign(url),
               baseUrl: window.location.origin,
             });
           } catch (error) {
+            if (error?.code === "confirmation_unavailable") {
+              message.className = "portal-message ok";
+              message.textContent = pt("confirmationUnavailable");
+              if (submitButton) submitButton.setAttribute("data-confirmed", "true");
+              return;
+            }
             message.className = "portal-message error";
             message.textContent = error.message || pt("route");
             if (submitButton) submitButton.disabled = false;

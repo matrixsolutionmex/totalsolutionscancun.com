@@ -87,6 +87,35 @@ test("the production quote contract can be persisted through the public writer A
   assert.equal(confirmation.read(storage, 1001, "https://totalsolutionscancun.com").confirmation.order_number, payload.order_number);
 });
 
+test("quote confirmations preserve their funnel for the new-request destination", () => {
+  const state = confirmation.createState(responsePayload(), "es", 1000, "https://totalsolutionscancun.com", "quote");
+  assert.equal(state.funnel, "quote");
+  const storage = new MemoryStorage();
+  storage.setItem(confirmation.STORAGE_KEY, JSON.stringify(state));
+  assert.equal(confirmation.read(storage, 1001, "https://totalsolutionscancun.com").funnel, "quote");
+});
+
+test("runs the post-confirmation hook without allowing analytics failure to block navigation", async () => {
+  const storage = new MemoryStorage();
+  const navigations = [];
+  let confirmed = false;
+  await confirmation.submit({
+    endpoint: "/public/service-requests",
+    body: "synthetic-form",
+    language: "es",
+    storage,
+    fetchImpl: async () => okResponse(),
+    onConfirmed: ({ state }) => {
+      confirmed = state.confirmation.order_number === "OS-LOCAL-001";
+      throw new Error("analytics unavailable");
+    },
+    navigate: url => navigations.push(url),
+    baseUrl: "https://totalsolutionscancun.com",
+  });
+  assert.equal(confirmed, true);
+  assert.deepEqual(navigations, ["/solicitud-enviada?lang=es"]);
+});
+
 test("API error, invalid JSON and incomplete confirmations fail closed without navigation", async () => {
   const cases = [
     { ok: false, json: async () => ({ detail: "Synthetic API error" }) },
@@ -112,6 +141,57 @@ test("API error, invalid JSON and incomplete confirmations fail closed without n
     assert.equal(navigated, false);
     assert.equal(storage.getItem(confirmation.STORAGE_KEY), null);
   }
+});
+
+test("attempts confirmed lead measurement after a 2xx even when confirmation storage fails", async () => {
+  const onConfirmed = [];
+  const storage = {
+    getItem() { throw new Error("storage unavailable"); },
+    setItem() { throw new Error("storage unavailable"); },
+    removeItem() {},
+  };
+  await assert.rejects(confirmation.submit({
+    endpoint: "/public/service-requests",
+    body: "synthetic-form",
+    language: "es",
+    storage,
+    fetchImpl: async () => okResponse(responsePayload()),
+    onConfirmed: payload => onConfirmed.push(payload),
+    navigate: () => assert.fail("confirmation storage failure must not navigate"),
+    baseUrl: "https://totalsolutionscancun.com",
+  }), error => error.code === "confirmation_unavailable");
+  assert.equal(onConfirmed.length, 1);
+  assert.equal(onConfirmed[0].data.order_number, "OS-LOCAL-001");
+});
+
+test("attempts confirmed lead measurement after a successful response with invalid JSON", async () => {
+  const onConfirmed = [];
+  const storage = new MemoryStorage();
+  await assert.rejects(confirmation.submit({
+    endpoint: "/public/service-requests",
+    body: "synthetic-form",
+    language: "es",
+    storage,
+    fetchImpl: async () => ({ ok: true, json: async () => { throw new SyntaxError("invalid json"); } }),
+    onConfirmed: payload => onConfirmed.push(payload),
+    navigate: () => assert.fail("invalid confirmation must not navigate"),
+    baseUrl: "https://totalsolutionscancun.com",
+  }), error => error.code === "confirmation_unavailable");
+  assert.equal(onConfirmed.length, 1);
+  assert.equal(onConfirmed[0].data, null);
+});
+
+test("successful response preparation failures are marked as non-retryable", async () => {
+  const storage = new MemoryStorage();
+  await assert.rejects(confirmation.submit({
+    endpoint: "/public/service-requests",
+    body: "synthetic-form",
+    language: "es",
+    storage,
+    fetchImpl: async () => ({ ok: true, json: async () => { throw new SyntaxError("invalid json"); } }),
+    navigate: () => {},
+    baseUrl: "https://totalsolutionscancun.com",
+  }), error => error.code === "confirmation_unavailable");
 });
 
 test("timeout aborts the request and remains fail closed", async () => {
@@ -146,14 +226,6 @@ test("direct access requires a valid unexpired confirmation and reload does not 
   storage.setItem(confirmation.STORAGE_KEY, JSON.stringify(state));
   assert.equal(confirmation.read(storage, 1001, "https://totalsolutionscancun.com").confirmation.order_number, "OS-LOCAL-001");
   assert.equal(confirmation.read(storage, 1000 + confirmation.STATE_TTL_MS, "https://totalsolutionscancun.com"), null);
-});
-
-test("quote confirmations preserve their funnel for the new-request destination", () => {
-  const state = confirmation.createState(responsePayload(), "es", 1000, "https://totalsolutionscancun.com", "quote");
-  assert.equal(state.funnel, "quote");
-  const storage = new MemoryStorage();
-  storage.setItem(confirmation.STORAGE_KEY, JSON.stringify(state));
-  assert.equal(confirmation.read(storage, 1001, "https://totalsolutionscancun.com").funnel, "quote");
 });
 
 test("ES, EN and PT-BR generate only supported language query values", () => {

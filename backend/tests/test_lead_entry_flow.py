@@ -14,8 +14,8 @@ from starlette.requests import Request
 
 from app.core.security import hash_password
 from app.database.connection import Base
-from app.models.deletion_request import DeletionRequest
 from app.models.customer_invitation import CustomerPortalInvitation  # noqa: F401 - register FK target for the isolated fixture
+from app.models.deletion_request import DeletionRequest
 from app.models.lead import Lead
 from app.models.lead_document import LeadDocument
 from app.models.lead_event import LeadEvent
