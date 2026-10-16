@@ -16731,7 +16731,7 @@
         }
       }
 
-      function renderResult(data) {
+      function renderResult(data, funnel = null) {
         const trackingUrl = data.tracking_url;
         const visitAmount = Number(data.pricing?.visit_calculated_price);
         const visitPaymentAvailable = Number.isFinite(visitAmount) && visitAmount > 0;
@@ -16769,7 +16769,8 @@
         `);
         document.getElementById("newServiceRequest").addEventListener("click", () => {
           confirmationState.clear(sessionStorage);
-          window.location.assign(`/solicitar-servico?lang=${confirmationState.languageQuery(portalLanguage)}`);
+          const destination = funnel === "quote" ? "/cotizar" : "/solicitar-servico";
+          window.location.assign(`${destination}?lang=${confirmationState.languageQuery(portalLanguage)}`);
         });
         document.getElementById("confirmationTitle")?.focus();
       }
@@ -17404,7 +17405,7 @@
             window.location.replace(`/solicitar-servico?lang=${confirmationState.languageQuery(portalLanguage)}`);
             return;
           }
-          renderResult(state.confirmation);
+          renderResult(state.confirmation, state.funnel);
         } else if (isTracking) renderTracking(); else renderForm();
       };
       initializePublicExperience().catch((error) => {

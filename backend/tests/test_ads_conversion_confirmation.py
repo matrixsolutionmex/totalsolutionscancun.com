@@ -34,7 +34,7 @@ def test_confirmation_page_is_fail_closed_and_never_posts_on_reload():
     confirmation_branch = html.split("if (isConfirmation) {", 2)[-1]
     assert "confirmationState.read(sessionStorage" in confirmation_branch
     assert "window.location.replace(`/solicitar-servico?lang=" in confirmation_branch
-    assert "renderResult(state.confirmation)" in confirmation_branch
+    assert "renderResult(state.confirmation, state.funnel)" in confirmation_branch
     assert "fetch(" not in confirmation_branch.split("} else if (isTracking)", 1)[0]
 
 
@@ -49,7 +49,7 @@ def test_submit_flow_requires_confirmed_response_before_real_navigation():
 
 def test_confirmation_ui_preserves_content_accessibility_and_tracking_link():
     html = INDEX.read_text()
-    result = html.split("function renderResult(data)", 1)[1].split("async function renderTracking", 1)[0]
+    result = html.split("function renderResult(data, funnel = null)", 1)[1].split("async function renderTracking", 1)[0]
     for translation_key in ("registered", "order", "trackingCode", "status", "visitReference", "track", "newRequestButton"):
         assert f'pt("{translation_key}")' in result
     assert 'confirmationActionText("payVisit")' in result
@@ -60,6 +60,7 @@ def test_confirmation_ui_preserves_content_accessibility_and_tracking_link():
     assert 'document.getElementById("confirmationTitle")?.focus()' in result
     assert 'href="${escapeHtml(trackingUrl)}"' in result
     assert "confirmationState.clear(sessionStorage)" in result
+    assert 'const destination = funnel === "quote" ? "/cotizar" : "/solicitar-servico"' in result
     assert 'document.documentElement.lang = portalLanguage === "pt-BR" ? "pt-BR" : portalLanguage' in html
     assert 'aria-pressed="${portalLanguage === "es"}"' in html
 

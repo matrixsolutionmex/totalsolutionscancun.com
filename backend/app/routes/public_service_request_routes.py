@@ -61,6 +61,29 @@ def _parse_datetime(value: str | None):
         raise HTTPException(status_code=400, detail="Fecha preferida invalida") from exc
 
 
+def _quote_public_status(service_request: ServiceRequest) -> dict:
+    """Return the stable confirmation contract used by the quote landing page."""
+    payload = service_request_public_status(service_request)
+    required = ("order_number", "tracking_token", "tracking_url", "status")
+    if any(not payload.get(field) for field in required):
+        raise RuntimeError("Quote confirmation contract is incomplete")
+    pricing = payload.get("pricing") or {}
+    return {
+        "order_number": payload["order_number"],
+        "tracking_token": payload["tracking_token"],
+        "tracking_url": payload["tracking_url"],
+        "status": payload["status"],
+        "pricing": {
+            "currency": pricing.get("currency") or "MXN",
+            "visit_calculated_price": pricing.get("visit_calculated_price"),
+            "zone": pricing.get("zone"),
+            "urgency_multiplier": pricing.get("urgency_multiplier"),
+            "market_reference_min": pricing.get("market_reference_min"),
+            "market_reference_max": pricing.get("market_reference_max"),
+        },
+    }
+
+
 @router.get("/geocode/reverse")
 def public_reverse_geocode(latitude: float, longitude: float):
     """Return only editable address fields for the public location picker."""
@@ -164,7 +187,7 @@ def create_public_service_request(
         except Exception:  # noqa: BLE001 - push delivery must not break request creation.
             db.rollback()
         db.refresh(service_request)
-        return service_request_public_status(service_request)
+        return _quote_public_status(service_request) if quote_funnel else service_request_public_status(service_request)
     except HTTPException:
         db.rollback()
         raise

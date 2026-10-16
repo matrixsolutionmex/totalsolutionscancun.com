@@ -59,7 +59,7 @@
     };
   }
 
-  function createState(data, language, now, baseUrl) {
+  function createState(data, language, now, baseUrl, funnel = null) {
     if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Invalid confirmation response");
     const trackingToken = requiredText(data.tracking_token, "tracking_token");
     const createdAt = Number.isFinite(now) ? now : Date.now();
@@ -68,6 +68,7 @@
       created_at: createdAt,
       expires_at: createdAt + STATE_TTL_MS,
       language: normalizeLanguage(language),
+      funnel: funnel === "quote" ? "quote" : null,
       confirmation: {
         order_number: requiredText(data.order_number, "order_number"),
         tracking_token: trackingToken,
@@ -83,7 +84,7 @@
     const currentTime = Number.isFinite(now) ? now : Date.now();
     if (value.created_at > currentTime + 60000 || value.expires_at <= currentTime || value.expires_at - value.created_at !== STATE_TTL_MS) return null;
     try {
-      return createState(value.confirmation, value.language, value.created_at, baseUrl);
+      return createState(value.confirmation, value.language, value.created_at, baseUrl, value.funnel);
     } catch (_error) {
       return null;
     }

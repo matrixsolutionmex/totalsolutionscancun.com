@@ -84,6 +84,22 @@
     const response = await fetchImpl(endpoint, options);
     return readSuccessfulPayload(response);
   };
+  const saveConfirmationState = (confirmation, store, data, baseUrl, now = Date.now()) => {
+    if (!confirmation || !data || typeof confirmation.createState !== "function" || typeof confirmation.write !== "function") {
+      const error = new Error("Confirmation state unavailable");
+      error.code = "confirmation_unavailable";
+      throw error;
+    }
+    try {
+      const state = confirmation.createState(data, "es", now, baseUrl, "quote");
+      confirmation.write(store, state, baseUrl);
+      return state;
+    } catch (_error) {
+      const error = new Error("Confirmation state unavailable");
+      error.code = "confirmation_unavailable";
+      throw error;
+    }
+  };
   const canStartSubmission = submit => Boolean(submit) && !submit.disabled;
   const dispatchTrackedEvent = (eventName, params) => {
     const payload = { event: eventName, ...params };
@@ -140,7 +156,11 @@
       flushPendingEvents();
     }
   };
-  const errorText = error => error?.name === "AbortError" ? "La solicitud tardó demasiado. Inténtalo nuevamente." : "No fue posible enviar la solicitud. Inténtalo nuevamente.";
+  const errorText = error => {
+    if (error?.name === "AbortError") return "La solicitud tardó demasiado. Inténtalo nuevamente.";
+    if (error?.code === "confirmation_unavailable") return "La solicitud fue registrada, pero no pudimos preparar la confirmación. No la envíes nuevamente.";
+    return "No fue posible enviar la solicitud. Inténtalo nuevamente.";
+  };
 
   function init() {
     if (!document) return;
@@ -192,15 +212,7 @@
       const timer = root.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
       try {
         const data = await requestSuccessfulPayload(root.fetch, "/public/service-requests?funnel=quote", { method: "POST", body, headers: { Accept: "application/json" }, signal: controller.signal });
-        const confirmation = root.TotalSolutionsConfirmation;
-        if (confirmation && data && typeof confirmation.createState === "function" && typeof confirmation.write === "function") {
-          try {
-            const state = confirmation.createState(data, "es", Date.now(), root.location.origin);
-            confirmation.write(storage("sessionStorage"), state, root.location.origin);
-          } catch (_error) {
-            // The backend already confirmed creation; optional confirmation storage must not re-submit.
-          }
-        }
+        saveConfirmationState(root.TotalSolutionsConfirmation, storage("sessionStorage"), data, root.location.origin);
         const conversionKey = `${CONVERSION_KEY_PREFIX}${key}`;
         if (!read(session, conversionKey)) {
           write(session, conversionKey, "1");
@@ -228,6 +240,7 @@
     isSuccessfulResponse,
     readSuccessfulPayload,
     requestSuccessfulPayload,
+    saveConfirmationState,
     canStartSubmission,
   };
   if (document?.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });

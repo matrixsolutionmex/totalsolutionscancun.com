@@ -28,7 +28,7 @@ def test_quote_landing_is_public_and_preserves_operational_form():
     assert 'id="quote-name"' in response.text
     assert 'id="quote-phone"' in response.text
     assert 'id="quote-photo"' in response.text
-    assert "/assets/cotizar.js?v=2" in response.text
+    assert "/assets/cotizar.js?v=3" in response.text
     assert get_page("/solicitar-servico?lang=es").status_code == 200
 
 

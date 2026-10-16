@@ -62,6 +62,31 @@ test("accepts a successful empty response without requiring JSON", async () => {
   assert.equal(await funnel.readSuccessfulPayload({ status: 201, ok: true, text: async () => "" }), null);
 });
 
+test("quote success requires and persists the complete confirmation before navigation", () => {
+  const writes = [];
+  const confirmation = {
+    createState: (data, language, now, baseUrl, funnel) => ({ data, language, now, baseUrl, funnel }),
+    write: (_storage, state) => writes.push(state),
+  };
+  const payload = {
+    order_number: "TS-2026-000001",
+    tracking_token: "synthetic-token",
+    tracking_url: "/seguimiento/synthetic-token",
+    status: "Solicitud recibida",
+    pricing: { currency: "MXN" },
+  };
+  const state = funnel.saveConfirmationState(confirmation, {}, payload, "https://totalsolutionscancun.com", 1000);
+  assert.equal(state.funnel, "quote");
+  assert.deepEqual(writes, [state]);
+});
+
+test("quote success does not proceed when confirmation state cannot be saved", () => {
+  assert.throws(
+    () => funnel.saveConfirmationState(null, {}, { order_number: "synthetic" }, "https://totalsolutionscancun.com", 1000),
+    error => error.code === "confirmation_unavailable",
+  );
+});
+
 test("rejects non-2xx responses before parsing or tracking success", async () => {
   await assert.rejects(
     funnel.readSuccessfulPayload({ status: 422, ok: false, text: async () => JSON.stringify({ detail: "invalid" }) }),

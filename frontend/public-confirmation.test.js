@@ -120,6 +120,14 @@ test("direct access requires a valid unexpired confirmation and reload does not 
   assert.equal(confirmation.read(storage, 1000 + confirmation.STATE_TTL_MS, "https://totalsolutionscancun.com"), null);
 });
 
+test("quote confirmations preserve their funnel for the new-request destination", () => {
+  const state = confirmation.createState(responsePayload(), "es", 1000, "https://totalsolutionscancun.com", "quote");
+  assert.equal(state.funnel, "quote");
+  const storage = new MemoryStorage();
+  storage.setItem(confirmation.STORAGE_KEY, JSON.stringify(state));
+  assert.equal(confirmation.read(storage, 1001, "https://totalsolutionscancun.com").funnel, "quote");
+});
+
 test("ES, EN and PT-BR generate only supported language query values", () => {
   assert.equal(confirmation.languageQuery("es"), "es");
   assert.equal(confirmation.languageQuery("en"), "en");

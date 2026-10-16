@@ -15,6 +15,7 @@ from starlette.requests import Request
 from app.core.security import hash_password
 from app.database.connection import Base
 from app.models.deletion_request import DeletionRequest
+from app.models.customer_invitation import CustomerPortalInvitation  # noqa: F401 - register FK target for the isolated fixture
 from app.models.lead import Lead
 from app.models.lead_document import LeadDocument
 from app.models.lead_event import LeadEvent
@@ -51,7 +52,7 @@ from app.routes.notification_routes import (
     register_web_push_subscription,
     unread_notification_count,
 )
-from app.routes.public_service_request_routes import public_service_request_tracking
+from app.routes.public_service_request_routes import create_public_service_request, public_service_request_tracking
 from app.routes.service_request_routes import (
     AssignUserPayload,
     TriagePayload,
@@ -1554,6 +1555,72 @@ def test_public_funnel_creates_order_alert_and_tracking_before_optional_payment(
     assert db.query(ServiceOpportunity).count() == 1
     assert db.query(Notification).count() == 1
     assert db.query(Payment).count() == 0
+
+
+def test_quote_endpoint_returns_confirmation_contract_and_reuses_idempotency_result(db):
+    organization = make_organization(db, "quote-confirmation-contract", "Quote Confirmation Contract")
+    make_user(db, "quote-confirmation-root", "ROOT", organization_id=organization.id)
+    values = {
+        "requester_name": "Synthetic Quote",
+        "requester_phone": "+52 998 000 0401",
+        "requester_email": "quote-confirmation@example.invalid",
+        "property_type": "Casa",
+        "service_category": "HIDRAULICA",
+        "problem_description": "Synthetic quote request",
+        "urgency": "NORMAL",
+        "address_line1": "Synthetic address",
+        "address_line2": None,
+        "district": None,
+        "locality": "Cancun",
+        "administrative_area": "Quintana Roo",
+        "country_code": "MX",
+        "postal_code": None,
+        "google_maps_url": None,
+        "latitude": None,
+        "longitude": None,
+        "location_lat": None,
+        "location_lng": None,
+        "location_accuracy_m": None,
+        "location_source": None,
+        "location_confirmed": False,
+        "preferred_visit_at": None,
+        "access_instructions": None,
+        "consent_privacy": True,
+        "consent_images": False,
+        "idempotency_key": "quote-confirmation-1",
+        "public_language": "es-MX",
+        "funnel": "quote",
+        "organization_slug": None,
+        "marketplace_link_slug": "default",
+        "customer_budget_min": None,
+        "customer_budget_max": None,
+        "pricing_zone": None,
+        "lead_origin": None,
+        "attribution": None,
+        "files": None,
+        "accept_language": None,
+        "db": db,
+    }
+
+    first = create_public_service_request(**values)
+    repeated = create_public_service_request(**values)
+    second = create_public_service_request(**{**values, "idempotency_key": "quote-confirmation-2"})
+
+    assert set(first) == {"order_number", "tracking_token", "tracking_url", "status", "pricing"}
+    assert first["order_number"].startswith("TS-")
+    assert first["tracking_token"]
+    assert first["tracking_url"].endswith(f"/seguimiento/{first['tracking_token']}")
+    assert first["status"]
+    assert set(first["pricing"]) == {
+        "currency", "visit_calculated_price", "zone", "urgency_multiplier",
+        "market_reference_min", "market_reference_max",
+    }
+    assert repeated == first
+    assert second["tracking_token"] != first["tracking_token"]
+    assert db.query(ServiceRequest).filter(ServiceRequest.source == "PUBLIC_FUNNEL").count() == 2
+    assert db.query(ServiceOrder).count() == 2
+    assert db.query(ServiceOpportunity).count() == 2
+    assert db.query(Notification).count() == 2
 
 
 def test_customer_portal_rejects_invalid_upload(db):
