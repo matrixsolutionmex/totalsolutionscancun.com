@@ -1609,7 +1609,9 @@ def test_quote_endpoint_returns_confirmation_contract_and_reuses_idempotency_res
     assert set(first) == {"order_number", "tracking_token", "tracking_url", "status", "pricing"}
     assert first["order_number"].startswith("TS-")
     assert first["tracking_token"]
-    assert first["tracking_url"].endswith(f"/seguimiento/{first['tracking_token']}")
+    assert first["tracking_url"] == f"/seguimiento/{first['tracking_token']}"
+    assert "?" not in first["tracking_url"]
+    assert "#" not in first["tracking_url"]
     assert first["status"]
     assert set(first["pricing"]) == {
         "currency", "visit_calculated_price", "zone", "urgency_multiplier",

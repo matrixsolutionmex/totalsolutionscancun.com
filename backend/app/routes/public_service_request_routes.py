@@ -64,14 +64,15 @@ def _parse_datetime(value: str | None):
 def _quote_public_status(service_request: ServiceRequest) -> dict:
     """Return the stable confirmation contract used by the quote landing page."""
     payload = service_request_public_status(service_request)
-    required = ("order_number", "tracking_token", "tracking_url", "status")
+    required = ("order_number", "tracking_token", "status")
     if any(not payload.get(field) for field in required):
         raise RuntimeError("Quote confirmation contract is incomplete")
+    tracking_token = payload["tracking_token"]
     pricing = payload.get("pricing") or {}
     return {
         "order_number": payload["order_number"],
-        "tracking_token": payload["tracking_token"],
-        "tracking_url": payload["tracking_url"],
+        "tracking_token": tracking_token,
+        "tracking_url": f"/seguimiento/{tracking_token}",
         "status": payload["status"],
         "pricing": {
             "currency": pricing.get("currency") or "MXN",
