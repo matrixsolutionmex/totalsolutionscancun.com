@@ -8,6 +8,8 @@
   const ATTRIBUTION_KEYS = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "gclid", "wbraid", "gbraid"];
   const CONFIG_ENDPOINT = "/public/marketing-config";
   const CONVERSION_KEY_PREFIX = "totalsolutions_marketing_conversion_v2:";
+  const MARKETING_INIT_TIMEOUT_MS = 3000;
+  const EVENT_CALLBACK_TIMEOUT_MS = 1200;
   let configPromise = null;
   let pendingEvents = [];
   const inMemoryConversions = new Set();
@@ -85,18 +87,40 @@
     document.head.appendChild(script);
   });
 
-  const dispatch = (root, eventName, params) => {
-    const payload = { event: eventName, ...params };
+  const dispatch = (root, eventName, params, onComplete = null) => {
+    let settled = false;
+    let timer = null;
+    const complete = outcome => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (typeof onComplete === "function") onComplete(outcome);
+    };
+    const tagParams = typeof onComplete === "function"
+      ? { ...params, event_callback: () => complete("callback"), event_timeout: EVENT_CALLBACK_TIMEOUT_MS }
+      : params;
+    const payload = typeof onComplete === "function"
+      ? { event: eventName, ...params, eventCallback: () => complete("callback"), eventTimeout: EVENT_CALLBACK_TIMEOUT_MS }
+      : { event: eventName, ...params };
     try {
-      if (typeof root?.gtag === "function") root.gtag("event", eventName, params);
-      if (Array.isArray(root?.dataLayer)) root.dataLayer.push(payload);
-    } catch (_error) { /* Analytics must never block the operational flow. */ }
+      if (typeof root?.gtag === "function") root.gtag("event", eventName, tagParams);
+      else if (Array.isArray(root?.dataLayer)) root.dataLayer.push(payload);
+      else complete("queued");
+    } catch (_error) {
+      complete("error");
+    }
+    if (typeof onComplete === "function" && !settled) {
+      timer = setTimeout(() => complete("timeout"), EVENT_CALLBACK_TIMEOUT_MS);
+    }
   };
 
   const flush = root => {
     const queued = pendingEvents;
     pendingEvents = [];
-    queued.forEach(item => dispatch(root, item.eventName, item.params));
+    queued.forEach(item => {
+      if (item.cancelled) return;
+      dispatch(root, item.eventName, item.params, item.onComplete);
+    });
   };
 
   const configure = (root = globalThis, document = root?.document, endpoint = CONFIG_ENDPOINT) => {
@@ -108,7 +132,7 @@
       : Promise.resolve({});
     const timeout = new Promise(resolve => {
       const timer = typeof root?.setTimeout === "function" ? root.setTimeout : setTimeout;
-      timer(() => resolve({}), 3000);
+      timer(() => resolve({}), MARKETING_INIT_TIMEOUT_MS);
     });
     configPromise = Promise.race([request, timeout]).then(async config => {
       const normalized = config || {};
@@ -155,6 +179,43 @@
     return true;
   };
 
+  const trackLeadOnceWithDelivery = (root, storage, requestKey, funnel, method, timeoutMs = EVENT_CALLBACK_TIMEOUT_MS) => {
+    const key = String(requestKey || "").trim();
+    const funnelName = String(funnel || "").trim();
+    if (!key || !funnelName) return Promise.resolve({ status: "invalid" });
+    const conversionKey = `${CONVERSION_KEY_PREFIX}${funnelName}:${key}`;
+    if (read(storage, conversionKey) || inMemoryConversions.has(conversionKey)) {
+      return Promise.resolve({ status: "duplicate" });
+    }
+    inMemoryConversions.add(conversionKey);
+    write(storage, conversionKey, "1");
+
+    return new Promise(resolve => {
+      let settled = false;
+      let timer = null;
+      const item = {
+        eventName: "generate_lead",
+        params: { funnel: funnelName, method: String(method || "form") },
+        cancelled: false,
+        onComplete: null,
+      };
+      const settle = status => {
+        if (settled) return;
+        settled = true;
+        item.cancelled = true;
+        if (timer) clearTimeout(timer);
+        resolve({ status });
+      };
+      item.onComplete = settle;
+      timer = setTimeout(() => settle("timeout"), Math.max(0, Number(timeoutMs) || EVENT_CALLBACK_TIMEOUT_MS));
+      if (typeof root?.gtag === "function" || Array.isArray(root?.dataLayer)) {
+        dispatch(root, item.eventName, item.params, settle);
+      } else {
+        pendingEvents.push(item);
+      }
+    });
+  };
+
   return {
     ATTRIBUTION_KEYS,
     CONFIG_ENDPOINT,
@@ -167,5 +228,8 @@
     track,
     getOrCreateRequestKey,
     trackLeadOnce,
+    trackLeadOnceWithDelivery,
+    MARKETING_INIT_TIMEOUT_MS,
+    EVENT_CALLBACK_TIMEOUT_MS,
   };
 });

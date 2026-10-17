@@ -112,3 +112,21 @@ test("locks the submit control while the first request is pending", () => {
   submit.disabled = true;
   assert.equal(funnel.canStartSubmission(submit), false);
 });
+
+test("waits for analytics initialization with a bounded timeout", async () => {
+  const never = new Promise(() => {});
+  const started = Date.now();
+  assert.equal(await funnel.waitForMarketingReady(never, 5), "timeout");
+  assert.ok(Date.now() - started < 500);
+  assert.equal(await funnel.waitForMarketingReady(Promise.reject(new Error("blocked")), 50), "error");
+  assert.equal(await funnel.waitForMarketingReady(Promise.resolve(), 50), "ready");
+});
+
+test("navigates only once when analytics completion races its timeout", () => {
+  const sequence = [];
+  const state = { started: false };
+  const navigate = url => sequence.push(url);
+  assert.equal(funnel.navigateOnce(state, navigate, "/solicitud-enviada?lang=es"), true);
+  assert.equal(funnel.navigateOnce(state, navigate, "/solicitud-enviada?lang=es"), false);
+  assert.deepEqual(sequence, ["/solicitud-enviada?lang=es"]);
+});

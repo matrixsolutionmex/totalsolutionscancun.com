@@ -67,3 +67,54 @@ test("tracks only the cotizar funnel while preserving the operational form flow"
   assert.match(operational, /onConfirmed/);
   assert.doesNotMatch(operational, /trackLeadOnce/);
 });
+
+test("uses the tag callback and resolves one delivery result", async () => {
+  const calls = [];
+  const root = {
+    dataLayer: [],
+    gtag(_type, event, params) { calls.push({ event, params }); setTimeout(params.event_callback, 5); },
+  };
+  const storage = new MemoryStorage();
+  const result = await marketing.trackLeadOnceWithDelivery(root, storage, "request-callback", "cotizar", "quote_form", 50);
+  assert.equal(result.status, "callback");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].event, "generate_lead");
+  assert.equal(calls[0].params.funnel, "cotizar");
+  assert.equal(root.dataLayer.length, 0);
+});
+
+test("uses the GTM dataLayer callback without declaring queueing as delivery", async () => {
+  const dataLayer = [];
+  dataLayer.push = item => {
+    Array.prototype.push.call(dataLayer, item);
+    setTimeout(item.eventCallback, 5);
+    return dataLayer.length;
+  };
+  const root = { dataLayer };
+  const storage = new MemoryStorage();
+  const result = await marketing.trackLeadOnceWithDelivery(root, storage, "request-gtm", "cotizar", "quote_form", 50);
+  assert.equal(result.status, "callback");
+  assert.equal(root.dataLayer.length, 1);
+  assert.equal(root.dataLayer[0].event, "generate_lead");
+  assert.equal(typeof root.dataLayer[0].eventCallback, "function");
+  assert.equal(root.dataLayer[0].eventTimeout, 1200);
+});
+
+test("bounds a blocked tag without a callback and does not retry", async () => {
+  let calls = 0;
+  const root = { gtag() { calls += 1; } };
+  const storage = new MemoryStorage();
+  const result = await marketing.trackLeadOnceWithDelivery(root, storage, "request-timeout", "cotizar", "quote_form", 5);
+  assert.equal(result.status, "timeout");
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(calls, 1);
+  assert.equal((await marketing.trackLeadOnceWithDelivery(root, storage, "request-timeout", "cotizar", "quote_form", 5)).status, "duplicate");
+});
+
+test("does not block a confirmed request when analytics is unavailable", async () => {
+  const root = {};
+  const storage = new MemoryStorage();
+  const result = await marketing.trackLeadOnceWithDelivery(root, storage, "request-unavailable", "cotizar", "quote_form", 5);
+  assert.equal(result.status, "timeout");
+  assert.equal((await marketing.trackLeadOnceWithDelivery(root, storage, "request-unavailable", "cotizar", "quote_form", 5)).status, "duplicate");
+});

@@ -160,6 +160,24 @@
   const confirmationFailureText = error => error?.code === "confirmation_unavailable"
     ? "La solicitud fue registrada, pero no pudimos guardar la confirmación en esta pestaña. No la envíes nuevamente."
     : errorText(error);
+  const waitForMarketingReady = (ready, timeoutMs = 3000) => new Promise(resolve => {
+    let settled = false;
+    let timer = null;
+    const finish = status => {
+      if (settled) return;
+      settled = true;
+      if (timer) root.clearTimeout(timer);
+      resolve(status);
+    };
+    timer = root.setTimeout(() => finish("timeout"), Math.max(0, Number(timeoutMs) || 3000));
+    Promise.resolve(ready).then(() => finish("ready"), () => finish("error"));
+  });
+  const navigateOnce = (state, navigate, url) => {
+    if (!state || state.started) return false;
+    state.started = true;
+    navigate(url);
+    return true;
+  };
 
   function init() {
     if (!document) return;
@@ -169,6 +187,7 @@
     const status = document.getElementById("quote-status");
     const description = document.getElementById("quote-description");
     const session = storage("sessionStorage");
+    const navigationState = { started: false };
     marketingReady = configureMarketing();
     const persisted = read(session, ATTRIBUTION_KEY);
     let attribution = {};
@@ -218,7 +237,10 @@
           confirmationError = error;
         }
         try {
-          if (sharedMarketing?.trackLeadOnce) {
+          await waitForMarketingReady(marketingReady);
+          if (sharedMarketing?.trackLeadOnceWithDelivery) {
+            await sharedMarketing.trackLeadOnceWithDelivery(root, session, key, "cotizar", "quote_form");
+          } else if (sharedMarketing?.trackLeadOnce) {
             sharedMarketing.trackLeadOnce(root, session, key, "cotizar", "quote_form");
           } else {
             const conversionKey = `${CONVERSION_KEY_PREFIX}${key}`;
@@ -230,7 +252,7 @@
         } catch (_error) { /* Measurement must never block a confirmed request. */ }
         if (confirmationError) throw confirmationError;
         try { session?.removeItem(IDEMPOTENCY_KEY); } catch (_error) { /* Storage is optional. */ }
-        root.location.assign("/solicitud-enviada?lang=es");
+        navigateOnce(navigationState, url => root.location.assign(url), "/solicitud-enviada?lang=es");
       } catch (error) {
         status.textContent = confirmationFailureText(error);
         if (error?.code === "confirmation_unavailable") {
@@ -258,6 +280,8 @@
     requestSuccessfulPayload,
     saveConfirmationState,
     confirmationFailureText,
+    waitForMarketingReady,
+    navigateOnce,
     canStartSubmission,
   };
   if (document?.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });
