@@ -155,5 +155,12 @@ def application_file(application_id: int, file_name: str, db: Session = Depends(
             path = (UPLOADS_DIR / "professional-applications" / row.public_code / file_name).resolve()
             base = (UPLOADS_DIR / "professional-applications" / row.public_code).resolve()
             if path.parent == base and path.is_file():
-                return FileResponse(path, filename=str(upload.get("name", file_name)))
+                return FileResponse(
+                    path,
+                    filename=str(upload.get("name", file_name)),
+                    headers={
+                        "Cache-Control": "private, no-store",
+                        "CDN-Cache-Control": "no-store",
+                    },
+                )
     raise HTTPException(status_code=404, detail="Archivo no encontrado")

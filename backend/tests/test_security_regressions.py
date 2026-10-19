@@ -15,8 +15,10 @@ from app.main import app
 from app.models.lead import Lead
 from app.models.lead_document import LeadDocument
 from app.models.organization import Organization
+from app.models.professional_application import ProfessionalApplication
 from app.models.user import User
 from app.routes.lead_document_routes import download_lead_document
+from app.routes.professional_network_routes import application_file
 from app.routes.user_routes import login as legacy_user_login
 from app.schemas.user_schema import LoginRequest
 from app.core.security import hash_password
@@ -122,10 +124,64 @@ def test_scoped_document_download_allows_owner_and_blocks_other_organization(db,
 
     response = download_lead_document(lead.id, doc.id, db, owner)
     assert response.path == stored
+    assert response.headers["Cache-Control"] == "private, no-store"
+    assert response.headers["CDN-Cache-Control"] == "no-store"
 
     with pytest.raises(HTTPException) as blocked:
         download_lead_document(lead.id, doc.id, db, other)
     assert blocked.value.status_code == 403
+
+
+def test_professional_application_download_is_private_and_no_store(db, tmp_path, monkeypatch):
+    import app.routes.professional_network_routes as network_routes
+
+    monkeypatch.setattr(network_routes, "UPLOADS_DIR", tmp_path)
+    org = Organization(name="Professional Docs QA", slug="professional-docs-qa")
+    actor = User(
+        username="professional-doc-reviewer",
+        email="professional-doc-reviewer@example.test",
+        password_hash="x",
+        full_name="Synthetic Reviewer",
+        role="ROOT",
+        status="ACTIVE",
+        is_active=True,
+        email_verified=True,
+    )
+    db.add_all([org, actor])
+    db.flush()
+    actor.organization_id = org.id
+    application = ProfessionalApplication(
+        public_code="TS-PRO-SECURITY",
+        organization_id=org.id,
+        full_name="Synthetic Applicant",
+        email="synthetic-applicant@example.test",
+        phone="+52 998 000 0003",
+        whatsapp="+52 998 000 0003",
+        city="Cancun",
+        zone="Centro",
+        professional_type="TECHNICIAN",
+        experience="5",
+        professional_level="INTERMEDIATE",
+        specialties_json="[]",
+        coverage_json="[]",
+        availability="DAY",
+        languages="es",
+        uploads_json='[{"name":"evidence.pdf","path":"/uploads/professional-applications/TS-PRO-SECURITY/evidence.pdf"}]',
+        consent_data=True,
+        consent_contact=True,
+        consent_profile=False,
+    )
+    db.add(application)
+    db.commit()
+    stored = tmp_path / "professional-applications" / application.public_code / "evidence.pdf"
+    stored.parent.mkdir(parents=True, exist_ok=True)
+    stored.write_bytes(b"synthetic professional evidence")
+
+    response = application_file(application.id, "evidence.pdf", db, actor)
+
+    assert response.path == stored
+    assert response.headers["Cache-Control"] == "private, no-store"
+    assert response.headers["CDN-Cache-Control"] == "no-store"
 
 
 def test_legacy_login_is_rate_limited(db):

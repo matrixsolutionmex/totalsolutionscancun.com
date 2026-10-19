@@ -388,7 +388,10 @@ def download_lead_document(
         path,
         media_type=doc.file_mime or "application/octet-stream",
         filename=Path(doc.file_name).name or "arquivo",
-        headers={"Cache-Control": "private, no-store"},
+        headers={
+            "Cache-Control": "private, no-store",
+            "CDN-Cache-Control": "no-store",
+        },
     )
 
 
