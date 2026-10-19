@@ -5436,6 +5436,7 @@
       ? decodeURIComponent(window.location.pathname.slice("/invite/".length).split("/")[0] || "")
       : "";
     let pendingInviteData = null;
+    let registerInFlight = false;
 
     function authHeaders(headers = {}) {
       const authenticatedHeaders = new Headers(headers);
@@ -12586,6 +12587,7 @@
 
     async function register(event) {
       event.preventDefault();
+      if (registerInFlight) return;
       if (authPublicConfig.public_signup_enabled === false) {
         setAuthStatus("registerStatus", t("signupDisabled"), "error");
         return;
@@ -12604,39 +12606,48 @@
         return;
       }
 
-      const response = await fetch(`${API_BASE}/auth/register`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          full_name: document.getElementById("registerFullName").value.trim(),
-          email: document.getElementById("registerEmail").value.trim(),
-          company: document.getElementById("registerCompany").value.trim() || null,
-          phone: document.getElementById("registerPhone").value.trim() || null,
-          plan: document.getElementById("registerPlan").value,
-          invite_token: pendingInviteToken || null,
-          password,
-          turnstile_token: turnstileToken("register")
-        })
-      });
+      const registerButton = document.getElementById("registerButton");
+      registerInFlight = true;
+      registerButton.disabled = true;
+      try {
+        const response = await fetch(`${API_BASE}/auth/register`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            full_name: document.getElementById("registerFullName").value.trim(),
+            email: document.getElementById("registerEmail").value.trim(),
+            company: document.getElementById("registerCompany").value.trim() || null,
+            phone: document.getElementById("registerPhone").value.trim() || null,
+            plan: document.getElementById("registerPlan").value,
+            invite_token: pendingInviteToken || null,
+            password,
+            turnstile_token: turnstileToken("register")
+          })
+        });
 
-      if (!response.ok) {
-        setAuthStatus("registerStatus", await responseMessage(response, t("registrationError")), "error");
+        if (!response.ok) {
+          setAuthStatus("registerStatus", await responseMessage(response, t("registrationError")), "error");
+          return;
+        }
+
+        const data = await response.json();
+        const registeredEmail = document.getElementById("registerEmail").value.trim();
+        document.getElementById("registerForm").reset();
+        showEmailVerificationForm({
+          email: registeredEmail,
+          maskedEmail: data.masked_email,
+          resendAfterSeconds: data.resend_after_seconds || 60
+        });
+        if (verificationDeliveryFailed(data)) {
+          setAuthStatus("emailVerificationStatus", data.message || t("emailDeliveryUnavailable"), "error");
+        }
+      } catch (_error) {
+        setAuthStatus("registerStatus", t("registrationError"), "error");
+      } finally {
         resetTurnstile("register");
-        return;
-      }
-
-      const data = await response.json();
-      const registeredEmail = document.getElementById("registerEmail").value.trim();
-      document.getElementById("registerForm").reset();
-      resetTurnstile("register");
-      showEmailVerificationForm({
-        email: registeredEmail,
-        maskedEmail: data.masked_email,
-        resendAfterSeconds: data.resend_after_seconds || 60
-      });
-      if (verificationDeliveryFailed(data)) {
-        setAuthStatus("emailVerificationStatus", data.message || t("emailDeliveryUnavailable"), "error");
+        registerInFlight = false;
+        registerButton.disabled = Boolean(pendingInviteToken && !pendingInviteData);
       }
     }
 
