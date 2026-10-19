@@ -28,14 +28,24 @@ def get_db():
         db.close()
 
 
-def jwt_secret_key() -> str:
-    secret = (
-        os.getenv("JWT_SECRET_KEY")
-        or os.getenv("ROOT_KEY")
-        or os.getenv("ROOT_PASSWORD")
+def _is_production_environment() -> bool:
+    return any(
+        os.getenv(name, "").strip().lower() == "production"
+        for name in ("ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME")
     )
-    if secret:
-        return secret
+
+
+def jwt_secret_key() -> str:
+    explicit_secret = os.getenv("JWT_SECRET_KEY", "").strip()
+    if explicit_secret:
+        return explicit_secret
+
+    if _is_production_environment():
+        raise RuntimeError("JWT_SECRET_KEY ausente em ambiente de produção")
+
+    fallback_secret = (os.getenv("ROOT_KEY") or os.getenv("ROOT_PASSWORD") or "").strip()
+    if fallback_secret:
+        return fallback_secret
 
     logger.warning("JWT_SECRET_KEY ausente; usando chave somente para desenvolvimento")
     return "totalsolutions-development-key-change-me"

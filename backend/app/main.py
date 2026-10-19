@@ -12,6 +12,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.security import hash_password
+from app.core.auth_security import AUTH_COOKIE_NAME
 from app.core.organization import get_or_create_default_organization
 from app.core.storage import PROFILE_PHOTOS_DIR, UPLOADS_DIR
 from app.auth.routes import router as auth_router
@@ -175,7 +176,14 @@ async def security_headers(request: Request, call_next):
         return JSONResponse(status_code=404, content={"detail": "Archivo no encontrado"})
     response = await call_next(request)
     no_store_paths = {"/", "/cotizar", "/public/marketing-config", "/sw.js", "/solicitar-servico", "/solicitud-enviada", "/aviso-de-privacidad", "/preferencias-comunicacion"}
-    if request.url.path in no_store_paths or request.url.path.startswith(("/m/", "/acompanhar/", "/seguimiento/")):
+    tokenized_public_path = request.url.path.startswith(("/public/service-requests/", "/payments/public/service-requests/"))
+    authenticated_request = bool(request.headers.get("authorization") or request.cookies.get(AUTH_COOKIE_NAME))
+    if (
+        request.url.path in no_store_paths
+        or request.url.path.startswith(("/m/", "/acompanhar/", "/seguimiento/"))
+        or tokenized_public_path
+        or authenticated_request
+    ):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"

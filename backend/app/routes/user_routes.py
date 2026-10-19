@@ -30,6 +30,13 @@ from app.services.localization_service import normalize_language
 router = APIRouter(prefix="/users", tags=["users"])
 
 MAX_PROFILE_PHOTO_BYTES = 5 * 1024 * 1024
+CUSTOMER_PROFILE_PROTECTED_FIELDS = frozenset({
+    "email",
+    "company",
+    "plan",
+    "plan_max_brokers",
+    "plan_max_leads",
+})
 PROFILE_PHOTO_TYPES = {
     "image/jpeg": ("jpg", lambda content: content.startswith(b"\xff\xd8\xff")),
     "image/png": ("png", lambda content: content.startswith(b"\x89PNG\r\n\x1a\n")),
@@ -472,6 +479,14 @@ def update_own_profile(
         raise HTTPException(status_code=404, detail="Usuario nao encontrado")
 
     updates = payload.model_dump(exclude_unset=True)
+
+    if (actor.role or "").strip().upper() == "CLIENTE":
+        protected_updates = sorted(CUSTOMER_PROFILE_PROTECTED_FIELDS.intersection(updates))
+        if protected_updates:
+            raise HTTPException(
+                status_code=403,
+                detail="Cliente nao pode alterar campos de conta ou plano",
+            )
 
     for blocked_field in ("role", "is_active", "username", "manager_id"):
         updates.pop(blocked_field, None)

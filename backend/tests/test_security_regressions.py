@@ -1,8 +1,9 @@
+import asyncio
 import os
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -19,9 +20,11 @@ from app.models.professional_application import ProfessionalApplication
 from app.models.user import User
 from app.routes.lead_document_routes import download_lead_document
 from app.routes.professional_network_routes import application_file
-from app.routes.user_routes import login as legacy_user_login
-from app.schemas.user_schema import LoginRequest
+from app.routes.user_routes import login as legacy_user_login, update_own_profile
+from app.schemas.user_schema import LoginRequest, UserUpdate
 from app.core.security import hash_password
+from app.auth.jwt_handler import jwt_secret_key
+from app.main import security_headers
 
 
 @pytest.fixture()
@@ -36,20 +39,87 @@ def db():
         engine.dispose()
 
 
-def make_request():
+def make_request(*, path="/users/login", headers=None, client_host="127.0.0.1"):
+    request_headers = [(b"host", b"testserver"), (b"user-agent", b"security-test")]
+    request_headers.extend(headers or [])
     return Request(
         {
             "type": "http",
             "method": "POST",
             "scheme": "http",
             "server": ("testserver", 80),
-            "client": ("127.0.0.1", 1234),
-            "path": "/users/login",
+            "client": (client_host, 1234),
+            "path": path,
             "root_path": "",
             "query_string": b"",
-            "headers": [(b"host", b"testserver"), (b"user-agent", b"security-test")],
+            "headers": request_headers,
         }
     )
+
+
+def test_tokenized_and_authenticated_responses_are_not_publicly_cacheable():
+    async def call_next(request):
+        return Response("synthetic")
+
+    for path, headers in (
+        ("/public/service-requests/synthetic-token", []),
+        ("/public/service-requests/synthetic-token/tracking", []),
+        ("/payments/public/service-requests/synthetic-token/checkout", []),
+        ("/customer-portal/dashboard", [(b"cookie", b"ts_session=synthetic")]),
+    ):
+        response = asyncio.run(security_headers(make_request(path=path, headers=headers), call_next))
+        assert response.headers["Cache-Control"] == "no-store, no-cache, must-revalidate, max-age=0"
+        assert response.headers["CDN-Cache-Control"] == "no-store"
+
+
+def test_production_without_explicit_jwt_secret_fails_closed(monkeypatch):
+    monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+    monkeypatch.delenv("ROOT_KEY", raising=False)
+    monkeypatch.delenv("ROOT_PASSWORD", raising=False)
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("RAILWAY_ENVIRONMENT_NAME", raising=False)
+
+    with pytest.raises(RuntimeError, match="JWT_SECRET_KEY ausente"):
+        jwt_secret_key()
+
+
+def test_customer_cannot_mass_assign_account_or_plan_fields(db):
+    customer = User(
+        username="customer-profile-security",
+        email="customer-profile-security@example.test",
+        password_hash="x",
+        full_name="Synthetic Customer",
+        role="CLIENTE",
+        plan="FREE",
+        plan_max_brokers=1,
+        plan_max_leads=100,
+        status="ACTIVE",
+        is_active=True,
+        email_verified=True,
+    )
+    db.add(customer)
+    db.commit()
+
+    payload = UserUpdate(
+        full_name="Updated Customer",
+        email="attacker@example.test",
+        company="Elevated Company",
+        plan="PRO",
+        plan_max_brokers=999,
+        plan_max_leads=9999,
+    )
+
+    with pytest.raises(HTTPException) as blocked:
+        update_own_profile(customer.id, payload, customer, db)
+
+    assert blocked.value.status_code == 403
+    db.refresh(customer)
+    assert customer.full_name == "Synthetic Customer"
+    assert customer.email == "customer-profile-security@example.test"
+    assert customer.company is None
+    assert customer.plan == "FREE"
+    assert customer.plan_max_brokers == 1
+    assert customer.plan_max_leads == 100
 
 
 def test_private_crm_uploads_are_not_publicly_downloadable():
