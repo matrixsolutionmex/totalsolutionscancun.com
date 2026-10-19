@@ -30,6 +30,7 @@ from app.models.customer_portal import CustomerServiceLink, CustomerClaimToken
 from app.services.customer_account_service import create_customer_claim_token
 from app.auth.jwt_handler import create_access_token, customer_route_allowed, get_current_user
 from app.auth.routes import issue_authenticated_response
+import app.services.customer_invitation_service as invitation_service
 
 
 @pytest.fixture()
@@ -171,6 +172,34 @@ def test_invitation_hashes_token_and_activation_is_atomic(monkeypatch, db):
     assert db.query(CustomerPortalInvitation).one().status == "CONSUMED"
     assert db.query(CustomerPortalInvitationEvent).filter_by(event_type="CLAIM_CONSUMED").count() == 1
     assert inspect_token(db, raw) is None
+
+
+def test_new_customer_activation_locks_token_row_before_creating_identity(monkeypatch, db):
+    org, _, admin, request = fixture(db)
+    enable(monkeypatch, org.id)
+    invitation, raw = create_invitation(
+        db,
+        actor=admin,
+        service_request_id=request.id,
+        channel="EMAIL",
+        language="es",
+        idempotency_key="invite-lock-001",
+    )
+    db.commit()
+
+    called = {"for_update": False}
+    original_inspect_token = invitation_service.inspect_token
+
+    def inspect_with_capture(session, token, *, for_update=False):
+        called["for_update"] = for_update
+        return original_inspect_token(session, token, for_update=for_update)
+
+    monkeypatch.setattr(invitation_service, "inspect_token", inspect_with_capture)
+    user = activate_new_customer(db, raw, "Cliente Lock", "uma-senha-segura", "qa@example.test", None)
+
+    assert user.role == "CLIENTE"
+    assert called["for_update"] is True
+    assert db.query(CustomerServiceLink).filter_by(customer_user_id=user.id, service_request_id=request.id).count() == 1
 
 
 def test_expired_revoked_and_reissued_tokens_fail_closed(monkeypatch, db):

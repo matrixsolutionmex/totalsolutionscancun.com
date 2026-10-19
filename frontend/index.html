@@ -10151,14 +10151,44 @@
       };
     }
 
-    async function shareDocument(filePath, fileName) {
-      const url = absoluteFileUrl(filePath);
-      if (navigator.share) {
-        await navigator.share({ title: fileName, text: fileName, url });
-        return;
+    async function fetchProtectedDocument(filePath) {
+      const response = await apiFetch(absoluteFileUrl(filePath));
+      if (!response.ok) throw new Error("No fue posible abrir el documento.");
+      return response.blob();
+    }
+
+    async function openProtectedDocument(filePath, fileName, download = false) {
+      try {
+        const blob = await fetchProtectedDocument(filePath);
+        const objectUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = objectUrl;
+        if (download) {
+          link.download = fileName;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+        } else {
+          window.open(objectUrl, "_blank", "noopener,noreferrer");
+        }
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      } catch (_error) {
+        alert("No fue posible abrir el documento.");
       }
-      await navigator.clipboard.writeText(url);
-      alert("Link copiado.");
+    }
+
+    async function shareDocument(filePath, fileName) {
+      try {
+        const blob = await fetchProtectedDocument(filePath);
+        const file = new File([blob], fileName, { type: blob.type || "application/octet-stream" });
+        if (navigator.canShare?.({ files: [file] }) && navigator.share) {
+          await navigator.share({ title: fileName, files: [file] });
+          return;
+        }
+        await openProtectedDocument(filePath, fileName, true);
+      } catch (_error) {
+        alert("No fue posible preparar el documento.");
+      }
     }
 
     function uploadEvidenceWithProgress(leadId, item) {
@@ -10470,11 +10500,12 @@
           const when = documentDateParts(doc.created_at);
           const isImage = String(doc.file_mime || "").startsWith("image/");
           const isVideo = String(doc.file_mime || "").startsWith("video/");
-          const fileUrl = absoluteFileUrl(doc.file_path);
+          const filePath = doc.download_url || doc.file_path;
+          const fileUrl = absoluteFileUrl(filePath);
           const displayName = friendlyFileName(doc.file_name, doc.document_type);
           const uploaderName = doc.uploaded_by_user_name || responsibleLabel(doc.uploaded_by_user_id);
           const icon = isImage
-            ? `<img src="${escapeHtml(doc.file_path)}" alt="">`
+            ? "📷"
             : isVideo
               ? "🎥"
               : String(doc.file_name || "").toLowerCase().endsWith(".pdf")
@@ -10484,14 +10515,14 @@
             <div class="evidence-file-card">
               <div class="evidence-thumb">${icon}</div>
               <div class="evidence-file-meta">
-                <strong><a href="${escapeHtml(doc.file_path)}" target="_blank" rel="noopener">${escapeHtml(displayName)}</a></strong>
+                <strong><button type="button" class="link-button" onclick="openProtectedDocument(${escapeHtml(jsString(filePath))}, ${escapeHtml(jsString(displayName))})">${escapeHtml(displayName)}</button></strong>
                 <span>📂 ${escapeHtml(evidenceCategoryLabel(doc.document_type))}</span>
                 <span>👤 ${escapeHtml(uploaderName)}</span>
                 <span>📅 ${escapeHtml(when.date)} · 🕒 ${escapeHtml(when.time)} · 📏 ${escapeHtml(fileSizeLabel(doc.file_size))}</span>
               </div>
               <div class="evidence-file-actions">
-                <a href="${escapeHtml(doc.file_path)}" target="_blank" rel="noopener">👁 Visualizar</a>
-                <a href="${escapeHtml(doc.file_path)}" download>⬇ Download</a>
+                <button type="button" onclick="openProtectedDocument(${escapeHtml(jsString(filePath))}, ${escapeHtml(jsString(displayName))})">👁 Visualizar</button>
+                <button type="button" onclick="openProtectedDocument(${escapeHtml(jsString(filePath))}, ${escapeHtml(jsString(displayName))}, true)">⬇ Download</button>
                 ${currentUser.role === "BROKER"
                   ? `<button type="button" onclick="requestDocumentDeletion(${leadId}, ${doc.id})">🗑 Solicitar exclusión</button>`
                   : `<button type="button" onclick="deleteLeadDocument(${leadId}, ${doc.id})">🗑 Excluir</button>`}

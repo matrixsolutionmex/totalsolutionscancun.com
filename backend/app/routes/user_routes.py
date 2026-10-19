@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -13,7 +13,7 @@ from app.auth.jwt_handler import (
     user_access_block_reason,
 )
 from app.auth.routes import authenticated_user_response
-from app.core.auth_security import audit_auth_event
+from app.core.auth_security import audit_auth_event, rate_limit_or_429, request_ip
 from app.core.security import hash_password, verify_password
 from app.core.storage import PROFILE_PHOTOS_DIR, delete_profile_photo
 from app.models.lead import Lead
@@ -78,7 +78,10 @@ def add_lead_event(db: Session, lead: Lead, actor: User | None, event_type: str,
 
 
 @router.post("/login", response_model=UserResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
+def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
+    # Keep the legacy endpoint compatible while preventing unbounded password guessing.
+    rate_limit_or_429(db, "legacy-user-login-ip", request_ip(request) or "unknown", limit=10, window_seconds=300)
+    db.commit()
     user = db.query(User).filter(User.username == payload.username).first()
 
     if not user or not verify_password(payload.password, user.password_hash):

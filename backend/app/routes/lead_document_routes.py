@@ -4,6 +4,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.auth.jwt_handler import get_current_user as get_actor, get_db
@@ -38,7 +39,17 @@ def ensure_deletion_reviewer(actor: User):
 
 
 def document_file_path(doc: LeadDocument) -> Path:
-    return UPLOADS_DIR.parent / doc.file_path.lstrip("/")
+    prefix = "/uploads/"
+    if not doc.file_path.startswith(prefix):
+        raise HTTPException(status_code=404, detail="Arquivo não encontrado")
+    relative = Path(doc.file_path[len(prefix):])
+    if relative.is_absolute() or ".." in relative.parts:
+        raise HTTPException(status_code=404, detail="Arquivo não encontrado")
+    path = (UPLOADS_DIR / relative).resolve()
+    uploads_root = UPLOADS_DIR.resolve()
+    if path != uploads_root and uploads_root not in path.parents:
+        raise HTTPException(status_code=404, detail="Arquivo não encontrado")
+    return path
 
 
 def deletion_request_payload(
@@ -257,6 +268,7 @@ def list_lead_documents(
             "document_type": doc.document_type,
             "file_name": doc.file_name,
             "file_path": doc.file_path,
+            "download_url": f"/leads/{lead_id}/documents/{doc.id}/download",
             "file_mime": doc.file_mime,
             "file_size": doc.file_size,
             "created_at": doc.created_at,
@@ -337,10 +349,47 @@ def upload_lead_document(
         "document_type": doc.document_type,
         "file_name": doc.file_name,
         "file_path": doc.file_path,
+        "download_url": f"/leads/{lead_id}/documents/{doc.id}/download",
         "file_mime": doc.file_mime,
         "file_size": doc.file_size,
         "created_at": doc.created_at,
     }
+
+
+@router.get("/{lead_id}/documents/{document_id}/download")
+def download_lead_document(
+    lead_id: int,
+    document_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_actor),
+):
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead não encontrado")
+
+    ensure_lead_visible_to_actor(db, lead, actor)
+    doc = (
+        db.query(LeadDocument)
+        .filter(
+            LeadDocument.id == document_id,
+            LeadDocument.lead_id == lead_id,
+            LeadDocument.organization_id == lead.organization_id,
+        )
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento não encontrado")
+
+    path = document_file_path(doc)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Arquivo não encontrado")
+
+    return FileResponse(
+        path,
+        media_type=doc.file_mime or "application/octet-stream",
+        filename=Path(doc.file_name).name or "arquivo",
+        headers={"Cache-Control": "private, no-store"},
+    )
 
 
 @router.delete("/{lead_id}/documents/{document_id}")

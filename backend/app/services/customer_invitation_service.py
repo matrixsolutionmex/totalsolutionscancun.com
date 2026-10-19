@@ -100,7 +100,7 @@ def create_invitation(db: Session, *, actor: User, service_request_id: int, chan
     if not customer_invitations_available(db, actor.organization_id):
         raise HTTPException(status_code=404, detail="Convites de cliente indisponíveis")
     origin = _validated_public_origin()
-    request = db.query(ServiceRequest).filter(ServiceRequest.id == service_request_id).first()
+    request = db.query(ServiceRequest).filter(ServiceRequest.id == service_request_id).with_for_update().first()
     if not request or (actor.role != "ROOT" and request.organization_id != actor.organization_id):
         raise HTTPException(status_code=404, detail="Solicitação não encontrada")
     if (request.status or "").upper() in {"ARCHIVED", "ANONYMIZED", "DELETED"}:
@@ -166,8 +166,11 @@ def resend_invitation(db: Session, invitation: CustomerPortalInvitation, actor: 
     return create_invitation(db, actor=actor, service_request_id=invitation.service_request_id, channel=invitation.channel, language=invitation.language, idempotency_key=idempotency_key)
 
 
-def inspect_token(db: Session, raw_token: str):
-    record = db.query(CustomerPortalInvitation).filter(CustomerPortalInvitation.token_hash == _token_hash(raw_token)).first()
+def inspect_token(db: Session, raw_token: str, *, for_update: bool = False):
+    query = db.query(CustomerPortalInvitation).filter(CustomerPortalInvitation.token_hash == _token_hash(raw_token))
+    if for_update:
+        query = query.with_for_update()
+    record = query.first()
     if not record or record.expires_at < datetime.utcnow() or record.revoked_at or record.consumed_at:
         return None
     return record
@@ -229,7 +232,7 @@ def consume_existing_customer_invitation(db: Session, raw_token: str, user: User
 
 
 def activate_new_customer(db: Session, raw_token: str, full_name: str, password: str, email: str | None, phone: str | None):
-    invitation = inspect_token(db, raw_token)
+    invitation = inspect_token(db, raw_token, for_update=True)
     if not invitation:
         raise HTTPException(status_code=400, detail="Convite inválido ou expirado")
     destination = email if invitation.channel == "EMAIL" else phone
