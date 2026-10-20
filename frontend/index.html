@@ -10199,9 +10199,9 @@
 
         const xhr = new XMLHttpRequest();
         xhr.open("POST", `${API_BASE}/leads/${leadId}/documents`);
-        if (accessToken) {
-          xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
-        }
+        xhr.withCredentials = true;
+        const authenticatedHeaders = authHeaders();
+        authenticatedHeaders.forEach((value, name) => xhr.setRequestHeader(name, value));
 
         xhr.upload.addEventListener("progress", (event) => {
           if (!event.lengthComputable) return;

@@ -2185,6 +2185,84 @@ def test_google_link_frontend_sends_authenticated_csrf_header():
     assert "X-CSRF-Token" in html
 
 
+def test_session_cookie_contract_exposes_csrf_but_keeps_auth_cookie_http_only(monkeypatch):
+    monkeypatch.setenv("COOKIE_SECURE", "true")
+    monkeypatch.setenv("COOKIE_SAMESITE", "lax")
+    session = create_test_session()
+    user = make_user(session, "csrf-cookie-user", email="csrf-cookie@example.com")
+    response = Response()
+
+    auth_security.create_user_session(session, make_request("/auth/login"), response, user)
+    set_cookie_headers = response.headers.getlist("set-cookie")
+
+    auth_cookie = next(header for header in set_cookie_headers if auth_security.AUTH_COOKIE_NAME in header)
+    csrf_cookie = next(header for header in set_cookie_headers if auth_security.CSRF_COOKIE_NAME in header)
+    assert "HttpOnly" in auth_cookie
+    assert "HttpOnly" not in csrf_cookie
+    assert "Path=/" in auth_cookie
+    assert "Path=/" in csrf_cookie
+    assert "Secure" in auth_cookie
+    assert "Secure" in csrf_cookie
+    assert "SameSite=lax" in auth_cookie
+    assert "SameSite=lax" in csrf_cookie
+    session.close()
+
+
+def test_cookie_session_requires_matching_csrf_and_accepts_renewed_session(monkeypatch):
+    monkeypatch.setenv("COOKIE_SECURE", "true")
+    session = create_test_session()
+    user = make_user(session, "csrf-session-user", email="csrf-session@example.com")
+
+    first_response = Response()
+    first_request = make_request("/auth/login")
+    first_session = auth_security.create_user_session(session, first_request, first_response, user)
+    first_cookies = {
+        auth_security.AUTH_COOKIE_NAME: "first-session",
+        auth_security.CSRF_COOKIE_NAME: "first-csrf",
+    }
+    first_session.session_id_hash = hash_value(first_cookies[auth_security.AUTH_COOKIE_NAME])
+    first_session.csrf_token_hash = hash_value(first_cookies[auth_security.CSRF_COOKIE_NAME])
+    session.commit()
+
+    valid_request = make_request(
+        "/leads/1/documents",
+        cookies=first_cookies,
+        headers={"x-csrf-token": "first-csrf"},
+    )
+    assert auth_security.validate_session_cookie(session, valid_request).id == user.id
+
+    with pytest.raises(HTTPException) as missing:
+        auth_security.validate_session_cookie(session, make_request("/leads/1/documents", cookies=first_cookies))
+    assert missing.value.status_code == 403
+
+    with pytest.raises(HTTPException) as incorrect:
+        auth_security.validate_session_cookie(
+            session,
+            make_request(
+                "/leads/1/documents",
+                cookies=first_cookies,
+                headers={"x-csrf-token": "wrong-csrf"},
+            ),
+        )
+    assert incorrect.value.status_code == 403
+
+    renewed_response = Response()
+    renewed_session = auth_security.create_user_session(session, make_request("/auth/login"), renewed_response, user)
+    renewed_session.session_id_hash = hash_value("renewed-session")
+    renewed_session.csrf_token_hash = hash_value("renewed-csrf")
+    session.commit()
+    renewed_request = make_request(
+        "/leads/1/documents",
+        cookies={
+            auth_security.AUTH_COOKIE_NAME: "renewed-session",
+            auth_security.CSRF_COOKIE_NAME: "renewed-csrf",
+        },
+        headers={"x-csrf-token": "renewed-csrf"},
+    )
+    assert auth_security.validate_session_cookie(session, renewed_request).id == user.id
+    session.close()
+
+
 def test_google_login_intent_does_not_create_new_identity_or_organization(monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key")
     monkeypatch.setenv("AUTH_SECURITY_TEST_MODE", "true")
