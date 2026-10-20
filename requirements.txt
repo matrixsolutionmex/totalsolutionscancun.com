@@ -11,8 +11,8 @@ beautifulsoup4==4.13.4
 python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.2.1
-python-multipart==0.0.20
+python-multipart==0.0.32
 pywebpush==2.0.3
 google-auth==2.43.0
 argon2-cffi==25.1.0
-cryptography==46.0.3
+cryptography==50.0.2
