@@ -5926,11 +5926,11 @@
       { type: "ANTES_SERVICIO", label: "📷 Antes del servicio", action: "+ Adicionar fotos", accept: "image/*", capture: "environment" },
       { type: "DURANTE_SERVICIO", label: "📷 Durante el servicio", action: "+ Adicionar fotos", accept: "image/*", capture: "environment" },
       { type: "DESPUES_SERVICIO", label: "📷 Después del servicio", action: "+ Adicionar fotos", accept: "image/*", capture: "environment" },
-      { type: "ORCAMENTO", label: "📄 Presupuesto", action: "+ PDF", accept: ".pdf" },
+      { type: "PRESUPUESTO", label: "📄 Presupuesto", action: "+ PDF", accept: ".pdf" },
       { type: "NOTA_FISCAL", label: "🧾 Nota fiscal", action: "+ PDF", accept: ".pdf" },
       { type: "GARANTIA", label: "📑 Garantía", action: "+ PDF", accept: ".pdf" },
       { type: "VIDEO", label: "🎥 Videos", action: "+ Videos", accept: "video/*" },
-      { type: "OUTRO", label: "📎 Otros", action: "+ Arquivos", accept: ".pdf,.jpg,.jpeg,.png,.xlsx,.doc,.docx,.mp4,.mov,.webm" }
+      { type: "OTROS", label: "📎 Otros", action: "+ Arquivos", accept: ".pdf,.jpg,.jpeg,.png,.xlsx,.doc,.docx,.mp4,.mov,.webm" }
     ];
 
     const stageLabels = {
@@ -10113,7 +10113,7 @@
       return evidenceCategoryLabel(type).replace(/^[^\p{L}\p{N}]+/u, "").trim();
     }
 
-    function friendlyFileName(name, documentType = "OUTRO") {
+    function friendlyFileName(name, documentType = "OTROS") {
       const value = String(name || "").trim();
       const uuidMatch = value.match(/^[a-f0-9]{32}(\.[a-z0-9]+)$/i);
       if (uuidMatch) {
