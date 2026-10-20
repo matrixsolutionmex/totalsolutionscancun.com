@@ -1,5 +1,7 @@
 import asyncio
 import os
+from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -15,6 +17,7 @@ from app.database.connection import Base
 from app.main import app
 from app.models.lead import Lead
 from app.models.lead_document import LeadDocument
+from app.models.auth_security import AuthRateLimit
 from app.models.organization import Organization
 from app.models.professional_application import ProfessionalApplication
 from app.models.user import User
@@ -23,6 +26,7 @@ from app.routes.professional_network_routes import application_file
 from app.routes.user_routes import login as legacy_user_login, update_own_profile
 from app.schemas.user_schema import LoginRequest, UserUpdate
 from app.core.security import hash_password
+from app.core import auth_security
 from app.auth.jwt_handler import jwt_secret_key
 from app.main import security_headers
 
@@ -275,3 +279,149 @@ def test_legacy_login_is_rate_limited(db):
     with pytest.raises(HTTPException) as blocked:
         legacy_user_login(payload, make_request(), db)
     assert blocked.value.status_code == 429
+
+
+def test_legacy_login_limits_existing_and_missing_identifiers_with_generic_responses(db):
+    user = User(
+        username="legacy-identifier-user",
+        email="legacy-identifier@example.test",
+        password_hash=hash_password("password-segura"),
+        full_name="Synthetic User",
+        role="BROKER",
+        status="ACTIVE",
+        is_active=True,
+        email_verified=True,
+    )
+    db.add(user)
+    db.commit()
+
+    details = []
+    for username in (user.username, "missing-legacy-user"):
+        with pytest.raises(HTTPException) as denied:
+            legacy_user_login(
+                LoginRequest(username=username, password="wrong-password"),
+                make_request(client_host=f"192.0.2.{len(details) + 10}"),
+                db,
+            )
+        assert denied.value.status_code == 401
+        details.append(denied.value.detail)
+
+    assert details == ["Usuario ou senha invalidos", "Usuario ou senha invalidos"]
+    rows = db.query(AuthRateLimit).filter(AuthRateLimit.scope == "legacy-user-login-id").all()
+    assert len(rows) == 2
+    assert all(row.key_hash not in {user.username, "missing-legacy-user"} for row in rows)
+
+
+def test_legacy_login_identifier_key_is_normalized(db):
+    variants = (" Missing-Legacy-User ", "missing-legacy-user", "MISSING-LEGACY-USER")
+
+    for index in range(8):
+        with pytest.raises(HTTPException) as denied:
+            legacy_user_login(
+                LoginRequest(username=variants[index % len(variants)], password="wrong-password"),
+                make_request(client_host=f"198.51.100.{index + 1}"),
+                db,
+            )
+        assert denied.value.status_code == 401
+
+    with pytest.raises(HTTPException) as limited:
+        legacy_user_login(
+            LoginRequest(username="  missing-LEGACY-user  ", password="wrong-password"),
+            make_request(client_host="198.51.100.99"),
+            db,
+        )
+
+    assert limited.value.status_code == 429
+    rows = db.query(AuthRateLimit).filter(AuthRateLimit.scope == "legacy-user-login-id").all()
+    assert len(rows) == 1
+    assert rows[0].attempts == 9
+
+
+def test_legacy_login_identifier_limit_expires_and_recovers(db):
+    payload = LoginRequest(username="expiring-legacy-user", password="wrong-password")
+    for index in range(8):
+        with pytest.raises(HTTPException) as denied:
+            legacy_user_login(payload, make_request(client_host=f"203.0.113.{index + 1}"), db)
+        assert denied.value.status_code == 401
+
+    row = db.query(AuthRateLimit).filter(AuthRateLimit.scope == "legacy-user-login-id").one()
+    row.window_start = auth_security.now_utc() - timedelta(seconds=901)
+    row.blocked_until = auth_security.now_utc() - timedelta(seconds=1)
+    db.commit()
+
+    with pytest.raises(HTTPException) as recovered:
+        legacy_user_login(payload, make_request(client_host="203.0.113.99"), db)
+
+    assert recovered.value.status_code == 401
+    db.refresh(row)
+    assert row.attempts == 1
+    assert row.blocked_until is None
+
+
+def test_valid_legacy_login_clears_identifier_limit_but_keeps_ip_limit(db):
+    user = User(
+        username="legacy-clear-user",
+        email="legacy-clear@example.test",
+        password_hash=hash_password("password-segura"),
+        full_name="Synthetic User",
+        role="BROKER",
+        status="ACTIVE",
+        is_active=True,
+        email_verified=True,
+    )
+    db.add(user)
+    db.commit()
+    request = make_request(client_host="192.0.2.200")
+
+    for _ in range(3):
+        with pytest.raises(HTTPException) as denied:
+            legacy_user_login(LoginRequest(username=user.username, password="wrong-password"), request, db)
+        assert denied.value.status_code == 401
+
+    authenticated = legacy_user_login(
+        LoginRequest(username=user.username, password="password-segura"),
+        request,
+        db,
+    )
+
+    assert authenticated.id == user.id
+    assert db.query(AuthRateLimit).filter(AuthRateLimit.scope == "legacy-user-login-id").count() == 0
+    ip_row = db.query(AuthRateLimit).filter(AuthRateLimit.scope == "legacy-user-login-ip").one()
+    assert ip_row.attempts == 4
+
+
+def test_concurrent_legacy_login_attempts_share_one_identifier_bucket(tmp_path):
+    database_path = tmp_path / "legacy-login-concurrency.db"
+    engine = create_engine(
+        f"sqlite:///{database_path}",
+        connect_args={"check_same_thread": False, "timeout": 30},
+    )
+    Base.metadata.create_all(bind=engine)
+    SessionForTest = sessionmaker(bind=engine)
+
+    def attempt(index):
+        session = SessionForTest()
+        try:
+            with pytest.raises(HTTPException) as denied:
+                legacy_user_login(
+                    LoginRequest(username="Concurrent-Legacy-User", password="wrong-password"),
+                    make_request(client_host=f"198.18.0.{index + 1}"),
+                    session,
+                )
+            return denied.value.status_code
+        finally:
+            session.close()
+
+    try:
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            statuses = list(executor.map(attempt, range(8)))
+
+        session = SessionForTest()
+        try:
+            row = session.query(AuthRateLimit).filter(AuthRateLimit.scope == "legacy-user-login-id").one()
+            assert statuses == [401] * 8
+            assert row.attempts == 8
+        finally:
+            session.close()
+    finally:
+        engine.dispose()
