@@ -21,6 +21,7 @@ from app.services.service_order_quote_service import (
     latest_public_quote,
     public_quote_projection,
     reject_public_quote,
+    resolve_public_order,
     scoped_order,
     upsert_diagnosis,
 )
@@ -240,10 +241,32 @@ def test_paid_approved_quote_cannot_be_replaced_silently(db):
 
 
 def test_invalid_public_token_is_not_resolvable(db):
-    from app.services.service_order_quote_service import resolve_public_order
     with pytest.raises(HTTPException) as exc:
         resolve_public_order(db, "invalid-token")
     assert exc.value.status_code == 404
+    assert exc.value.detail == "Solicitud no encontrada"
+
+
+def test_public_token_fails_closed_when_request_order_tenant_binding_is_inconsistent(db):
+    one, two, _, _, _, request, order = scenario(db)
+    assert resolve_public_order(db, request.tracking_token).id == order.id
+
+    request.organization_id = two.id
+    db.flush()
+
+    with pytest.raises(HTTPException) as blocked:
+        resolve_public_order(db, request.tracking_token)
+    assert blocked.value.status_code == 404
+    assert blocked.value.detail == "Solicitud no encontrada"
+
+    request.organization_id = one.id
+    order.lead_id = order.lead_id + 1000
+    db.flush()
+
+    with pytest.raises(HTTPException) as swapped_id:
+        resolve_public_order(db, request.tracking_token)
+    assert swapped_id.value.status_code == 404
+    assert swapped_id.value.detail == "Solicitud no encontrada"
 
 
 def test_public_quote_copy_is_present_in_es_en_pt():

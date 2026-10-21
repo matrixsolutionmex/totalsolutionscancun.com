@@ -65,9 +65,15 @@ def _assert_claim_access(db: Session, claim_id: int, actor):
 
 def create_claim(db: Session, order: ServiceOrder, *, reason: str, idempotency_key: str,
                  description: str | None = None, evidence_reference: str | None = None,
-                 actor=None, source="PUBLIC_TRACKING"):
+                 actor=None, source="PUBLIC_TRACKING",
+                 legacy_idempotency_keys: tuple[str, ...] = ()):
     warranty = _warranty(db, order)
-    existing = db.query(ServiceOrderWarrantyClaim).filter_by(idempotency_key=idempotency_key).first()
+    compatible_keys = tuple(dict.fromkeys((idempotency_key, *legacy_idempotency_keys)))
+    existing = db.query(ServiceOrderWarrantyClaim).filter(
+        ServiceOrderWarrantyClaim.idempotency_key.in_(compatible_keys),
+        ServiceOrderWarrantyClaim.service_order_id == order.id,
+        ServiceOrderWarrantyClaim.organization_id == order.organization_id,
+    ).first()
     if existing:
         return existing
     open_claim = db.query(ServiceOrderWarrantyClaim).filter(

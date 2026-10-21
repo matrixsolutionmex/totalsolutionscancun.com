@@ -15973,13 +15973,14 @@
       const isConfirmation = path === "/solicitud-enviada";
       const marketplacePath = path.match(/^\/m\/([^/]+)(?:\/([^/]+))?\/?$/);
       const isMarketplace = Boolean(marketplacePath);
-      const isTracking = path.startsWith("/acompanhar/") || path.startsWith("/seguimiento/");
+      const marketingAnalytics = window.TotalSolutionsMarketing;
+      const isTracking = marketingAnalytics?.isBearerTrackingPath(path)
+        ?? (path.startsWith("/acompanhar/") || path.startsWith("/seguimiento/"));
       if (!isPortal && !isConfirmation && !isMarketplace && !isTracking) {
         return;
       }
 
       const apiBase = window.location.origin;
-      const marketingAnalytics = window.TotalSolutionsMarketing;
       const marketingStorage = window.sessionStorage;
       const marketingAttribution = marketingAnalytics?.captureAttribution(
         window.location.search,
@@ -15987,7 +15988,12 @@
         "totalsolutions_solicitar_servico_attribution_v1",
       ) || {};
       const marketingRequestKeyName = "totalsolutions_solicitar_servico_idempotency_v1";
-      marketingAnalytics?.configure(window, document);
+      // A tracking URL is a bearer credential. Do not load analytics on pages
+      // whose path contains that credential, because automatic page views can
+      // transmit the full URL to the analytics provider.
+      if (marketingAnalytics?.shouldConfigureForPath(path) !== false && !isTracking) {
+        marketingAnalytics?.configure(window, document);
+      }
       let marketplaceContext = null;
       const marketplaceOrganizationSlug = marketplacePath ? decodeURIComponent(marketplacePath[1]) : null;
       const marketplaceLinkSlug = marketplacePath?.[2] ? decodeURIComponent(marketplacePath[2]) : "default";

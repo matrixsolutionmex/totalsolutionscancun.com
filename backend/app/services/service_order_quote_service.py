@@ -151,11 +151,49 @@ def public_quote_projection(db: Session, order: ServiceOrder) -> dict[str, Any] 
     return {"diagnosis": diagnosis_payload(diagnosis), "quote": quote_payload(quote, public=True) if quote else None}
 
 
-def resolve_public_order(db: Session, token: str) -> ServiceOrder:
+def resolve_public_service_request(db: Session, token: str) -> ServiceRequest:
     request = db.query(ServiceRequest).filter(ServiceRequest.tracking_token == token).first()
-    if not request or not request.service_order:
+    order = request.service_order if request else None
+    lead = request.lead if request else None
+    property_record = request.property_record if request else None
+    valid_binding = bool(
+        request
+        and request.organization_id is not None
+        and order
+        and order.organization_id == request.organization_id
+        and order.service_request_id == request.id
+        and order.lead_id == request.lead_id
+        and lead
+        and lead.organization_id == request.organization_id
+        and (
+            property_record is None
+            or property_record.organization_id == request.organization_id
+        )
+    )
+    if not valid_binding:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    return request
+
+
+def resolve_public_order(db: Session, token: str) -> ServiceOrder:
+    request = resolve_public_service_request(db, token)
     return request.service_order
+
+
+def lock_public_order(db: Session, order: ServiceOrder) -> ServiceOrder:
+    """Serialize public mutations for one tenant-bound service order."""
+    locked = (
+        db.query(ServiceOrder)
+        .filter(
+            ServiceOrder.id == order.id,
+            ServiceOrder.organization_id == order.organization_id,
+        )
+        .with_for_update()
+        .one_or_none()
+    )
+    if not locked:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    return locked
 
 
 def current_tracking_token_for_order(db: Session, order: ServiceOrder) -> str:

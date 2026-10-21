@@ -23,6 +23,7 @@ from app.models.professional_application import ProfessionalApplication
 from app.models.user import User
 from app.routes.lead_document_routes import download_lead_document
 from app.routes.professional_network_routes import application_file
+from app.routes.public_service_request_routes import _public_action_idempotency_key
 from app.routes.user_routes import login as legacy_user_login, update_own_profile
 from app.schemas.user_schema import LoginRequest, UserUpdate
 from app.core.security import hash_password
@@ -74,6 +75,37 @@ def test_tokenized_and_authenticated_responses_are_not_publicly_cacheable():
         response = asyncio.run(security_headers(make_request(path=path, headers=headers), call_next))
         assert response.headers["Cache-Control"] == "no-store, no-cache, must-revalidate, max-age=0"
         assert response.headers["CDN-Cache-Control"] == "no-store"
+        if "/service-requests/" in path:
+            assert response.headers["Referrer-Policy"] == "no-referrer"
+
+    tracking_page = asyncio.run(
+        security_headers(make_request(path="/seguimiento/synthetic-token"), call_next)
+    )
+    assert tracking_page.headers["Cache-Control"] == "no-store, no-cache, must-revalidate, max-age=0"
+    assert tracking_page.headers["Referrer-Policy"] == "no-referrer"
+
+
+def test_tracking_page_never_initializes_marketing_analytics():
+    source = (Path(__file__).parents[2] / "frontend" / "index.html").read_text(encoding="utf-8")
+
+    assert "marketingAnalytics?.shouldConfigureForPath(path) !== false && !isTracking" in source
+    assert "\n      marketingAnalytics?.configure(window, document);" not in source
+
+
+def test_public_action_idempotency_keys_do_not_persist_bearer_token(monkeypatch):
+    monkeypatch.setenv("AUTH_AUDIT_PEPPER", "synthetic-public-tracking-pepper")
+    token = "synthetic-bearer-token-never-store"
+
+    first = _public_action_idempotency_key("accept", token)
+    repeated = _public_action_idempotency_key("accept", token)
+    other_action = _public_action_idempotency_key("problem", token)
+    client_scoped = _public_action_idempotency_key("warranty", token, "client-retry-key")
+
+    assert first == repeated
+    assert first != other_action
+    assert token not in first
+    assert token not in client_scoped
+    assert "client-retry-key" not in client_scoped
 
 
 def test_production_without_explicit_jwt_secret_fails_closed(monkeypatch):

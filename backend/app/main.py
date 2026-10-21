@@ -177,6 +177,7 @@ async def security_headers(request: Request, call_next):
     response = await call_next(request)
     no_store_paths = {"/", "/cotizar", "/public/marketing-config", "/sw.js", "/solicitar-servico", "/solicitud-enviada", "/aviso-de-privacidad", "/preferencias-comunicacion"}
     tokenized_public_path = request.url.path.startswith(("/public/service-requests/", "/payments/public/service-requests/"))
+    bearer_link_path = tokenized_public_path or request.url.path.startswith(("/acompanhar/", "/seguimiento/"))
     authenticated_request = bool(request.headers.get("authorization") or request.cookies.get(AUTH_COOKIE_NAME))
     if (
         request.url.path in no_store_paths
@@ -189,7 +190,7 @@ async def security_headers(request: Request, call_next):
         response.headers["Expires"] = "0"
         response.headers["CDN-Cache-Control"] = "no-store"
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Referrer-Policy", "no-referrer" if bearer_link_path else "strict-origin-when-cross-origin")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Permissions-Policy", "camera=(self), microphone=(self), geolocation=(self)")
     response.headers.setdefault(
@@ -915,7 +916,7 @@ def service_request_tracking(tracking_token: str):
                 "CDN-Cache-Control": "no-store",
             },
         )
-    return {"status": "tracking-not-found", "tracking_token": tracking_token}
+    return {"status": "tracking-not-found"}
 
 
 @app.get("/seguimiento/{tracking_token}", include_in_schema=False)

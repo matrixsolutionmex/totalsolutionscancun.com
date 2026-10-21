@@ -100,6 +100,21 @@ def disable_external_stripe_configuration(monkeypatch):
     yield
 
 
+def test_invalid_public_visit_token_fails_before_checkout_configuration_disclosure(commercial_db):
+    db, _, _, _ = commercial_db
+
+    with pytest.raises(HTTPException) as blocked:
+        create_public_visit_checkout(
+            "invalid-synthetic-token",
+            PublicStripeCheckoutRequest(),
+            None,
+            db,
+        )
+
+    assert blocked.value.status_code == 404
+    assert blocked.value.detail == "Solicitud no encontrada"
+
+
 def test_catalog_has_free_pro_business_and_central_limits(commercial_db):
     plans = {plan["name"]: plan for plan in plan_catalog()}
     assert set(plans) == {"FREE", "PRO", "BUSINESS"}

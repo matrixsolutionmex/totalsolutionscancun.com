@@ -74,6 +74,13 @@
     return normalized;
   };
 
+  const isBearerTrackingPath = pathname => {
+    const path = String(pathname || "");
+    return path.startsWith("/acompanhar/") || path.startsWith("/seguimiento/");
+  };
+
+  const shouldConfigureForPath = pathname => !isBearerTrackingPath(pathname);
+
   const loadScript = (document, src, id) => new Promise(resolve => {
     if (!document) return resolve(false);
     const existing = document.getElementById(id);
@@ -224,6 +231,8 @@
     attributionDetail,
     originFor,
     normalizeMarketingConfig,
+    isBearerTrackingPath,
+    shouldConfigureForPath,
     configure,
     track,
     getOrCreateRequestKey,

@@ -57,6 +57,16 @@ test("rejects invalid public measurement identifiers", () => {
   }), {});
 });
 
+test("never configures analytics after direct or internal navigation to a bearer path", () => {
+  assert.equal(marketing.shouldConfigureForPath("/solicitar-servico"), true);
+  assert.equal(marketing.shouldConfigureForPath("/seguimiento/synthetic-bearer"), false);
+  assert.equal(marketing.shouldConfigureForPath("/acompanhar/synthetic-bearer"), false);
+
+  const operational = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+  assert.match(operational, /href="\$\{escapeHtml\(trackingUrl\)\}"/);
+  assert.doesNotMatch(operational, /pushState\([^\n]*trackingUrl/);
+});
+
 test("tracks only the cotizar funnel while preserving the operational form flow", () => {
   const quote = fs.readFileSync(path.join(__dirname, "cotizar.js"), "utf8");
   const operational = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");

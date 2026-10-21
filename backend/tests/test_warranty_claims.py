@@ -22,6 +22,10 @@ from app.models.user import User
 from app.services.service_order_warranty_claim_service import (
     assign_claim, claim_payload, create_claim, customer_confirm, review_claim, update_claim,
 )
+from app.routes.public_service_request_routes import (
+    _legacy_public_action_idempotency_keys,
+    _public_action_idempotency_key,
+)
 
 
 @pytest.fixture()
@@ -65,6 +69,95 @@ def test_claim_is_idempotent_and_does_not_create_financial_records(db):
     assert db.query(payment.Payment).count() == 0
     assert db.query(service_order_financial.ServiceOrderFinancial).count() == 0
     assert claim_payload(first, public=True)["status"] == "open"
+
+
+def test_legacy_warranty_key_is_compatible_without_persisting_another_bearer(db, monkeypatch):
+    monkeypatch.setenv("AUTH_AUDIT_PEPPER", "synthetic-public-tracking-pepper")
+    _, _, _, _, _, order, _ = scenario(db)
+    token = order.service_request.tracking_token
+    legacy_client_key = f"warranty:{token}:1700000000000"
+    legacy = create_claim(
+        db,
+        order,
+        reason="Leak returned",
+        idempotency_key=legacy_client_key,
+    )
+    legacy.status = "CLOSED"
+    db.flush()
+
+    repeated = create_claim(
+        db,
+        order,
+        reason="Must not create another claim",
+        idempotency_key=_public_action_idempotency_key("warranty", token, legacy_client_key),
+        legacy_idempotency_keys=_legacy_public_action_idempotency_keys(
+            "warranty", token, legacy_client_key
+        ),
+    )
+    db.commit()
+
+    assert repeated.id == legacy.id
+    assert db.query(ServiceOrderWarrantyClaim).count() == 1
+    assert db.query(ServiceOrderWarrantyClaimEvent).count() == 1
+
+
+def test_legacy_warranty_lookup_is_isolated_by_order_and_organization(db, monkeypatch):
+    monkeypatch.setenv("AUTH_AUDIT_PEPPER", "synthetic-public-tracking-pepper")
+    org_a, org_b, _, _, _, first_order, _ = scenario(db)
+    legacy_key = "legacy-client-retry-key"
+    first = create_claim(db, first_order, reason="First", idempotency_key=legacy_key)
+
+    second_lead = Lead(organization_id=org_b.id, nome="Other customer", tipo_servico="Electrical")
+    db.add(second_lead)
+    db.flush()
+    second_request = ServiceRequest(
+        organization_id=org_b.id,
+        lead_id=second_lead.id,
+        tracking_token="isolated-warranty-token",
+        service_category="Electrical",
+        requester_name="Other customer",
+    )
+    db.add(second_request)
+    db.flush()
+    second_order = ServiceOrder(
+        organization_id=org_b.id,
+        lead_id=second_lead.id,
+        service_request_id=second_request.id,
+        order_number="TS-WARRANTY-ISOLATED",
+        status="COMPLETED",
+        warranty_days=90,
+        completed_at=datetime.utcnow(),
+    )
+    db.add(second_order)
+    db.flush()
+    db.add(ServiceOrderWarranty(
+        organization_id=org_b.id,
+        service_order_id=second_order.id,
+        customer_lead_id=second_lead.id,
+        warranty_days=90,
+        starts_at=datetime.utcnow() - timedelta(days=1),
+        ends_at=datetime.utcnow() + timedelta(days=89),
+        scope="Repair",
+    ))
+    db.flush()
+
+    new_key = _public_action_idempotency_key(
+        "warranty", second_request.tracking_token, legacy_key
+    )
+    second = create_claim(
+        db,
+        second_order,
+        reason="Second",
+        idempotency_key=new_key,
+        legacy_idempotency_keys=(legacy_key,),
+    )
+    db.commit()
+
+    assert second.id != first.id
+    assert second.organization_id == org_b.id
+    assert second.service_order_id == second_order.id
+    assert second.idempotency_key == new_key
+    assert second_request.tracking_token not in second.idempotency_key
 
 
 def test_claim_lifecycle_review_assign_resolve_and_customer_confirm(db):
@@ -127,3 +220,37 @@ def test_public_claim_payload_has_no_tenant_or_internal_assignment_fields(db):
     assert "warranty_id" not in payload
     assert "service_order_id" not in payload
     assert "assigned_user_id" not in payload
+
+
+def test_public_claim_confirmation_cannot_swap_claim_ids_between_orders(db):
+    org_a, _, _, _, _, first_order, _ = scenario(db)
+    first_claim = create_claim(db, first_order, reason="First order", idempotency_key="claim-first-order")
+    first_claim.status = "RESOLVED"
+
+    second_lead = Lead(organization_id=org_a.id, nome="Second customer", tipo_servico="Electrical")
+    db.add(second_lead)
+    db.flush()
+    second_request = ServiceRequest(
+        organization_id=org_a.id,
+        lead_id=second_lead.id,
+        tracking_token="second-warranty-token",
+        service_category="Electrical",
+        requester_name="Second customer",
+    )
+    db.add(second_request)
+    db.flush()
+    second_order = ServiceOrder(
+        organization_id=org_a.id,
+        lead_id=second_lead.id,
+        service_request_id=second_request.id,
+        order_number="TS-WARRANTY-SECOND",
+        status="COMPLETED",
+        warranty_days=90,
+        completed_at=datetime.utcnow(),
+    )
+    db.add(second_order)
+    db.flush()
+
+    with pytest.raises(HTTPException) as blocked:
+        customer_confirm(db, second_order, first_claim.id, problem=False)
+    assert blocked.value.status_code == 404

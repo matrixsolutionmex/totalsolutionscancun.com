@@ -12,7 +12,6 @@ from app.auth.jwt_handler import get_current_user, get_db, require_admin_user
 from app.models.payment import Payment
 from app.models.service_order_payment_plan import ServiceOrderPaymentInstallment
 from app.models.service_order import ServiceOrder
-from app.models.service_request import ServiceRequest
 from app.models.service_order_financial import ServiceOrderFinancial
 from app.models.visit_pricing_snapshot import VisitPricingSnapshot
 from app.services.commercial_upgrade_service import activate_upgrade_from_paid_payment
@@ -33,7 +32,7 @@ from app.services.service_order_payment_plan_service import (
     release_installment_for_payment,
     visit_payment_projection,
 )
-from app.services.service_order_quote_service import current_tracking_token_for_order, resolve_public_order
+from app.services.service_order_quote_service import current_tracking_token_for_order, resolve_public_order, resolve_public_service_request
 
 
 router = APIRouter(prefix="/payments", tags=["payments"])
@@ -86,16 +85,10 @@ def create_public_visit_checkout(
 ):
     if idempotency_key and len(idempotency_key) > 120:
         raise HTTPException(status_code=400, detail="Idempotency-Key invalido")
+    service_request = resolve_public_service_request(db, tracking_token)
+    order = service_request.service_order
     if not os.getenv("STRIPE_SECRET_KEY", "").strip():
         raise HTTPException(status_code=503, detail="Checkout Stripe nao configurado")
-    service_request = (
-        db.query(ServiceRequest)
-        .filter(ServiceRequest.tracking_token == tracking_token)
-        .first()
-    )
-    order = service_request.service_order if service_request else None
-    if not order or not order.organization_id:
-        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
     snapshot = db.query(VisitPricingSnapshot).filter_by(
         service_order_id=order.id, organization_id=order.organization_id,
     ).first()

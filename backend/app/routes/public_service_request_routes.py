@@ -8,7 +8,8 @@ from app.auth.jwt_handler import get_db
 from app.models.service_request import ServiceRequest
 from app.models.pricing_rate import PricingRate
 from app.services.customer_portal_service import create_customer_request_and_order, service_request_public_status, service_request_public_tracking
-from app.services.service_order_quote_service import approve_public_quote, reject_public_quote, resolve_public_order
+from app.core.auth_security import scoped_hmac_value
+from app.services.service_order_quote_service import approve_public_quote, lock_public_order, reject_public_quote, resolve_public_order, resolve_public_service_request
 from app.services.marketplace_service import create_opportunity_from_service_request
 from app.services.notification_service import dispatch_web_push_for_notification_ids
 from app.services.reverse_geocode_service import reverse_geocode
@@ -36,6 +37,25 @@ class PublicReviewInput(BaseModel):
     communication_rating: int = Field(ge=1, le=5)
     nps_score: int | None = Field(default=None, ge=0, le=10)
     comment: str | None = Field(default=None, max_length=2000)
+
+
+def _public_action_idempotency_key(action: str, tracking_token: str, client_key: str | None = None) -> str:
+    digest = scoped_hmac_value(
+        f"public-tracking:{action}",
+        f"{tracking_token}:{(client_key or '').strip()}",
+    )
+    return f"{action}:{digest}"
+
+
+def _legacy_public_action_idempotency_keys(
+    action: str,
+    tracking_token: str,
+    client_key: str | None = None,
+) -> tuple[str, ...]:
+    """Read-only compatibility for keys persisted before bearer hashing."""
+    if action == "warranty" and (client_key or "").strip():
+        return ((client_key or "").strip(),)
+    return (f"{action}:{tracking_token}",)
 
 
 @router.get("/marketplaces/{organization_slug}")
@@ -199,25 +219,13 @@ def create_public_service_request(
 
 @router.get("/service-requests/{tracking_token}")
 def public_service_request_status(tracking_token: str, db: Session = Depends(get_db)):
-    service_request = (
-        db.query(ServiceRequest)
-        .filter(ServiceRequest.tracking_token == tracking_token)
-        .first()
-    )
-    if not service_request:
-        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    service_request = resolve_public_service_request(db, tracking_token)
     return service_request_public_status(service_request)
 
 
 @router.get("/service-requests/{tracking_token}/tracking")
 def public_service_request_tracking(tracking_token: str, db: Session = Depends(get_db)):
-    service_request = (
-        db.query(ServiceRequest)
-        .filter(ServiceRequest.tracking_token == tracking_token)
-        .first()
-    )
-    if not service_request:
-        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    service_request = resolve_public_service_request(db, tracking_token)
     return service_request_public_tracking(service_request, db)
 
 
@@ -239,20 +247,20 @@ def public_quote_reject(tracking_token: str, payload: dict | None = None, db: Se
 
 @router.post("/service-requests/{tracking_token}/completion/accept")
 def public_completion_accept(tracking_token: str, db: Session = Depends(get_db)):
-    order = resolve_public_order(db, tracking_token)
-    customer_acceptance(db, order, idempotency_key=f"accept:{tracking_token}")
+    order = lock_public_order(db, resolve_public_order(db, tracking_token))
+    customer_acceptance(db, order, idempotency_key=_public_action_idempotency_key("accept", tracking_token))
     db.commit()
     return service_request_public_tracking(order.service_request, db)
 
 
 @router.post("/service-requests/{tracking_token}/completion/problem")
 def public_completion_problem(tracking_token: str, payload: dict | None = None, db: Session = Depends(get_db)):
-    order = resolve_public_order(db, tracking_token)
+    order = lock_public_order(db, resolve_public_order(db, tracking_token))
     customer_report_problem(
         db,
         order,
         reason=(payload or {}).get("reason"),
-        idempotency_key=f"problem:{tracking_token}",
+        idempotency_key=_public_action_idempotency_key("problem", tracking_token),
     )
     db.commit()
     return service_request_public_tracking(order.service_request, db)
@@ -269,15 +277,18 @@ def public_service_order_review(tracking_token: str, payload: PublicReviewInput,
 
 @router.post("/service-requests/{tracking_token}/warranty-claims", status_code=201)
 def public_warranty_claim(tracking_token: str, payload: PublicWarrantyClaimInput, db: Session = Depends(get_db)):
-    order = resolve_public_order(db, tracking_token)
+    order = lock_public_order(db, resolve_public_order(db, tracking_token))
     values = payload.model_dump()
     row = create_claim(
         db, order,
         reason=values["reason"],
         description=values.get("description"),
         evidence_reference=values.get("evidence_reference"),
-        idempotency_key=values.get("idempotency_key") or f"warranty:{tracking_token}",
+        idempotency_key=_public_action_idempotency_key("warranty", tracking_token, values.get("idempotency_key")),
         source="PUBLIC_TRACKING",
+        legacy_idempotency_keys=_legacy_public_action_idempotency_keys(
+            "warranty", tracking_token, values.get("idempotency_key")
+        ),
     )
     db.commit()
     db.refresh(row)

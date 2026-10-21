@@ -44,6 +44,7 @@ from app.services.service_order_completion_service import (
 )
 from app.services.service_order_payment_plan_service import create_payment_plan_for_approved_quote
 from app.services.service_order_quote_service import create_quote
+from app.routes.public_service_request_routes import _public_action_idempotency_key
 
 
 @pytest.fixture()
@@ -153,6 +154,52 @@ def test_problem_report_is_idempotent_and_does_not_change_operation(db):
     assert projection["customer_status"] == "problem_reported"
     assert projection["ready_for_acceptance"] is False
     assert "organization_id" not in projection
+
+
+def test_legacy_acceptance_key_repeated_with_hmac_does_not_duplicate_effects(db, monkeypatch):
+    monkeypatch.setenv("AUTH_AUDIT_PEPPER", "synthetic-public-tracking-pepper")
+    _, _, manager, tech, _, order = scenario(db)
+    plan = approved_plan(db, order, manager, Decimal("2800"))
+    plan.installments[0].status = "PAID"
+    record_technical_completion(db, order, tech, {"completion_notes": "Ready"})
+
+    legacy = customer_acceptance(db, order, idempotency_key="accept:completion-token")
+    db.flush()
+    repeated = customer_acceptance(
+        db,
+        order,
+        idempotency_key=_public_action_idempotency_key("accept", "completion-token"),
+    )
+    db.commit()
+
+    assert repeated.id == legacy.id
+    assert legacy.idempotency_key == "accept:completion-token"
+    assert db.query(ServiceOrderCustomerAcceptance).count() == 1
+    assert db.query(ServiceOrderWarranty).count() == 1
+    assert db.query(AuthAuditEvent).filter_by(event_type="SERVICE_ORDER_CUSTOMER_ACCEPTED").count() == 1
+
+
+def test_legacy_problem_key_repeated_with_hmac_does_not_duplicate_effects(db, monkeypatch):
+    monkeypatch.setenv("AUTH_AUDIT_PEPPER", "synthetic-public-tracking-pepper")
+    _, _, _, tech, _, order = scenario(db)
+    record_technical_completion(db, order, tech, {"completion_notes": "Ready"})
+
+    legacy = customer_report_problem(
+        db, order, reason="Still leaking", idempotency_key="problem:completion-token"
+    )
+    db.flush()
+    repeated = customer_report_problem(
+        db,
+        order,
+        reason="Must not replace the original reason",
+        idempotency_key=_public_action_idempotency_key("problem", "completion-token"),
+    )
+    db.commit()
+
+    assert repeated.id == legacy.id
+    assert legacy.idempotency_key == "problem:completion-token"
+    assert legacy.problem_reason == "Still leaking"
+    assert db.query(ServiceOrderCustomerAcceptance).count() == 1
 
 
 def test_completion_projection_is_tenant_scoped_and_public_is_safe(db):
