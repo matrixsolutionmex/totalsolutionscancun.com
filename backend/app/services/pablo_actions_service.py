@@ -26,6 +26,7 @@ from app.services.pablo_vision_service import get_active_vision, discard_vision
 from app.services.pablo_location_service import coordinates_for_action, discard_location, get_active_location
 from app.services.marketplace_service import claim_opportunity, list_opportunities
 from app.core.storage import UPLOADS_DIR
+from app.core.upload_security import atomic_write
 
 
 DRAFT_TTL = timedelta(minutes=15)
@@ -579,6 +580,7 @@ def confirm_operational_proposal(db: Session, actor: User) -> dict:
         if not order:
             raise HTTPException(status_code=404, detail="Ordem de serviço não encontrada no seu escopo")
     vision = None
+    destination = None
     if proposal.get("vision_id"):
         vision = get_active_vision(actor, proposal["vision_id"])
         if not vision:
@@ -608,7 +610,7 @@ def confirm_operational_proposal(db: Session, actor: User) -> dict:
         folder.mkdir(parents=True, exist_ok=True)
         safe_name = f"{uuid4().hex}{extension}"
         destination = folder / safe_name
-        destination.write_bytes(vision["content"])
+        atomic_write(destination, vision["content"])
         document_type = str(changes.get("document_type") or "OTROS").upper()
         allowed_types = {"ANTES_SERVICIO", "DURANTE_SERVICIO", "DESPUES_SERVICIO", "PRESUPUESTO", "NOTA_FISCAL", "GARANTIA", "VIDEO", "OTROS"}
         document = LeadDocument(
@@ -640,7 +642,13 @@ def confirm_operational_proposal(db: Session, actor: User) -> dict:
         message = f"Atualizou localização da OS {service_order.order_number or service_order.id}" if location else f"Atualizou OS: {', '.join(changes)}"
     event_type = "NOTA" if action == "ADD_NOTE" else ("PABLO_ACTION_UPDATE_LOCATION" if location else f"PABLO_ACTION_{action}")
     db.add(LeadEvent(organization_id=lead.organization_id or actor.organization_id, lead_id=lead.id, actor_id=actor.id, actor_name=actor.full_name or actor.username, event_type=event_type, message=message))
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        if destination is not None:
+            destination.unlink(missing_ok=True)
+        raise
     if vision:
         discard_vision(actor)
     if location:

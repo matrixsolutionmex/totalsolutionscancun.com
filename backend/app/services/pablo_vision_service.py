@@ -9,6 +9,7 @@ from threading import RLock
 from uuid import uuid4
 
 from app.models.user import User
+from app.core.upload_security import content_matches, normalized_content_type
 
 from app.services.pablo_ai_providers import configured_provider_names, generate_multimodal_from_provider, provider_config
 
@@ -21,13 +22,9 @@ _vision_lock = RLock()
 
 
 def valid_image_bytes(content: bytes, content_type: str | None) -> bool:
-    if content_type not in ALLOWED_IMAGE_TYPES:
-        return False
-    if content_type == "image/jpeg":
-        return content.startswith(b"\xff\xd8\xff")
-    if content_type == "image/png":
-        return content.startswith(b"\x89PNG\r\n\x1a\n")
-    return content.startswith(b"RIFF") and content[8:12] == b"WEBP"
+    mime = normalized_content_type(content_type)
+    suffix = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}.get(mime)
+    return bool(suffix and content_matches(content, mime, suffix))
 
 
 def _structured_result(raw: str | None) -> dict:

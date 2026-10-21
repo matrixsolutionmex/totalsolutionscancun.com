@@ -907,6 +907,21 @@ def test_service_dossier_pdf_is_generated_for_visible_lead(db):
 
 
 def make_upload_file(filename: str, content: bytes = b"fake file", content_type: str = "image/jpeg"):
+    if content == b"fake file":
+        samples = {
+            "image/jpeg": b"\xff\xd8\xff\xc0\x00\x11\x08\x00\x01\x00\x01\x03\x01\x11\x00\x02\x11\x00\x03\x11\x00\xff\xd9",
+            "application/pdf": b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n",
+            "video/mp4": b"\x00\x00\x00\x18ftypisom\x00\x00\x00\x00isomiso2\x00\x00\x00\x08mdat",
+        }
+        if content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            import zipfile
+            archive = BytesIO()
+            with zipfile.ZipFile(archive, "w") as package:
+                package.writestr("[Content_Types].xml", "<Types/>")
+                package.writestr("word/document.xml", "<document/>")
+            content = archive.getvalue()
+        else:
+            content = samples.get(content_type, content)
     return UploadFile(filename=filename, file=BytesIO(content), headers={"content-type": content_type})
 
 
@@ -1089,7 +1104,7 @@ def test_customer_portal_creates_request_property_and_service_order(db, tmp_path
     service_request = create_customer_request_and_order(
         db,
         make_portal_payload(idempotency_key="portal-create-1"),
-        files=[FakePortalUpload("fachada.jpg", "image/jpeg", b"imagen")],
+        files=[FakePortalUpload("fachada.jpg", "image/jpeg", b"\xff\xd8\xff\xc0\x00\x11\x08\x00\x01\x00\x01\x03\x01\x11\x00\x02\x11\x00\x03\x11\x00\xff\xd9")],
     )
     db.commit()
     db.refresh(service_request)
@@ -1115,7 +1130,7 @@ def test_customer_portal_creates_request_property_and_service_order(db, tmp_path
     assert portal_document.file_name == "fachada.jpg"
     assert portal_document.file_path == f"/uploads/{service_request.media[0].storage_path}"
     assert portal_document.file_mime == "image/jpeg"
-    assert portal_document.file_size == len(b"imagen")
+    assert portal_document.file_size == len(b"\xff\xd8\xff\xc0\x00\x11\x08\x00\x01\x00\x01\x03\x01\x11\x00\x02\x11\x00\x03\x11\x00\xff\xd9")
 
 
 def test_customer_portal_location_is_validated_and_propagated_to_os(db):

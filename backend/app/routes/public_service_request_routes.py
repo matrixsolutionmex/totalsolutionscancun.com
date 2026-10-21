@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.auth.jwt_handler import get_db
 from app.models.service_request import ServiceRequest
 from app.models.pricing_rate import PricingRate
-from app.services.customer_portal_service import create_customer_request_and_order, service_request_public_status, service_request_public_tracking
+from app.services.customer_portal_service import cleanup_pending_uploads, create_customer_request_and_order, finalize_pending_uploads, service_request_public_status, service_request_public_tracking
 from app.core.auth_security import scoped_hmac_value
 from app.services.service_order_quote_service import approve_public_quote, lock_public_order, reject_public_quote, resolve_public_order, resolve_public_service_request
 from app.services.marketplace_service import create_opportunity_from_service_request
@@ -203,6 +203,7 @@ def create_public_service_request(
         )
         opportunity = create_opportunity_from_service_request(db, service_request)
         db.commit()
+        finalize_pending_uploads(db)
         try:
             dispatch_web_push_for_notification_ids(db, getattr(opportunity, "_notification_ids", []))
         except Exception:  # noqa: BLE001 - push delivery must not break request creation.
@@ -211,9 +212,11 @@ def create_public_service_request(
         return _quote_public_status(service_request) if quote_funnel else service_request_public_status(service_request)
     except HTTPException:
         db.rollback()
+        cleanup_pending_uploads(db)
         raise
     except Exception as exc:  # noqa: BLE001 - public endpoint returns a safe generic message.
         db.rollback()
+        cleanup_pending_uploads(db)
         raise HTTPException(status_code=500, detail="No fue posible registrar la solicitud") from exc
 
 

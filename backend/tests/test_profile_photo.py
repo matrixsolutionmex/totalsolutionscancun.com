@@ -44,7 +44,7 @@ def test_profile_photo_upload_and_remove(monkeypatch, tmp_path):
     monkeypatch.setattr(user_routes, "delete_profile_photo", delete_test_photo)
 
     photo = UploadFile(
-        file=BytesIO(b"\x89PNG\r\n\x1a\nprofile-photo"),
+        file=BytesIO(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00IEND\x00\x00\x00\x00"),
         filename="avatar.png",
         headers=Headers({"content-type": "image/png"}),
     )

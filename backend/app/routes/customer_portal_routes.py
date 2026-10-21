@@ -14,6 +14,8 @@ from app.services.customer_account_service import customer_portal_config, custom
 from app.services.customer_invitation_service import consume_existing_customer_invitation
 from app.services.customer_portal_service import (
     create_customer_request_and_order,
+    cleanup_pending_uploads,
+    finalize_pending_uploads,
     public_tracking_url,
     service_request_public_status,
     service_request_public_tracking,
@@ -228,13 +230,16 @@ async def create_customer_service_request(request: Request, user: User = Depends
             db.add(link)
         create_opportunity_from_service_request(db, service_request)
         db.commit()
+        finalize_pending_uploads(db)
         db.refresh(service_request)
         return service_request_public_status(service_request)
     except HTTPException:
         db.rollback()
+        cleanup_pending_uploads(db)
         raise
     except Exception as exc:
         db.rollback()
+        cleanup_pending_uploads(db)
         raise HTTPException(status_code=500, detail="No fue posible registrar la solicitud") from exc
 
 

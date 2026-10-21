@@ -15,6 +15,7 @@ from app.core.security import hash_password
 from app.core.auth_security import AUTH_COOKIE_NAME
 from app.core.organization import get_or_create_default_organization
 from app.core.storage import PROFILE_PHOTOS_DIR, UPLOADS_DIR
+from app.core.upload_security import UploadBodyLimitMiddleware
 from app.auth.routes import router as auth_router
 from app.database.connection import Base, SessionLocal, engine
 from app.models import import_job, lead, lead_event, support_ticket, user, contract, contract_event, lead_document, service_order, service_order_tracking, deletion_request, notification, user_lifecycle, auth_security, organization, organization_invitation, referral_attribution, service_property, service_request, service_opportunity, organization_marketplace_link, commercial_subscription, commercial_upgrade_intent, user_commercial_profile, pricing_rate, payment, service_order_financial, service_order_ledger_entry, visit_pricing_snapshot, organization_payment_policy, service_order_diagnosis, service_order_quote, service_order_payment_plan, service_order_installment_release_event, service_order_completion, service_order_warranty_claim, service_order_review, technician_skill, segmentation_referral, professional_application, professional_network, commercial_compliance, identity_provider, technician_earning, technician_earning_reconciliation, technician_compensation, customer_portal, customer_invitation, external_payment_confirmation
@@ -124,6 +125,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(UploadBodyLimitMiddleware)
 
 app.include_router(lead_router)
 app.include_router(lead_document_router)

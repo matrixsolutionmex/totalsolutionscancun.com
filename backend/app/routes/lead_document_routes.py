@@ -1,4 +1,3 @@
-import shutil
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -9,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.jwt_handler import get_current_user as get_actor, get_db
 from app.core.storage import UPLOADS_DIR
+from app.core.upload_security import atomic_write, normalized_content_type, read_limited, rollback_file_deletion, safe_client_filename, stage_file_deletion, validate_upload_content
 from app.models.deletion_request import DeletionRequest
 from app.models.lead import Lead
 from app.models.lead_document import LeadDocument
@@ -20,6 +20,14 @@ from app.routes.lead_routes import ensure_lead_visible_to_actor, actor_label
 router = APIRouter(prefix="/leads", tags=["lead-documents"])
 
 ALLOWED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".xlsx", ".doc", ".docx", ".mp4", ".mov", ".webm"}
+ALLOWED_MIME_BY_EXTENSION = {
+    ".pdf": {"application/pdf"},
+    ".jpg": {"image/jpeg"}, ".jpeg": {"image/jpeg"}, ".png": {"image/png"},
+    ".xlsx": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+    ".doc": {"application/msword"},
+    ".docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+    ".mp4": {"video/mp4"}, ".mov": {"video/quicktime"}, ".webm": {"video/webm"},
+}
 ALLOWED_DOCUMENT_TYPES = {
     "ANTES_SERVICIO",
     "DURANTE_SERVICIO",
@@ -208,8 +216,7 @@ def decide_deletion_request(
             raise HTTPException(status_code=404, detail="Documento nao encontrado para exclusao")
 
         file_path = document_file_path(doc)
-        if file_path.exists():
-            file_path.unlink()
+        staged_file = stage_file_deletion(file_path)
 
         request.document_id = None
         db.delete(doc)
@@ -229,8 +236,16 @@ def decide_deletion_request(
             message=message,
         )
     )
-    db.commit()
-    db.refresh(request)
+    try:
+        db.commit()
+        db.refresh(request)
+    except Exception:
+        db.rollback()
+        if decision == "APROVADA":
+            rollback_file_deletion(staged_file, file_path)
+        raise
+    if decision == "APROVADA" and staged_file is not None:
+        staged_file.unlink(missing_ok=True)
 
     return deletion_request_payload(request, lead, None if decision == "APROVADA" else doc, None, actor)
 
@@ -294,11 +309,16 @@ def upload_lead_document(
     if document_type not in ALLOWED_DOCUMENT_TYPES:
         raise HTTPException(status_code=400, detail="Categoria de documento invalida")
 
-    original_name = file.filename or "arquivo"
+    original_name = safe_client_filename(file.filename)
     ext = Path(original_name).suffix.lower()
 
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail="Formato não permitido")
+    if normalized_content_type(file.content_type) not in ALLOWED_MIME_BY_EXTENSION[ext]:
+        raise HTTPException(status_code=415, detail="Tipo de arquivo nao corresponde ao formato")
+
+    content = read_limited(file.file, MAX_UPLOAD_SIZE)
+    validate_upload_content(content, file.content_type, original_name)
 
     folder = UPLOADS_DIR / "lead_documents" / str(lead_id)
     folder.mkdir(parents=True, exist_ok=True)
@@ -306,13 +326,8 @@ def upload_lead_document(
     safe_name = f"{uuid4().hex}{ext}"
     destination = folder / safe_name
 
-    with destination.open("wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    file_size = destination.stat().st_size
-    if file_size > MAX_UPLOAD_SIZE:
-        destination.unlink(missing_ok=True)
-        raise HTTPException(status_code=413, detail="Arquivo excede o tamanho maximo permitido")
+    atomic_write(destination, content)
+    file_size = len(content)
 
     public_path = f"/uploads/lead_documents/{lead_id}/{safe_name}"
 
@@ -338,8 +353,13 @@ def upload_lead_document(
             message=f"Anexou documento: {document_type} - {original_name}",
         )
     )
-    db.commit()
-    db.refresh(doc)
+    try:
+        db.commit()
+        db.refresh(doc)
+    except Exception:
+        db.rollback()
+        destination.unlink(missing_ok=True)
+        raise
 
     return {
         "id": doc.id,
@@ -419,8 +439,7 @@ def delete_lead_document(
         raise HTTPException(status_code=404, detail="Documento não encontrado")
 
     file_path = document_file_path(doc)
-    if file_path.exists():
-        file_path.unlink()
+    staged_file = stage_file_deletion(file_path)
 
     db.add(
         LeadEvent(
@@ -434,7 +453,14 @@ def delete_lead_document(
     )
 
     db.delete(doc)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        rollback_file_deletion(staged_file, file_path)
+        raise
+    if staged_file is not None:
+        staged_file.unlink(missing_ok=True)
 
     return {"ok": True}
 

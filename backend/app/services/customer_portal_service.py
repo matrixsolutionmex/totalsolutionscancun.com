@@ -11,6 +11,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.storage import UPLOADS_DIR
+from app.core.upload_security import atomic_write, normalized_content_type, read_limited, safe_client_filename, validate_upload_content
 from app.models.lead import Lead
 from app.models.lead_document import LeadDocument
 from app.models.lead_event import LeadEvent
@@ -61,6 +62,14 @@ ALLOWED_MEDIA_TYPES = {
     "application/pdf",
 }
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+MAX_UPLOAD_FILES = 8
+MAX_TOTAL_UPLOAD_BYTES = 50 * 1024 * 1024
+ALLOWED_MEDIA_EXTENSIONS = {
+    "image/jpeg": {".jpg", ".jpeg"}, "image/png": {".png"}, "image/webp": {".webp"},
+    "image/heic": {".heic"}, "image/heif": {".heif"}, "video/mp4": {".mp4"},
+    "video/quicktime": {".mov"}, "audio/mpeg": {".mp3"}, "audio/mp4": {".m4a", ".mp4"},
+    "audio/wav": {".wav"}, "audio/webm": {".webm"}, "application/pdf": {".pdf"},
+}
 PUBLIC_LEAD_ORIGINS = {
     "WHATSAPP",
     "GOOGLE_BUSINESS",
@@ -98,7 +107,7 @@ def _default_organization_id(db: Session) -> int | None:
 
 
 def _safe_filename(filename: str | None) -> str:
-    base = Path(filename or "archivo").name
+    base = safe_client_filename(filename, "archivo")
     base = re.sub(r"[^A-Za-z0-9._-]+", "-", base).strip(".-")
     return base or "archivo"
 
@@ -134,14 +143,16 @@ def _validate_payload(payload: dict[str, Any]):
 
 def _read_upload(upload) -> bytes:
     upload.file.seek(0)
-    content = upload.file.read()
+    content = read_limited(upload.file, MAX_UPLOAD_BYTES)
     upload.file.seek(0)
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Archivo demasiado grande")
-    if upload.content_type not in ALLOWED_MEDIA_TYPES:
+    content_type = normalized_content_type(upload.content_type)
+    if content_type not in ALLOWED_MEDIA_TYPES:
         raise HTTPException(status_code=400, detail="Tipo de archivo no permitido")
-    if not content:
-        raise HTTPException(status_code=400, detail="Archivo vacio")
+    original = _safe_filename(upload.filename)
+    suffix = Path(original).suffix.lower()
+    if suffix not in ALLOWED_MEDIA_EXTENSIONS.get(content_type, set()):
+        raise HTTPException(status_code=415, detail="Tipo de archivo no corresponde al formato")
+    validate_upload_content(content, content_type, original)
     return content
 
 
@@ -154,20 +165,19 @@ def _lead_document_type_for_portal_media(content_type: str | None) -> str:
     return "OTROS"
 
 
-def _persist_media(db: Session, request: ServiceRequest, uploads: list[Any] | None):
-    uploads = [upload for upload in (uploads or []) if getattr(upload, "filename", None)]
-    if not uploads:
+def _persist_media(db: Session, request: ServiceRequest, prepared: list[tuple[Any, bytes]] | None):
+    if not prepared:
         return []
 
     target_dir = Path(UPLOADS_DIR) / "service_requests" / str(request.id)
     target_dir.mkdir(parents=True, exist_ok=True)
     records = []
-    for upload in uploads:
-        content = _read_upload(upload)
+    for upload, content in prepared:
         original = _safe_filename(upload.filename)
         stored_name = f"{secrets.token_hex(12)}-{original}"
         storage_path = target_dir / stored_name
-        storage_path.write_bytes(content)
+        atomic_write(storage_path, content)
+        db.info.setdefault("pending_upload_paths", []).append(storage_path)
         relative_path = str(storage_path.relative_to(Path(UPLOADS_DIR)))
         record = ServiceRequestMedia(
             organization_id=request.organization_id,
@@ -196,9 +206,27 @@ def _persist_media(db: Session, request: ServiceRequest, uploads: list[Any] | No
     return records
 
 
-def _validate_uploads_before_persisting(uploads: list[Any]):
+def _validate_uploads_before_persisting(uploads: list[Any]) -> list[tuple[Any, bytes]]:
+    if len(uploads) > MAX_UPLOAD_FILES:
+        raise HTTPException(status_code=413, detail="Demasiados archivos")
+    prepared = []
+    total = 0
     for upload in uploads:
-        _read_upload(upload)
+        content = _read_upload(upload)
+        total += len(content)
+        if total > MAX_TOTAL_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="El total de archivos es demasiado grande")
+        prepared.append((upload, content))
+    return prepared
+
+
+def finalize_pending_uploads(db: Session) -> None:
+    db.info.pop("pending_upload_paths", None)
+
+
+def cleanup_pending_uploads(db: Session) -> None:
+    for path in db.info.pop("pending_upload_paths", []):
+        Path(path).unlink(missing_ok=True)
 
 
 def _public_lead_attribution(payload: dict[str, Any]) -> tuple[str, str | None]:
@@ -260,7 +288,7 @@ def create_customer_request_and_order(
     files = [upload for upload in (files or []) if getattr(upload, "filename", None)]
     if not clean_text(payload.get("problem_description")) and not files:
         raise HTTPException(status_code=400, detail="Describa el problema o adjunte una evidencia")
-    _validate_uploads_before_persisting(files)
+    prepared_files = _validate_uploads_before_persisting(files)
 
     requester_email = normalize_email(payload.get("requester_email"))
     requester_phone = normalize_phone(payload.get("requester_phone"))
@@ -383,7 +411,7 @@ def create_customer_request_and_order(
     db.add(service_request)
     db.flush()
 
-    _persist_media(db, service_request, files)
+    _persist_media(db, service_request, prepared_files)
     service_order = ensure_service_order(
         db,
         lead,

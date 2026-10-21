@@ -16,6 +16,7 @@ from app.auth.routes import authenticated_user_response
 from app.core.auth_security import audit_auth_event, clear_rate_limit, rate_limit_or_429, request_ip
 from app.core.security import hash_password, verify_password
 from app.core.storage import PROFILE_PHOTOS_DIR, delete_profile_photo
+from app.core.upload_security import atomic_write, normalized_content_type, read_upload_limited, validate_upload_content
 from app.models.lead import Lead
 from app.models.lead_event import LeadEvent
 from app.models.user import User
@@ -37,14 +38,7 @@ CUSTOMER_PROFILE_PROTECTED_FIELDS = frozenset({
     "plan_max_brokers",
     "plan_max_leads",
 })
-PROFILE_PHOTO_TYPES = {
-    "image/jpeg": ("jpg", lambda content: content.startswith(b"\xff\xd8\xff")),
-    "image/png": ("png", lambda content: content.startswith(b"\x89PNG\r\n\x1a\n")),
-    "image/webp": (
-        "webp",
-        lambda content: len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP",
-    ),
-}
+PROFILE_PHOTO_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 
 
 def manager_team_broker_ids(db: Session, manager_id: int):
@@ -334,24 +328,31 @@ async def upload_profile_photo(
     db: Session = Depends(get_db),
 ):
     user = get_profile_photo_user(user_id, actor, db)
-    photo_type = PROFILE_PHOTO_TYPES.get((photo.content_type or "").lower())
+    photo_type = PROFILE_PHOTO_TYPES.get(normalized_content_type(photo.content_type))
     if not photo_type:
         raise HTTPException(status_code=400, detail="Use uma imagem JPG, PNG ou WebP")
 
-    content = await photo.read(MAX_PROFILE_PHOTO_BYTES + 1)
-    if len(content) > MAX_PROFILE_PHOTO_BYTES:
-        raise HTTPException(status_code=413, detail="A foto deve ter no maximo 5 MB")
-    if not content or not photo_type[1](content):
+    try:
+        content = await read_upload_limited(photo, MAX_PROFILE_PHOTO_BYTES)
+        validate_upload_content(content, photo.content_type, f"photo.{photo_type}")
+    except HTTPException as exc:
+        if exc.status_code == 413:
+            raise HTTPException(status_code=413, detail="A foto deve ter no maximo 5 MB") from exc
         raise HTTPException(status_code=400, detail="Arquivo de imagem invalido")
 
     previous_photo = user.profile_photo_url
-    filename = f"{user.id}-{uuid4().hex}.{photo_type[0]}"
+    filename = f"{user.id}-{uuid4().hex}.{photo_type}"
     photo_path = PROFILE_PHOTOS_DIR / filename
-    photo_path.write_bytes(content)
+    atomic_write(photo_path, content)
 
     user.profile_photo_url = f"/uploads/profile_photos/{filename}"
-    db.commit()
-    db.refresh(user)
+    try:
+        db.commit()
+        db.refresh(user)
+    except Exception:
+        db.rollback()
+        photo_path.unlink(missing_ok=True)
+        raise
     delete_profile_photo(previous_photo)
     return authenticated_user_response(db, user)
 

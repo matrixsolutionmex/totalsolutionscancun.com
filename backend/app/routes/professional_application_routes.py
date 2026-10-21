@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.auth.jwt_handler import get_db
 from app.core.auth_security import apply_public_rate_limits, hash_value
 from app.core.storage import UPLOADS_DIR
+from app.core.upload_security import atomic_write, normalized_content_type, read_upload_limited, safe_client_filename, validate_upload_content
 from app.models.notification import EmailOutbox
 from app.models.professional_application import ProfessionalApplication
 
@@ -58,20 +59,6 @@ def _form_bool(value: bool | str | None) -> bool:
     return value is True or str(value or "").strip().lower() in {"1", "true", "on", "yes", "si"}
 
 
-def _file_signature(content_type: str, data: bytes) -> bool:
-    if content_type == "application/pdf":
-        return data.startswith(b"%PDF-")
-    if content_type == "image/jpeg":
-        return data.startswith(b"\xff\xd8\xff")
-    if content_type == "image/png":
-        return data.startswith(b"\x89PNG\r\n\x1a\n")
-    if content_type == "image/webp":
-        return data[:4] == b"RIFF" and data[8:12] == b"WEBP"
-    if content_type == "video/mp4":
-        return len(data) >= 12 and data[4:8] == b"ftyp"
-    return False
-
-
 async def _store_uploads(files: list[UploadFile], public_code: str) -> list[dict[str, str | int]]:
     if len(files) > MAX_FILES:
         raise HTTPException(status_code=422, detail="Demasiados archivos")
@@ -80,21 +67,24 @@ async def _store_uploads(files: list[UploadFile], public_code: str) -> list[dict
     total = 0
     try:
         for upload in files:
-            filename = Path(upload.filename or "").name
+            filename = safe_client_filename(upload.filename)
             suffix = Path(filename).suffix.lower()
-            if upload.content_type not in ALLOWED_FILE_TYPES or suffix not in ALLOWED_FILE_TYPES[upload.content_type]:
+            content_type = normalized_content_type(upload.content_type)
+            if content_type not in ALLOWED_FILE_TYPES or suffix not in ALLOWED_FILE_TYPES[content_type]:
                 raise HTTPException(status_code=422, detail="Tipo de archivo no permitido")
-            data = await upload.read(MAX_FILE_BYTES + 1)
-            if len(data) > MAX_FILE_BYTES or not _file_signature(upload.content_type, data):
-                raise HTTPException(status_code=422, detail="Archivo invalido o demasiado grande")
+            try:
+                data = await read_upload_limited(upload, MAX_FILE_BYTES)
+                validate_upload_content(data, content_type, filename)
+            except HTTPException as exc:
+                raise HTTPException(status_code=422 if exc.status_code != 413 else 413, detail="Archivo invalido o demasiado grande") from exc
             total += len(data)
             if total > MAX_TOTAL_FILE_BYTES:
                 raise HTTPException(status_code=422, detail="El total de archivos es demasiado grande")
             folder.mkdir(parents=True, exist_ok=True)
             safe_name = f"{uuid4().hex}{suffix}"
             path = folder / safe_name
-            path.write_bytes(data)
-            stored.append({"name": filename[:160], "path": f"/uploads/professional-applications/{public_code}/{safe_name}", "bytes": len(data), "content_type": upload.content_type})
+            atomic_write(path, data)
+            stored.append({"name": filename[:160], "path": f"/uploads/professional-applications/{public_code}/{safe_name}", "bytes": len(data), "content_type": content_type})
     except Exception:
         for item in stored:
             (UPLOADS_DIR / str(item["path"])[len("/uploads/"):]).unlink(missing_ok=True)
@@ -108,6 +98,13 @@ def _new_public_code(db: Session) -> str:
         if not db.query(ProfessionalApplication.id).filter(ProfessionalApplication.public_code == code).first():
             return code
     raise HTTPException(status_code=503, detail="No fue posible generar el codigo publico")
+
+
+def _remove_uploads(uploaded: list[dict[str, str | int]]) -> None:
+    for item in uploaded:
+        relative = str(item.get("path", ""))
+        if relative.startswith("/uploads/professional-applications/"):
+            (UPLOADS_DIR / relative[len("/uploads/"):]).unlink(missing_ok=True)
 
 
 @router.post("/professional-applications", status_code=201)
@@ -188,12 +185,15 @@ async def create_professional_application(
         "consent_profile": True,
     }
     application = ProfessionalApplication(public_code=_new_public_code(db), **values)
+    uploaded: list[dict[str, str | int]] = []
+    application_committed = False
     try:
         db.add(application)
         db.flush()
         uploaded = await _store_uploads(files or [], application.public_code)
         application.uploads_json = json.dumps(uploaded, ensure_ascii=False) if uploaded else None
         db.commit()
+        application_committed = True
         db.refresh(application)
         base_url = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
         action_url = f"{base_url}/admin/professional-applications/{application.public_code}" if base_url else f"/admin/professional-applications/{application.public_code}"
@@ -224,6 +224,8 @@ async def create_professional_application(
         return {"public_code": application.public_code, "status": application.status, "duplicate": False}
     except IntegrityError:
         db.rollback()
+        if not application_committed:
+            _remove_uploads(uploaded)
         if key_hash:
             existing = db.query(ProfessionalApplication).filter(ProfessionalApplication.submission_key_hash == key_hash).first()
             if existing:
@@ -231,7 +233,11 @@ async def create_professional_application(
         raise HTTPException(status_code=409, detail="No fue posible registrar la candidatura")
     except HTTPException:
         db.rollback()
+        if not application_committed:
+            _remove_uploads(uploaded)
         raise
     except Exception as exc:  # noqa: BLE001 - persistence must return a safe public error.
         db.rollback()
+        if not application_committed:
+            _remove_uploads(uploaded)
         raise HTTPException(status_code=500, detail="No fue posible registrar la candidatura") from exc

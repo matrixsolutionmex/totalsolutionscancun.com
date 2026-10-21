@@ -12,6 +12,7 @@ from app.models.lead import Lead
 from app.models.lead_document import LeadDocument
 from app.models.lead_event import LeadEvent
 from app.core.storage import UPLOADS_DIR
+from app.core.upload_security import atomic_write, content_matches, normalized_content_type, read_upload_limited, safe_client_filename, validate_upload_content
 from app.routes.lead_routes import ensure_lead_visible_to_actor, actor_label
 from app.services.pablo_actions_service import (
     cancel_client_draft,
@@ -47,6 +48,10 @@ from app.services.commercial_upgrade_service import get_active_upgrade_intent
 
 router = APIRouter(prefix="/pablo", tags=["pablo-ai"])
 logger = logging.getLogger(__name__)
+AUDIO_TYPES = {
+    "audio/mpeg": {".mp3"}, "audio/mp4": {".m4a", ".mp4"},
+    "audio/wav": {".wav"}, "audio/webm": {".webm"},
+}
 
 
 class PabloChatRequest(BaseModel):
@@ -306,13 +311,19 @@ async def pablo_transcribe(
     actor: User = Depends(get_current_user),
 ):
     del actor  # Authentication is enforced by the dependency; audio is not stored.
-    content = await file.read(MAX_AUDIO_BYTES + 1)
-    if len(content) > MAX_AUDIO_BYTES:
-        raise HTTPException(status_code=413, detail="Audio excede o tamanho maximo permitido")
+    try:
+        content = await read_upload_limited(file, MAX_AUDIO_BYTES)
+    except HTTPException as exc:
+        raise HTTPException(status_code=413, detail="Audio excede o tamanho maximo permitido") from exc
+    filename = safe_client_filename(file.filename, "recording.webm")
+    suffix = Path(filename).suffix.lower()
+    content_type = normalized_content_type(file.content_type)
+    if suffix not in AUDIO_TYPES.get(content_type, set()) or not content_matches(content, content_type, suffix):
+        raise HTTPException(status_code=415, detail="Formato de audio invalido")
     text = transcribe_audio(
-        filename=file.filename or "recording.webm",
+        filename=filename,
         content=content,
-        content_type=file.content_type,
+        content_type=content_type,
     )
     if not text:
         raise HTTPException(status_code=503, detail="Transcricao indisponivel neste momento")
@@ -324,13 +335,15 @@ async def pablo_vision_analyze(
     file: UploadFile = File(...),
     actor: User = Depends(get_current_user),
 ):
-    content = await file.read(MAX_IMAGE_BYTES + 1)
-    if len(content) > MAX_IMAGE_BYTES:
-        raise HTTPException(status_code=413, detail="Imagem excede o tamanho maximo permitido")
-    if file.content_type not in ALLOWED_IMAGE_TYPES or not valid_image_bytes(content, file.content_type):
+    try:
+        content = await read_upload_limited(file, MAX_IMAGE_BYTES)
+    except HTTPException as exc:
+        raise HTTPException(status_code=413, detail="Imagem excede o tamanho maximo permitido") from exc
+    content_type = normalized_content_type(file.content_type)
+    if content_type not in ALLOWED_IMAGE_TYPES or not valid_image_bytes(content, content_type):
         raise HTTPException(status_code=415, detail="Formato de imagem invalido")
-    analysis = analyze_image(content, file.content_type)
-    vision = create_vision_session(actor, content, file.content_type, file.filename or "pablo-image", analysis)
+    analysis = analyze_image(content, content_type)
+    vision = create_vision_session(actor, content, content_type, file.filename or "pablo-image", analysis)
     return {"vision": vision, "persisted": False}
 
 
@@ -359,33 +372,37 @@ async def pablo_attach_evidence(
     ensure_lead_visible_to_actor(db, lead, actor)
     allowed_extensions = {".pdf", ".jpg", ".jpeg", ".png", ".webp"}
     allowed_types = {"application/pdf", *ALLOWED_IMAGE_TYPES}
-    content = await file.read(50 * 1024 * 1024 + 1)
-    extension = Path(file.filename or "arquivo").suffix.lower()
-    if len(content) > 50 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Arquivo excede o tamanho maximo permitido")
-    if extension not in allowed_extensions or file.content_type not in allowed_types:
+    content = await read_upload_limited(file, 50 * 1024 * 1024)
+    original_name = safe_client_filename(file.filename)
+    extension = Path(original_name).suffix.lower()
+    content_type = normalized_content_type(file.content_type)
+    if extension not in allowed_extensions or content_type not in allowed_types:
         raise HTTPException(status_code=415, detail="Formato de evidência invalido")
-    if file.content_type != "application/pdf" and not valid_image_bytes(content, file.content_type):
-        raise HTTPException(status_code=415, detail="Conteudo de arquivo invalido")
+    validate_upload_content(content, content_type, original_name)
     folder = UPLOADS_DIR / "lead_documents" / str(lead.id)
     folder.mkdir(parents=True, exist_ok=True)
     safe_name = f"{uuid4().hex}{extension}"
     destination = folder / safe_name
-    destination.write_bytes(content)
+    atomic_write(destination, content)
     document = LeadDocument(
         organization_id=lead.organization_id or actor.organization_id,
         lead_id=lead.id,
         uploaded_by_user_id=actor.id,
-        document_type=document_type if document_type else "OTROS",
-        file_name=file.filename or "evidencia",
+        document_type=document_type if document_type in {"ANTES_SERVICIO", "DURANTE_SERVICIO", "DESPUES_SERVICIO", "PRESUPUESTO", "NOTA_FISCAL", "GARANTIA", "VIDEO", "OTROS"} else "OTROS",
+        file_name=original_name,
         file_path=f"/uploads/lead_documents/{lead.id}/{safe_name}",
-        file_mime=file.content_type,
+        file_mime=content_type,
         file_size=len(content),
     )
     db.add(document)
     db.add(LeadEvent(organization_id=lead.organization_id or actor.organization_id, lead_id=lead.id, actor_id=actor.id, actor_name=actor_label(actor), event_type="DOCUMENTO", message=f"Pablo anexou evidência: {document.document_type}"))
-    db.commit()
-    db.refresh(document)
+    try:
+        db.commit()
+        db.refresh(document)
+    except Exception:
+        db.rollback()
+        destination.unlink(missing_ok=True)
+        raise
     logger.info("Pablo action completed: action=ATTACH_EVIDENCE actor_id=%s", actor.id)
     return {"action": "ATTACH_EVIDENCE", "status": "EXECUTED", "document_id": document.id, "lead_id": lead.id}
 

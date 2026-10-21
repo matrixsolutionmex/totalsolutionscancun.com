@@ -222,7 +222,7 @@ class PabloLiveContextTest(unittest.TestCase):
         }, clear=True), patch("httpx.Client.post", return_value=response) as post:
             text = transcribe_audio(
                 filename="voice.webm",
-                content=b"audio-bytes",
+                content=b"\x1aE\xdf\xa3synthetic-webm-audio",
                 content_type="audio/webm",
             )
         self.assertEqual(text, "quantos clientes tenho")
