@@ -150,7 +150,7 @@ def _read_upload(upload) -> bytes:
     upload.file.seek(0)
     content_type = normalized_content_type(upload.content_type)
     if content_type not in ALLOWED_MEDIA_TYPES:
-        raise HTTPException(status_code=400, detail="Tipo de archivo no permitido")
+        raise HTTPException(status_code=400, detail="Use JPG, PNG, WebP, HEIC, HEIF, MP4, MOV, MP3, M4A, WAV, WebM o PDF")
     original = _safe_filename(upload.filename)
     suffix = Path(original).suffix.lower()
     if suffix not in ALLOWED_MEDIA_EXTENSIONS.get(content_type, set()):

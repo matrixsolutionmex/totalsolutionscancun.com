@@ -362,6 +362,7 @@ def test_pablo_rejects_invalid_media_before_calling_external_provider():
         with pytest.raises(HTTPException) as invalid_audio:
             asyncio.run(pablo_routes.pablo_transcribe(audio, actor=object()))
     assert invalid_audio.value.status_code == 415
+    assert "WebM, WAV, MP3, M4A ou MP4" in invalid_audio.value.detail
     transcribe.assert_not_called()
 
     image = UploadFile(
@@ -372,4 +373,5 @@ def test_pablo_rejects_invalid_media_before_calling_external_provider():
         with pytest.raises(HTTPException) as invalid_image:
             asyncio.run(pablo_routes.pablo_vision_analyze(image, actor=object()))
     assert invalid_image.value.status_code == 415
+    assert "JPG, PNG ou WebP" in invalid_image.value.detail
     analyze.assert_not_called()

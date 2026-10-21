@@ -314,12 +314,12 @@ async def pablo_transcribe(
     try:
         content = await read_upload_limited(file, MAX_AUDIO_BYTES)
     except HTTPException as exc:
-        raise HTTPException(status_code=413, detail="Audio excede o tamanho maximo permitido") from exc
+        raise HTTPException(status_code=413, detail="O áudio deve ter no máximo 10 MB") from exc
     filename = safe_client_filename(file.filename, "recording.webm")
     suffix = Path(filename).suffix.lower()
     content_type = normalized_content_type(file.content_type)
     if suffix not in AUDIO_TYPES.get(content_type, set()) or not content_matches(content, content_type, suffix):
-        raise HTTPException(status_code=415, detail="Formato de audio invalido")
+        raise HTTPException(status_code=415, detail="Formato de áudio inválido. Use WebM, WAV, MP3, M4A ou MP4")
     text = transcribe_audio(
         filename=filename,
         content=content,
@@ -338,10 +338,10 @@ async def pablo_vision_analyze(
     try:
         content = await read_upload_limited(file, MAX_IMAGE_BYTES)
     except HTTPException as exc:
-        raise HTTPException(status_code=413, detail="Imagem excede o tamanho maximo permitido") from exc
+        raise HTTPException(status_code=413, detail="A imagem deve ter no máximo 10 MB") from exc
     content_type = normalized_content_type(file.content_type)
     if content_type not in ALLOWED_IMAGE_TYPES or not valid_image_bytes(content, content_type):
-        raise HTTPException(status_code=415, detail="Formato de imagem invalido")
+        raise HTTPException(status_code=415, detail="Formato de imagem inválido. Use JPG, PNG ou WebP")
     analysis = analyze_image(content, content_type)
     vision = create_vision_session(actor, content, content_type, file.filename or "pablo-image", analysis)
     return {"vision": vision, "persisted": False}
@@ -372,13 +372,19 @@ async def pablo_attach_evidence(
     ensure_lead_visible_to_actor(db, lead, actor)
     allowed_extensions = {".pdf", ".jpg", ".jpeg", ".png", ".webp"}
     allowed_types = {"application/pdf", *ALLOWED_IMAGE_TYPES}
-    content = await read_upload_limited(file, 50 * 1024 * 1024)
+    try:
+        content = await read_upload_limited(file, 50 * 1024 * 1024)
+    except HTTPException as exc:
+        raise HTTPException(status_code=413, detail="A evidência deve ter no máximo 50 MB") from exc
     original_name = safe_client_filename(file.filename)
     extension = Path(original_name).suffix.lower()
     content_type = normalized_content_type(file.content_type)
     if extension not in allowed_extensions or content_type not in allowed_types:
-        raise HTTPException(status_code=415, detail="Formato de evidência invalido")
-    validate_upload_content(content, content_type, original_name)
+        raise HTTPException(status_code=415, detail="Formato de evidência inválido. Use PDF, JPG, PNG ou WebP")
+    try:
+        validate_upload_content(content, content_type, original_name)
+    except HTTPException as exc:
+        raise HTTPException(status_code=415, detail="Conteúdo inválido para o formato informado") from exc
     folder = UPLOADS_DIR / "lead_documents" / str(lead.id)
     folder.mkdir(parents=True, exist_ok=True)
     safe_name = f"{uuid4().hex}{extension}"
