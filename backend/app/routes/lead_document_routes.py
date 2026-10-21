@@ -313,12 +313,17 @@ def upload_lead_document(
     ext = Path(original_name).suffix.lower()
 
     if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=400, detail="Formato não permitido")
+        raise HTTPException(status_code=400, detail="Formato não permitido. Use PDF, JPG, PNG, DOC, DOCX, XLSX, MP4, MOV ou WebM")
     if normalized_content_type(file.content_type) not in ALLOWED_MIME_BY_EXTENSION[ext]:
         raise HTTPException(status_code=415, detail="Tipo de arquivo nao corresponde ao formato")
 
-    content = read_limited(file.file, MAX_UPLOAD_SIZE)
-    validate_upload_content(content, file.content_type, original_name)
+    try:
+        content = read_limited(file.file, MAX_UPLOAD_SIZE)
+        validate_upload_content(content, file.content_type, original_name)
+    except HTTPException as exc:
+        if exc.status_code == 413:
+            raise HTTPException(status_code=413, detail="O arquivo deve ter no máximo 50 MB") from exc
+        raise HTTPException(status_code=415, detail="Conteúdo inválido para o formato informado") from exc
 
     folder = UPLOADS_DIR / "lead_documents" / str(lead_id)
     folder.mkdir(parents=True, exist_ok=True)

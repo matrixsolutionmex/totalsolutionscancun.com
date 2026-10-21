@@ -7,10 +7,12 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from fastapi import HTTPException
 from starlette.datastructures import Headers, UploadFile
+from starlette.requests import ClientDisconnect, Request
 from unittest.mock import patch
 
 from app.core.upload_security import (
     UploadBodyLimitMiddleware,
+    MULTIPART_OVERHEAD_BYTES,
     atomic_write,
     content_matches,
     read_limited,
@@ -38,6 +40,12 @@ def jpeg(width=1, height=1):
         + struct.pack(">HH", height, width)
         + b"\x03\x01\x11\x00\x02\x11\x00\x03\x11\x00\xff\xd9"
     )
+
+
+def webp_vp8x(width=1, height=1):
+    payload = b"\x00\x00\x00\x00" + (width - 1).to_bytes(3, "little") + (height - 1).to_bytes(3, "little")
+    body = b"WEBP" + b"VP8X" + len(payload).to_bytes(4, "little") + payload
+    return b"RIFF" + len(body).to_bytes(4, "little") + body
 
 
 def office_zip(prefix):
@@ -68,6 +76,7 @@ def test_active_mismatched_and_truncated_content_is_rejected(data, mime, name):
 def test_supported_synthetic_formats_require_matching_content_and_suffix():
     assert content_matches(png(), "image/png", ".png")
     assert content_matches(jpeg(), "image/jpeg", ".jpg")
+    assert content_matches(webp_vp8x(), "image/webp", ".webp")
     assert content_matches(b"%PDF-1.4\n%%EOF\n", "application/pdf", ".pdf")
     assert content_matches(office_zip("word"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx")
     assert content_matches(office_zip("xl"), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx")
@@ -77,6 +86,7 @@ def test_supported_synthetic_formats_require_matching_content_and_suffix():
 def test_excessive_image_dimensions_are_rejected_before_processing():
     assert not content_matches(png(100_000, 100_000), "image/png", ".png")
     assert not content_matches(jpeg(65535, 65535), "image/jpeg", ".jpg")
+    assert not content_matches(webp_vp8x(10_000, 10_000), "image/webp", ".webp")
 
 
 def test_client_filename_removes_both_path_separator_styles_and_controls():
@@ -118,6 +128,26 @@ def test_request_limits_cover_every_multipart_entry_point():
     assert upload_body_limit("/health", "GET") is None
 
 
+def test_multipart_overhead_allowance_does_not_consume_the_file_policy():
+    boundary = "----TotalSolutionsBoundary"
+    longest_filename = "a" * 156 + ".pdf"
+    file_part_overhead = len(
+        (
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"{longest_filename}\"\r\n"
+            "Content-Type: application/pdf\r\n\r\n"
+        ).encode()
+    ) + 2
+    ordinary_field_overhead = len(
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue\r\n".encode()
+    )
+    closing_overhead = len(f"--{boundary}--\r\n".encode())
+    realistic_overhead = 8 * file_part_overhead + 30 * ordinary_field_overhead + closing_overhead
+
+    assert realistic_overhead < MULTIPART_OVERHEAD_BYTES
+    assert upload_body_limit("/public/professional-applications", "POST") == 25 * 1024 * 1024 + MULTIPART_OVERHEAD_BYTES
+    assert upload_body_limit("/leads/42/documents", "POST") == 50 * 1024 * 1024 + MULTIPART_OVERHEAD_BYTES
+
+
 def test_request_limit_counts_streamed_chunks_without_content_length(monkeypatch):
     async def scenario():
         monkeypatch.setattr("app.core.upload_security.upload_body_limit", lambda *_args: 5)
@@ -145,6 +175,104 @@ def test_request_limit_counts_streamed_chunks_without_content_length(monkeypatch
         await middleware({"type": "http", "method": "POST", "path": "/public/service-requests", "headers": []}, receive, send)
         assert app_called
         assert any(message.get("status") == 413 for message in sent)
+
+    asyncio.run(scenario())
+
+
+def test_parser_closes_spooled_file_when_stream_limit_interrupts_request(monkeypatch):
+    import starlette.formparsers as formparsers
+
+    async def scenario():
+        boundary = "audit-boundary"
+        prefix = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="file"; filename="proof.pdf"\r\n'
+            "Content-Type: application/pdf\r\n\r\n"
+        ).encode()
+        first = prefix + b"%PDF-1.4\n"
+        second = b"x" * 32
+        monkeypatch.setattr("app.core.upload_security.upload_body_limit", lambda *_args: len(first) + 8)
+
+        created = []
+        original_factory = formparsers.SpooledTemporaryFile
+
+        def recording_factory(*args, **kwargs):
+            handle = original_factory(*args, **kwargs)
+            created.append(handle)
+            return handle
+
+        monkeypatch.setattr(formparsers, "SpooledTemporaryFile", recording_factory)
+        chunks = iter([
+            {"type": "http.request", "body": first, "more_body": True},
+            {"type": "http.request", "body": second, "more_body": False},
+        ])
+        sent = []
+
+        async def receive():
+            return next(chunks)
+
+        async def send(message):
+            sent.append(message)
+
+        async def downstream(scope, limited_receive, _send):
+            request = Request(scope, limited_receive)
+            await request.form()
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/leads/42/documents",
+            "headers": [(b"content-type", f"multipart/form-data; boundary={boundary}".encode())],
+        }
+        await UploadBodyLimitMiddleware(downstream)(scope, receive, send)
+        assert created and all(handle.closed for handle in created)
+        assert any(message.get("status") == 413 for message in sent)
+
+    asyncio.run(scenario())
+
+
+def test_parser_closes_spooled_file_when_client_disconnects(monkeypatch):
+    import starlette.formparsers as formparsers
+
+    async def scenario():
+        boundary = "disconnect-boundary"
+        first = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="file"; filename="proof.pdf"\r\n'
+            "Content-Type: application/pdf\r\n\r\n%PDF-1.4\n"
+        ).encode()
+        created = []
+        original_factory = formparsers.SpooledTemporaryFile
+
+        def recording_factory(*args, **kwargs):
+            handle = original_factory(*args, **kwargs)
+            created.append(handle)
+            return handle
+
+        monkeypatch.setattr(formparsers, "SpooledTemporaryFile", recording_factory)
+        messages = iter([
+            {"type": "http.request", "body": first, "more_body": True},
+            {"type": "http.disconnect"},
+        ])
+
+        async def receive():
+            return next(messages)
+
+        async def send(_message):
+            raise AssertionError("a disconnected client must not receive a response")
+
+        async def downstream(scope, request_receive, _send):
+            await Request(scope, request_receive).form()
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/leads/42/documents",
+            "headers": [(b"content-type", f"multipart/form-data; boundary={boundary}".encode())],
+        }
+        with pytest.raises(ClientDisconnect):
+            await UploadBodyLimitMiddleware(downstream)(scope, receive, send)
+        assert created and all(handle.closed for handle in created)
 
     asyncio.run(scenario())
 

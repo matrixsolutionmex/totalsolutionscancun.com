@@ -61,7 +61,7 @@ def _form_bool(value: bool | str | None) -> bool:
 
 async def _store_uploads(files: list[UploadFile], public_code: str) -> list[dict[str, str | int]]:
     if len(files) > MAX_FILES:
-        raise HTTPException(status_code=422, detail="Demasiados archivos")
+        raise HTTPException(status_code=422, detail="Puede enviar como maximo 8 archivos")
     folder = APPLICATION_UPLOAD_DIR / public_code
     stored: list[dict[str, str | int]] = []
     total = 0
@@ -71,15 +71,16 @@ async def _store_uploads(files: list[UploadFile], public_code: str) -> list[dict
             suffix = Path(filename).suffix.lower()
             content_type = normalized_content_type(upload.content_type)
             if content_type not in ALLOWED_FILE_TYPES or suffix not in ALLOWED_FILE_TYPES[content_type]:
-                raise HTTPException(status_code=422, detail="Tipo de archivo no permitido")
+                raise HTTPException(status_code=422, detail="Use archivos JPG, PNG, WebP, PDF o MP4")
             try:
                 data = await read_upload_limited(upload, MAX_FILE_BYTES)
                 validate_upload_content(data, content_type, filename)
             except HTTPException as exc:
-                raise HTTPException(status_code=422 if exc.status_code != 413 else 413, detail="Archivo invalido o demasiado grande") from exc
+                detail = "Cada archivo debe tener como maximo 10 MB" if exc.status_code == 413 else "Contenido invalido para el formato informado"
+                raise HTTPException(status_code=422 if exc.status_code != 413 else 413, detail=detail) from exc
             total += len(data)
             if total > MAX_TOTAL_FILE_BYTES:
-                raise HTTPException(status_code=422, detail="El total de archivos es demasiado grande")
+                raise HTTPException(status_code=422, detail="El total de archivos debe tener como maximo 25 MB")
             folder.mkdir(parents=True, exist_ok=True)
             safe_name = f"{uuid4().hex}{suffix}"
             path = folder / safe_name

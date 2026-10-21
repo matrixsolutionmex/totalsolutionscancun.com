@@ -1095,6 +1095,58 @@ def test_technician_uploads_documents_but_cannot_delete_directly(db, tmp_path, m
     assert db.query(LeadDocument).filter(LeadDocument.id == uploaded[0]["id"]).first() is None
 
 
+def test_upload_commit_failure_removes_file_written_before_database_commit(db, tmp_path, monkeypatch):
+    import app.routes.lead_document_routes as document_routes
+
+    monkeypatch.setattr(document_routes, "UPLOADS_DIR", tmp_path)
+    root = make_user(db, "root-upload-rollback", "ROOT")
+    technician = make_user(db, "tecnico-upload-rollback", "BROKER")
+    lead = create_lead(
+        LeadCreate(nombre="Cliente Rollback Upload", telefono="9981515151", assigned_to_user_id=technician.id),
+        db,
+        root,
+    )
+
+    def fail_commit():
+        raise RuntimeError("synthetic commit failure")
+
+    monkeypatch.setattr(db, "commit", fail_commit)
+    with pytest.raises(RuntimeError, match="synthetic commit failure"):
+        upload_lead_document(
+            lead.id,
+            "PRESUPUESTO",
+            make_upload_file("rollback.pdf", content_type="application/pdf"),
+            db,
+            technician,
+        )
+    assert not list((tmp_path / "lead_documents" / str(lead.id)).glob("*"))
+
+
+def test_delete_commit_failure_restores_file_hidden_before_database_commit(db, tmp_path, monkeypatch):
+    import app.routes.lead_document_routes as document_routes
+
+    monkeypatch.setattr(document_routes, "UPLOADS_DIR", tmp_path)
+    root = make_user(db, "root-delete-rollback", "ROOT")
+    lead = create_lead(LeadCreate(nombre="Cliente Rollback Delete", telefono="9981616161"), db, root)
+    uploaded = upload_lead_document(
+        lead.id,
+        "PRESUPUESTO",
+        make_upload_file("preserve.pdf", content_type="application/pdf"),
+        db,
+        root,
+    )
+    stored = next((tmp_path / "lead_documents" / str(lead.id)).iterdir())
+
+    def fail_commit():
+        raise RuntimeError("synthetic delete commit failure")
+
+    monkeypatch.setattr(db, "commit", fail_commit)
+    with pytest.raises(RuntimeError, match="synthetic delete commit failure"):
+        delete_lead_document(lead.id, uploaded["id"], db, root)
+    assert stored.is_file()
+    assert not list(stored.parent.glob(".*.deleting"))
+
+
 def test_customer_portal_creates_request_property_and_service_order(db, tmp_path, monkeypatch):
     import app.services.customer_portal_service as portal_service
 

@@ -46,6 +46,17 @@ def upload_body_limit(path: str, method: str) -> int | None:
     return payload_limit + MULTIPART_OVERHEAD_BYTES if payload_limit is not None else None
 
 
+def upload_body_limit_detail(path: str) -> str:
+    """Describe the file policy, not the multipart wire allowance."""
+    if path == "/public/professional-applications":
+        return "Envio excede o limite de 25 MB no total de arquivos"
+    if path in {"/pablo/transcribe", "/pablo/vision/analyze"}:
+        return "Arquivo excede o limite de 10 MB"
+    if re.fullmatch(r"/users/\d+/profile-photo", path):
+        return "Foto excede o limite de 5 MB"
+    return "Envio excede o limite de 50 MB no total de arquivos"
+
+
 class _BodyTooLarge(Exception):
     pass
 
@@ -70,7 +81,7 @@ class UploadBodyLimitMiddleware:
         except ValueError:
             declared = 0
         if declared > limit:
-            await JSONResponse({"detail": "Requisicao excede o tamanho maximo permitido"}, status_code=413)(scope, receive, send)
+            await JSONResponse({"detail": upload_body_limit_detail(scope.get("path", ""))}, status_code=413)(scope, receive, send)
             return
         received = 0
 
@@ -86,7 +97,7 @@ class UploadBodyLimitMiddleware:
         try:
             await self.app(scope, limited_receive, send)
         except _BodyTooLarge:
-            await JSONResponse({"detail": "Requisicao excede o tamanho maximo permitido"}, status_code=413)(scope, receive, send)
+            await JSONResponse({"detail": upload_body_limit_detail(scope.get("path", ""))}, status_code=413)(scope, receive, send)
 
 
 def safe_client_filename(value: str | None, default: str = "arquivo") -> str:
@@ -162,7 +173,18 @@ def _valid_webp(data: bytes) -> bool:
     if len(data) < 16 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
         return False
     declared = int.from_bytes(data[4:8], "little") + 8
-    return declared <= len(data) and data[12:16] in {b"VP8 ", b"VP8L", b"VP8X"}
+    if declared > len(data) or data[12:16] not in {b"VP8 ", b"VP8L", b"VP8X"}:
+        return False
+    chunk = data[12:16]
+    dimensions: tuple[int, int] | None = None
+    if chunk == b"VP8X" and len(data) >= 30:
+        dimensions = (1 + int.from_bytes(data[24:27], "little"), 1 + int.from_bytes(data[27:30], "little"))
+    elif chunk == b"VP8L" and len(data) >= 25 and data[20] == 0x2F:
+        b1, b2, b3, b4 = data[21:25]
+        dimensions = (1 + b1 + ((b2 & 0x3F) << 8), 1 + ((b2 & 0xC0) >> 6) + (b3 << 2) + ((b4 & 0x0F) << 10))
+    elif chunk == b"VP8 " and len(data) >= 30 and data[23:26] == b"\x9d\x01\x2a":
+        dimensions = (int.from_bytes(data[26:28], "little") & 0x3FFF, int.from_bytes(data[28:30], "little") & 0x3FFF)
+    return bool(dimensions and dimensions[0] > 0 and dimensions[1] > 0 and dimensions[0] * dimensions[1] <= MAX_IMAGE_PIXELS)
 
 
 def _valid_pdf(data: bytes) -> bool:

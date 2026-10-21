@@ -143,7 +143,10 @@ def _validate_payload(payload: dict[str, Any]):
 
 def _read_upload(upload) -> bytes:
     upload.file.seek(0)
-    content = read_limited(upload.file, MAX_UPLOAD_BYTES)
+    try:
+        content = read_limited(upload.file, MAX_UPLOAD_BYTES)
+    except HTTPException as exc:
+        raise HTTPException(status_code=413, detail="Cada archivo debe tener como maximo 25 MB") from exc
     upload.file.seek(0)
     content_type = normalized_content_type(upload.content_type)
     if content_type not in ALLOWED_MEDIA_TYPES:
@@ -152,7 +155,10 @@ def _read_upload(upload) -> bytes:
     suffix = Path(original).suffix.lower()
     if suffix not in ALLOWED_MEDIA_EXTENSIONS.get(content_type, set()):
         raise HTTPException(status_code=415, detail="Tipo de archivo no corresponde al formato")
-    validate_upload_content(content, content_type, original)
+    try:
+        validate_upload_content(content, content_type, original)
+    except HTTPException as exc:
+        raise HTTPException(status_code=415, detail="Contenido invalido para el formato informado") from exc
     return content
 
 
@@ -208,14 +214,14 @@ def _persist_media(db: Session, request: ServiceRequest, prepared: list[tuple[An
 
 def _validate_uploads_before_persisting(uploads: list[Any]) -> list[tuple[Any, bytes]]:
     if len(uploads) > MAX_UPLOAD_FILES:
-        raise HTTPException(status_code=413, detail="Demasiados archivos")
+        raise HTTPException(status_code=413, detail="Puede enviar como maximo 8 archivos")
     prepared = []
     total = 0
     for upload in uploads:
         content = _read_upload(upload)
         total += len(content)
         if total > MAX_TOTAL_UPLOAD_BYTES:
-            raise HTTPException(status_code=413, detail="El total de archivos es demasiado grande")
+            raise HTTPException(status_code=413, detail="El total de archivos debe tener como maximo 50 MB")
         prepared.append((upload, content))
     return prepared
 
